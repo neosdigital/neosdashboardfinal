@@ -1,0 +1,106 @@
+{
+  "exportadoEm": "2026-05-06T18:57:12.579Z",
+  "versao": "neos-v1",
+  "clients": [
+    {
+      "id": "1yrbh0uds8nmosxrbhq",
+      "createdAt": "2026-05-05T18:02:21.038Z",
+      "name": "Alisson",
+      "company": "Aurum",
+      "service": "Pacote Mensal",
+      "plan": "5600",
+      "startDate": "2026-05-05",
+      "status": "Ativo",
+      "email": "-@gmail.com",
+      "phone": "47996860088",
+      "notes": "Ramo Imobiliário - Fechamento de 3 meses de contrato"
+    },
+    {
+      "id": "yp4896d5usmosxld4y",
+      "createdAt": "2026-05-05T17:57:43.234Z",
+      "name": "Habitare",
+      "company": "Habitare",
+      "service": "Pacote Mensal",
+      "plan": "2280",
+      "startDate": "2026-05-05",
+      "status": "Ativo",
+      "email": "-@gmail.com",
+      "phone": "47999366165",
+      "notes": "Ramo Imobiliário"
+    },
+    {
+      "id": "vlmlks5zqzmoueqs47",
+      "createdAt": "2026-05-06T18:45:35.575Z",
+      "name": "Neos",
+      "company": "Neos Agência",
+      "service": "Pacote Mensal",
+      "plan": "0",
+      "startDate": "2026-05-06",
+      "status": "Ativo",
+      "email": "neosdigital1406@gmail.com",
+      "phone": "47997580595",
+      "notes": ""
+    }
+  ],
+  "tasks": [],
+  "financials": [
+    {
+      "id": "1v23aip4zm3mosxld4y",
+      "clientId": "yp4896d5usmosxld4y",
+      "clientName": "Habitare",
+      "amount": 2280,
+      "status": "Pendente",
+      "date": "2026-05-15",
+      "type": "Mensal",
+      "notes": ""
+    },
+    {
+      "id": "broabl1bzlhmosxrbhq",
+      "clientId": "1yrbh0uds8nmosxrbhq",
+      "clientName": "Alisson",
+      "amount": 5600,
+      "status": "Pago",
+      "date": "2026-05-05",
+      "type": "Mensal",
+      "notes": ""
+    },
+    {
+      "id": "shz27jiuqjqmosxmze8",
+      "createdAt": "2026-05-05T17:58:58.736Z",
+      "clientId": "",
+      "clientName": "",
+      "amount": 4780,
+      "status": "Pago",
+      "date": "2026-05-05",
+      "type": "Avulso",
+      "notes": "Inicio de registros no Saas - Dinheiro em caixa"
+    },
+    {
+      "id": "sy2y8t3iicmosxo99x",
+      "createdAt": "2026-05-05T17:59:58.197Z",
+      "clientId": "yp4896d5usmosxld4y",
+      "clientName": "Habitare",
+      "amount": 2280,
+      "status": "Atrasado",
+      "date": "2026-04-15",
+      "type": "Mensal",
+      "notes": "Atrasado devido falta de entrega dos serviços, cobrar..."
+    },
+    {
+      "id": "h1xsf4vmxjjmoueqs47",
+      "clientId": "vlmlks5zqzmoueqs47",
+      "clientName": "Neos",
+      "amount": 0,
+      "status": "Pendente",
+      "date": "2026-05-06",
+      "type": "Mensal",
+      "notes": ""
+    }
+  ],
+  "trafficData": [],
+  "designReqs": [],
+  "performance": [],
+  "calEvents": [],
+  "costs": [],
+  "gcClientId": "470216813530-b0afg4oq544ufhkolss3u09g1rh5srft.apps.googleusercontent.com"
+}
