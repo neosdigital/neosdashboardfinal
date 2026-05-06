@@ -13,6 +13,23 @@
     <script src="https://unpkg.com/dexie@3.2.7/dist/dexie.min.js"></script>
     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script type="module">
+
+        import { supabase } from './lib/supabase.js'
+
+        async function testeSupabase() {
+
+            const { data, error } = await supabase
+                .from('usuarios')
+                .select('*')
+
+            console.log('DATA:', data)
+            console.log('ERROR:', error)
+        }
+
+        testeSupabase()
+
+    </script>
     <style>
         * {
             box-sizing: border-box;
@@ -383,6 +400,7 @@
 <body>
     <div id="root"></div>
     <script type="text/babel">
+        import { supabase } from 'lib/supabase.js'
         const { useState, useEffect, useContext, useRef } = React;
 
         /* ── CONSTANTS ─────────────────────────────────────── */
@@ -421,12 +439,23 @@
         db.version(3).stores({ calEvents: 'id, date, type, source, googleEventId, createdAt', costs: 'id, type, category, date, createdAt' });
         const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [] };
         async function loadFromDB() {
-            const [clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs] = await Promise.all([
-                db.clients.toArray(), db.tasks.toArray(), db.financials.toArray(),
-                db.trafficData.toArray(), db.designReqs.toArray(), db.performance.toArray(),
-                db.calEvents.toArray(), db.costs.toArray()
-            ]);
-            return { clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs };
+
+            const { data: clients } = await supabase
+                .from('clients')
+                .select('*')
+
+            return {
+                clients: clients || [],
+                tasks: [],
+                financials: [],
+                trafficData: [],
+                designReqs: [],
+                performance: [],
+                calEvents: [],
+                costs: []
+            }
+        }
+        return { clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs };
         }
         async function saveToDB(store) {
             await db.transaction('rw', db.clients, db.tasks, db.financials, db.trafficData, db.designReqs, db.performance, db.calEvents, db.costs, async () => {
@@ -556,17 +585,36 @@
             const notify = (msg, type = 'ok') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
             const upd = fn => setStore(p => ({ ...p, ...fn(p) }));
 
-            const addClient = data => {
-                const c = { id: genId(), createdAt: new Date().toISOString(), ...data };
-                const tasks = [
-                    { id: genId(), clientId: c.id, clientName: c.name, title: 'Onboarding e briefing do cliente', status: 'A Fazer', priority: 'Alta', assignee: TEAM[0], dueDate: '', desc: '', createdAt: new Date().toISOString() },
-                    { id: genId(), clientId: c.id, clientName: c.name, title: 'Reunião de estratégia e planejamento', status: 'Backlog', priority: 'Média', assignee: TEAM[0], dueDate: '', desc: '', createdAt: new Date().toISOString() },
-                    { id: genId(), clientId: c.id, clientName: c.name, title: 'Configurar contas e acessos', status: 'Backlog', priority: 'Alta', assignee: TEAM[1] || TEAM[0], dueDate: '', desc: '', createdAt: new Date().toISOString() },
-                ];
-                const fin = { id: genId(), clientId: c.id, clientName: c.name, amount: parseFloat(data.plan) || 0, status: 'Pendente', date: new Date().toISOString().split('T')[0], type: 'Mensal', notes: '' };
-                upd(p => ({ clients: [...p.clients, c], tasks: [...p.tasks, ...tasks], financials: [...p.financials, fin] }));
-                notify('"' + c.name + '" adicionado — tarefas e fatura criadas ✓');
-            };
+            const addClient = async data => {
+
+                const c = {
+                    id: genId(),
+                    ...data
+                }
+
+                console.log('ENVIANDO:', c)
+
+                const { data: result, error } = await supabase
+                    .from('clients')
+                    .insert([c])
+                    .select()
+
+                console.log('RESULT:', result)
+                console.log('ERROR:', error)
+
+                if (error) {
+                    alert('ERRO NO SUPABASE')
+                    console.log(error)
+                    return
+                }
+
+                setStore(p => ({
+                    ...p,
+                    clients: [...p.clients, c]
+                }))
+
+                alert('CLIENTE SALVO')
+            }
             const editClient = (id, data) => {
                 upd(p => ({
                     clients: p.clients.map(c => c.id === id ? { ...c, ...data } : c),
