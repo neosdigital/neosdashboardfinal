@@ -407,9 +407,35 @@
     </style>
 </head>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 <body>
     <div id="root"></div>
     <script type="text/babel">
+
+        const supabaseUrl = 'https://edlusjxoalqjkieugwce.supabase.co'
+
+        const supabaseKey = 'sb_publishable_OfZfNYJUrtOqVUpv8bvU4Q_HyGHHIyx'
+
+        const supabase = window.supabase.createClient(
+            supabaseUrl,
+            supabaseKey
+        )
+
+        console.log('SUPABASE CONECTADO')
+
+        async function teste() {
+
+            const { data, error } = await supabase
+                .from('clients')
+                .select('*')
+
+            console.log(data)
+            console.log(error)
+        }
+
+        teste()
+
         import { supabase } from 'lib/supabase.js'
         const { useState, useEffect, useContext, useRef } = React;
 
