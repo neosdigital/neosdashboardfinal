@@ -15,19 +15,29 @@
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script type="module">
 
-        import { supabase } from './lib/supabase.js'
+        import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm'
 
-        async function testeSupabase() {
+        window.supabase = createClient(
+            'https://edlusjxoalqjkieugwce.supabase.co',
+            'sb_publishable_OfZfNYJUrtOqVUpv8bvU4Q_HyGHHIyx'
+        )
 
-            const { data, error } = await supabase
-                .from('usuarios')
-                .select('*')
+        console.log('SUPABASE OK', window.supabase)
 
-            console.log('DATA:', data)
-            console.log('ERROR:', error)
-        }
+    </script>
 
-        testeSupabase()
+
+    async function testeSupabase() {
+
+    const { data, error } = await supabase
+    .from('usuarios')
+    .select('*')
+
+    console.log('DATA:', data)
+    console.log('ERROR:', error)
+    }
+
+    testeSupabase()
 
     </script>
     <style>
@@ -440,7 +450,7 @@
         const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [] };
         async function loadFromDB() {
 
-            const { data: clients } = await supabase
+            const { data: clients } = await window.supabase
                 .from('clients')
                 .select('*')
 
