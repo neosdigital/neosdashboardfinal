@@ -528,10 +528,11 @@
         const Ctx = React.createContext(null);
         const useApp = () => useContext(Ctx);
 
-        function AppProvider({ children }) {
+        function AppProvider({ children, authed }) {
+            const userRole = authed?.role || 'employee';
             const [store, setStore] = useState(EMPTY_STORE);
             const [dbReady, setDbReady] = useState(false);
-            const [view, setView] = useState('dashboard');
+            const [view, setView] = useState(userRole === 'admin' ? 'dashboard' : 'kanban');
             const [toast, setToast] = useState(null);
             const [calFocusDate, setCalFocusDate] = useState(null);
             const [supaStatus, setSupaStatus] = useState('connecting'); // 'connecting' | 'ok' | 'error'
@@ -751,7 +752,7 @@
             );
 
             return (
-                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate }}>
+                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate }}>
                     {children}
                 </Ctx.Provider>
             );
@@ -1188,8 +1189,9 @@
 
         /* ── SIDEBAR ────────────────────────────────────────── */
         function Sidebar() {
-            const { view, setView, supaStatus } = useApp();
+            const { view, setView, supaStatus, userRole } = useApp();
             const [backupOpen, setBackupOpen] = useState(false);
+            const isEmployee = userRole !== 'admin';
             const items = [{ id: 'dashboard', label: 'Dashboard', icon: 'dashboard' }, { id: 'clients', label: 'Clientes', icon: 'clients' }, { id: 'kanban', label: 'Kanban', icon: 'kanban' }, { id: 'financial', label: 'Financeiro', icon: 'finance' }, { id: 'traffic', label: 'Tráfego', icon: 'traffic' }, { id: 'design', label: 'Design', icon: 'design' }, { id: 'performance', label: 'Performance', icon: 'perf' }, { id: 'calendar', label: 'Calendário', icon: 'cal' }];
             return (
                 <div className="sidebar">
@@ -1203,11 +1205,24 @@
                         </div>
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
-                        {items.map(it => (
-                            <div key={it.id} className={'nav-item' + (view === it.id ? ' active' : '')} onClick={() => setView(it.id)}>
-                                <Ic n={it.icon} s={16} /><span>{it.label}</span>
-                            </div>
-                        ))}
+                        {items.map(it => {
+                            const blocked = isEmployee && EMPLOYEE_BLOCKED.includes(it.id);
+                            return (
+                                <div key={it.id}
+                                    className={'nav-item' + (view === it.id ? ' active' : '')}
+                                    onClick={() => setView(it.id)}
+                                    style={blocked ? { opacity: 0.38, cursor: 'default' } : {}}>
+                                    <Ic n={it.icon} s={16} />
+                                    <span style={{ flex: 1 }}>{it.label}</span>
+                                    {blocked && (
+                                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                                            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                                        </svg>
+                                    )}
+                                </div>
+                            );
+                        })}
                         <MiniCalendar />
                     </div>
                     <div style={{ padding: '10px 8px', borderTop: '1px solid rgba(255,255,255,.06)', marginBottom: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1509,7 +1524,7 @@
                                             </td>
                                             <td style={{ color: 'rgba(255,255,255,.65)' }}>{c.company || '—'}</td>
                                             <td><span style={{ fontSize: 11, padding: '3px 9px', borderRadius: 20, background: 'rgba(100,100,255,.13)', color: '#7090ff', fontWeight: 700 }}>{c.service}</span></td>
-                                            <td style={{ fontWeight: 700, color: '#00c864' }}>{fmt(c.plan)}</td>
+                                            <td style={{ fontWeight: 700, color: '#00c864' }}><BlurVal>{fmt(c.plan)}</BlurVal></td>
                                             <td style={{ color: 'rgba(255,255,255,.55)' }}>{fmtD(c.startDate)}</td>
                                             <td><Badge v={c.status} /></td>
                                             <td><div style={{ display: 'flex', gap: 7 }}><button className="btn-secondary" style={{ padding: '5px 9px' }} onClick={() => setEditing(c)}><Ic n="edit" s={12} /></button><button className="btn-danger" style={{ padding: '5px 9px' }} onClick={() => setDel(c)}><Ic n="trash" s={12} /></button></div></td>
@@ -3288,7 +3303,7 @@
                     const hash = await hashPassword(password);
                     const { data } = await supabase
                         .from('login_users')
-                        .select('id, name, username')
+                        .select('id, name, username, role')
                         .eq('username', username.trim().toLowerCase())
                         .eq('password_hash', hash)
                         .maybeSingle();
@@ -3309,8 +3324,8 @@
                     <div style={{ position: 'absolute', inset: 0, background: 'radial-gradient(ellipse 80% 50% at 50% -5%, rgba(255,0,64,.14) 0%, transparent 70%)', pointerEvents: 'none' }} />
                     <div style={{ position: 'absolute', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: 600, height: 300, background: 'radial-gradient(ellipse at center, rgba(255,0,64,.05) 0%, transparent 70%)', pointerEvents: 'none' }} />
                     <div style={{ width: '100%', maxWidth: 420, padding: '0 20px', position: 'relative', zIndex: 1 }}>
-                        <div style={{ textAlign: 'center', marginBottom: 36 }}>
-                            <img src="images/LOGOTIPO 2 copiar 2.png" alt="Neos" style={{ height: 68, objectFit: 'contain' }} />
+                        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: 34 }}>
+                            <img src="images/LOGOTIPO 2 copiar 2.png" alt="Neos" style={{ height: 76, objectFit: 'contain', display: 'block' }} />
                         </div>
                         <div className="glass" style={{ padding: '36px 32px', boxShadow: '0 8px 80px rgba(255,0,64,.10), 0 0 0 1px rgba(255,0,64,.13)' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
@@ -3370,21 +3385,53 @@
             );
         }
 
+        /* ── EMPLOYEE ACCESS CONTROL ────────────────────────── */
+        const EMPLOYEE_BLOCKED = ['dashboard', 'financial'];
+
+        function LockedView() {
+            return (
+                <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '65vh', gap: 22 }}>
+                    <div style={{ width: 76, height: 76, background: 'rgba(255,0,64,.07)', border: '1px solid rgba(255,0,64,.22)', borderRadius: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="rgba(255,0,64,.65)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                        </svg>
+                    </div>
+                    <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: 20, fontWeight: 700, color: 'rgba(255,255,255,.8)', marginBottom: 10 }}>Acesso Restrito</div>
+                        <div style={{ fontSize: 13, color: 'rgba(255,255,255,.35)', lineHeight: 1.7 }}>Esta seção é exclusiva para administradores.<br/>Entre em contato com o responsável.</div>
+                    </div>
+                </div>
+            );
+        }
+
+        function BlurVal({ children }) {
+            const { userRole } = useApp();
+            if (userRole !== 'admin') {
+                return <span style={{ filter: 'blur(6px)', userSelect: 'none', pointerEvents: 'none' }}>{children}</span>;
+            }
+            return <>{children}</>;
+        }
+
         /* ── APP ────────────────────────────────────────────── */
         function App() {
-            const { view } = useApp();
+            const { view, userRole } = useApp();
             const [quickAdd, setQuickAdd] = useState(false);
-            const V = { dashboard: Dashboard, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarPage }[view] || Dashboard;
+            const isEmployee = userRole !== 'admin';
+            const ViewMap = { dashboard: Dashboard, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarPage };
+            const V = (isEmployee && EMPLOYEE_BLOCKED.includes(view)) ? LockedView : (ViewMap[view] || Dashboard);
             return (
                 <div style={{ display: 'flex', minHeight: '100vh' }}>
                     <Sidebar />
                     <main style={{ marginLeft: 210, flex: 1, padding: '26px 30px', minHeight: '100vh' }}>
                         <V />
                     </main>
-                    <button className="btn-primary pulse" title="Adicionar Cliente" onClick={() => setQuickAdd(true)}
-                        style={{ position: 'fixed', bottom: 22, right: 22, zIndex: 200, borderRadius: 50, width: 50, height: 50, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 30px rgba(255,0,64,.45)' }}>
-                        <Ic n="plus" s={20} />
-                    </button>
+                    {!isEmployee && (
+                        <button className="btn-primary pulse" title="Adicionar Cliente" onClick={() => setQuickAdd(true)}
+                            style={{ position: 'fixed', bottom: 22, right: 22, zIndex: 200, borderRadius: 50, width: 50, height: 50, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 30px rgba(255,0,64,.45)' }}>
+                            <Ic n="plus" s={20} />
+                        </button>
+                    )}
                     {quickAdd && <ClientModal onClose={() => setQuickAdd(false)} />}
                     <Toast />
                 </div>
@@ -3397,7 +3444,7 @@
                 catch { return null; }
             });
             if (!authed) return <LoginScreen onLogin={setAuthed} />;
-            return <AppProvider><App /></AppProvider>;
+            return <AppProvider authed={authed}><App /></AppProvider>;
         }
 
         ReactDOM.createRoot(document.getElementById('root')).render(<Root />);
