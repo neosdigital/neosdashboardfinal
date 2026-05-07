@@ -443,11 +443,19 @@
         /* ── SUPABASE HELPERS ───────────────────────────────── */
         const supaSave = async (table, record) => {
             const { error } = await supabase.from(table).upsert([record]);
-            if (error) console.error(`[Neos] Supabase save error (${table}):`, error.message || error);
+            if (error) {
+                const { modifiedBy, modifiedAt, ...core } = record;
+                const { error: e2 } = await supabase.from(table).upsert([core]);
+                if (e2) console.error(`[Neos] Supabase save error (${table}):`, e2.message || e2);
+            }
         };
         const supaUpdate = async (table, id, data) => {
             const { error } = await supabase.from(table).update(data).eq('id', id);
-            if (error) console.error(`[Neos] Supabase update error (${table}):`, error.message || error);
+            if (error) {
+                const { modifiedBy, modifiedAt, ...core } = data;
+                const { error: e2 } = await supabase.from(table).update(core).eq('id', id);
+                if (e2) console.error(`[Neos] Supabase update error (${table}):`, e2.message || e2);
+            }
         };
         const supaDelete = async (table, id) => {
             const { error } = await supabase.from(table).delete().eq('id', id);
@@ -543,8 +551,9 @@
             const [onlineUsers, setOnlineUsers] = useState([]);
             const [chatOpen, setChatOpen] = useState(false);
             const [chatMessages, setChatMessages] = useState([]);
-            const presenceTrackRef = useRef(null);
+            const viewRef = useRef(view);
             const chatChannelRef = useRef(null);
+            useEffect(() => { viewRef.current = view; }, [view]);
 
             useEffect(() => {
                 supabase.from('clients').select('id', { count: 'exact', head: true })
@@ -604,17 +613,29 @@
                 const myName = me?.name || myKey;
                 const myColor = getUserColor(myKey);
                 const ch = supabase.channel('neos-cursors', { config: { presence: { key: myKey } } });
-                ch.on('presence', { event: 'sync' }, () => {
+                const syncOnline = () => {
                     const all = Object.values(ch.presenceState()).flat();
-                    setOnlineUsers(all.filter(u => u.k !== myKey));
-                });
+                    const byKey = {};
+                    for (const u of all) byKey[u.k] = u;
+                    setOnlineUsers(Object.values(byKey).filter(u => u.k !== myKey));
+                };
+                ch.on('presence', { event: 'sync' }, syncOnline);
+                ch.on('presence', { event: 'join' }, syncOnline);
+                ch.on('presence', { event: 'leave' }, syncOnline);
+                let lastT = 0;
+                const onMove = e => {
+                    const now = Date.now();
+                    if (now - lastT < 50) return;
+                    lastT = now;
+                    ch.track({ k: myKey, name: myName, view: viewRef.current, x: e.clientX / window.innerWidth, y: e.clientY / window.innerHeight, color: myColor });
+                };
                 ch.subscribe(async s => {
                     if (s === 'SUBSCRIBED') {
-                        presenceTrackRef.current = data => ch.track(data);
-                        await ch.track({ k: myKey, name: myName, view: 'kanban', x: 0, y: 0, color: myColor });
+                        await ch.track({ k: myKey, name: myName, view: viewRef.current, x: 0, y: 0, color: myColor });
+                        window.addEventListener('mousemove', onMove);
                     }
                 });
-                return () => { presenceTrackRef.current = null; supabase.removeChannel(ch); };
+                return () => { window.removeEventListener('mousemove', onMove); supabase.removeChannel(ch); };
             }, []);
 
             /* ── CHAT (broadcast, ephemeral) ── */
@@ -872,7 +893,7 @@
             );
 
             return (
-                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, presenceTrackRef, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate }}>
+                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate }}>
                     {children}
                 </Ctx.Provider>
             );
@@ -3707,27 +3728,8 @@
 
         /* ── APP ────────────────────────────────────────────── */
         function App() {
-            const { view, userRole, onlineUsers, presenceTrackRef, chatOpen, setChatOpen } = useApp();
+            const { view, userRole, onlineUsers, chatOpen, setChatOpen } = useApp();
             const [quickAdd, setQuickAdd] = useState(false);
-            const viewRef = useRef(view);
-            useEffect(() => { viewRef.current = view; }, [view]);
-
-            useEffect(() => {
-                const me = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
-                const myKey = me?.username || 'anon';
-                const myName = me?.name || myKey;
-                const myColor = getUserColor(myKey);
-                let lastT = 0;
-                const onMove = e => {
-                    const now = Date.now();
-                    if (now - lastT < 50) return;
-                    lastT = now;
-                    if (presenceTrackRef.current) presenceTrackRef.current({ k: myKey, name: myName, view: viewRef.current, x: e.clientX / window.innerWidth, y: e.clientY / window.innerHeight, color: myColor });
-                };
-                window.addEventListener('mousemove', onMove);
-                return () => window.removeEventListener('mousemove', onMove);
-            }, []);
-
             const isEmployee = userRole !== 'admin';
             const ViewMap = { dashboard: Dashboard, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarPage };
             const V = (isEmployee && EMPLOYEE_BLOCKED.includes(view)) ? LockedView : (ViewMap[view] || Dashboard);
