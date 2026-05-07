@@ -529,6 +529,13 @@
             const [view, setView] = useState('dashboard');
             const [toast, setToast] = useState(null);
             const [calFocusDate, setCalFocusDate] = useState(null);
+            const [supaStatus, setSupaStatus] = useState('connecting'); // 'connecting' | 'ok' | 'error'
+
+            useEffect(() => {
+                supabase.from('clients').select('id', { count: 'exact', head: true })
+                    .then(({ error }) => setSupaStatus(error ? 'error' : 'ok'))
+                    .catch(() => setSupaStatus('error'));
+            }, []);
 
             useEffect(() => {
                 (async () => {
@@ -739,7 +746,7 @@
             );
 
             return (
-                <Ctx.Provider value={{ store, view, setView, toast, dbReady, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate }}>
+                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate }}>
                     {children}
                 </Ctx.Provider>
             );
@@ -1176,7 +1183,7 @@
 
         /* ── SIDEBAR ────────────────────────────────────────── */
         function Sidebar() {
-            const { view, setView } = useApp();
+            const { view, setView, supaStatus } = useApp();
             const [backupOpen, setBackupOpen] = useState(false);
             const items = [{ id: 'dashboard', label: 'Dashboard', icon: 'dashboard' }, { id: 'clients', label: 'Clientes', icon: 'clients' }, { id: 'kanban', label: 'Kanban', icon: 'kanban' }, { id: 'financial', label: 'Financeiro', icon: 'finance' }, { id: 'traffic', label: 'Tráfego', icon: 'traffic' }, { id: 'design', label: 'Design', icon: 'design' }, { id: 'performance', label: 'Performance', icon: 'perf' }, { id: 'calendar', label: 'Calendário', icon: 'cal' }];
             return (
@@ -1203,7 +1210,15 @@
                             <Ic n="sync" s={15} /><span style={{ fontSize: 12 }}>Backup & DB</span>
                         </div>
                     </div>
-                    <div style={{ padding: '0 8px 8px', fontSize: 10, color: 'rgba(255,255,255,.2)' }}>Developed by · Arthur Lemos · {new Date().getFullYear()}</div>
+                    <div style={{ padding: '0 8px 8px', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 6, background: supaStatus === 'ok' ? 'rgba(0,200,100,.08)' : supaStatus === 'error' ? 'rgba(255,0,64,.1)' : 'rgba(255,255,255,.04)', border: '1px solid ' + (supaStatus === 'ok' ? 'rgba(0,200,100,.2)' : supaStatus === 'error' ? 'rgba(255,0,64,.25)' : 'rgba(255,255,255,.08)') }}>
+                            <div style={{ width: 7, height: 7, borderRadius: '50%', background: supaStatus === 'ok' ? '#00c864' : supaStatus === 'error' ? '#ff4060' : '#ffcc00', boxShadow: supaStatus === 'ok' ? '0 0 6px #00c864' : supaStatus === 'error' ? '0 0 6px #ff4060' : '0 0 6px #ffcc00', flexShrink: 0 }} />
+                            <span style={{ fontSize: 10, color: supaStatus === 'ok' ? 'rgba(0,200,100,.9)' : supaStatus === 'error' ? 'rgba(255,100,100,.9)' : 'rgba(255,200,0,.8)', fontWeight: 600 }}>
+                                {supaStatus === 'ok' ? 'Supabase conectado' : supaStatus === 'error' ? 'Supabase: ERRO' : 'Conectando...'}
+                            </span>
+                        </div>
+                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.15)', paddingLeft: 2 }}>Neos v2.0 · {new Date().getFullYear()}</div>
+                    </div>
                     {backupOpen && <BackupModal onClose={() => setBackupOpen(false)} />}
                 </div>
             );
