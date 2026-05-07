@@ -441,20 +441,31 @@
         const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [] };
 
         /* ── SUPABASE HELPERS ───────────────────────────────── */
+        const _stripCol = (err, obj) => {
+            const msg = err?.message || '';
+            const m = msg.match(/[Cc]olumn ['"]?([\w]+)['"]?/);
+            const col = m?.[1];
+            if (col && Object.prototype.hasOwnProperty.call(obj, col)) {
+                const copy = { ...obj }; delete copy[col]; return copy;
+            }
+            return null;
+        };
         const supaSave = async (table, record) => {
-            const { error } = await supabase.from(table).upsert([record]);
-            if (error) {
-                const { modifiedBy, modifiedAt, ...core } = record;
-                const { error: e2 } = await supabase.from(table).upsert([core]);
-                if (e2) console.error(`[Neos] Supabase save error (${table}):`, e2.message || e2);
+            let r = { ...record };
+            for (let i = 0; i < 12; i++) {
+                const { error } = await supabase.from(table).upsert([r]);
+                if (!error) return;
+                const next = _stripCol(error, r);
+                if (next) { r = next; } else { console.error(`[Neos] Supabase save (${table}):`, error.message); return; }
             }
         };
         const supaUpdate = async (table, id, data) => {
-            const { error } = await supabase.from(table).update(data).eq('id', id);
-            if (error) {
-                const { modifiedBy, modifiedAt, ...core } = data;
-                const { error: e2 } = await supabase.from(table).update(core).eq('id', id);
-                if (e2) console.error(`[Neos] Supabase update error (${table}):`, e2.message || e2);
+            let d = { ...data };
+            for (let i = 0; i < 12; i++) {
+                const { error } = await supabase.from(table).update(d).eq('id', id);
+                if (!error) return;
+                const next = _stripCol(error, d);
+                if (next) { d = next; } else { console.error(`[Neos] Supabase update (${table}):`, error.message); return; }
             }
         };
         const supaDelete = async (table, id) => {
