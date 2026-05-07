@@ -422,6 +422,7 @@
 
         const CURSOR_COLORS = ['#a060ff', '#4090ff', '#00c864', '#ffcc00', '#E1306C', '#69C9D0', '#ff8030', '#20c0d0'];
         const getUserColor = u => { let h = 0; for (let c of (u || '')) h = (h * 31 + c.charCodeAt(0)) % CURSOR_COLORS.length; return CURSOR_COLORS[Math.abs(h) % CURSOR_COLORS.length]; };
+        const getModUser = () => { try { const s = JSON.parse(sessionStorage.getItem('neos_auth') || 'null'); return { modifiedBy: s?.name || '?', modifiedAt: new Date().toISOString() }; } catch { return { modifiedBy: '?', modifiedAt: new Date().toISOString() }; } };
 
         /* ── DATABASE (IndexedDB via Dexie) ─────────────────── */
         let _backupFileHandle = null;
@@ -538,7 +539,12 @@
             const [view, setView] = useState(userRole === 'admin' ? 'dashboard' : 'kanban');
             const [toast, setToast] = useState(null);
             const [calFocusDate, setCalFocusDate] = useState(null);
-            const [supaStatus, setSupaStatus] = useState('connecting'); // 'connecting' | 'ok' | 'error'
+            const [supaStatus, setSupaStatus] = useState('connecting');
+            const [onlineUsers, setOnlineUsers] = useState([]);
+            const [chatOpen, setChatOpen] = useState(false);
+            const [chatMessages, setChatMessages] = useState([]);
+            const presenceTrackRef = useRef(null);
+            const chatChannelRef = useRef(null);
 
             useEffect(() => {
                 supabase.from('clients').select('id', { count: 'exact', head: true })
@@ -590,6 +596,46 @@
                 });
                 return () => { supabase.removeChannel(channel); };
             }, [dbReady]);
+
+            /* ── PRESENCE (cursors + online users) ── */
+            useEffect(() => {
+                const me = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
+                const myKey = me?.username || 'anon';
+                const myName = me?.name || myKey;
+                const myColor = getUserColor(myKey);
+                const ch = supabase.channel('neos-cursors', { config: { presence: { key: myKey } } });
+                ch.on('presence', { event: 'sync' }, () => {
+                    const all = Object.values(ch.presenceState()).flat();
+                    setOnlineUsers(all.filter(u => u.k !== myKey));
+                });
+                ch.subscribe(async s => {
+                    if (s === 'SUBSCRIBED') {
+                        presenceTrackRef.current = data => ch.track(data);
+                        await ch.track({ k: myKey, name: myName, view: 'kanban', x: 0, y: 0, color: myColor });
+                    }
+                });
+                return () => { presenceTrackRef.current = null; supabase.removeChannel(ch); };
+            }, []);
+
+            /* ── CHAT (broadcast, ephemeral) ── */
+            useEffect(() => {
+                const me = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
+                const myKey = me?.username || 'anon';
+                const ch = supabase.channel('neos-chat');
+                ch.on('broadcast', { event: 'msg' }, ({ payload }) => {
+                    if (payload.k !== myKey) setChatMessages(p => [...p.slice(-99), payload]);
+                });
+                ch.subscribe();
+                chatChannelRef.current = ch;
+                return () => { supabase.removeChannel(ch); chatChannelRef.current = null; };
+            }, []);
+
+            const sendChatMsg = text => {
+                const me = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
+                const msg = { k: me?.username || 'anon', name: me?.name || '?', color: getUserColor(me?.username || ''), text, ts: new Date().toISOString() };
+                if (chatChannelRef.current) chatChannelRef.current.send({ type: 'broadcast', event: 'msg', payload: msg });
+                setChatMessages(p => [...p.slice(-99), msg]);
+            };
 
             const exportJSON = async () => {
                 const ts = new Date();
@@ -664,7 +710,7 @@
 
             /* ── CLIENTS ── */
             const addClient = async data => {
-                const c = { id: genId(), createdAt: new Date().toISOString(), ...data };
+                const c = { id: genId(), createdAt: new Date().toISOString(), ...getModUser(), ...data };
                 setStore(p => ({ ...p, clients: [...p.clients, c] }));
                 try {
                     const { error } = await supabase.from('clients').insert([c]);
@@ -680,12 +726,13 @@
                 }
             };
             const editClient = (id, data) => {
+                const m = getModUser();
                 upd(p => ({
-                    clients: p.clients.map(c => c.id === id ? { ...c, ...data } : c),
+                    clients: p.clients.map(c => c.id === id ? { ...c, ...data, ...m } : c),
                     financials: p.financials.map(f => f.clientId === id ? { ...f, amount: parseFloat(data.plan) || f.amount, clientName: data.name || f.clientName } : f),
                     tasks: p.tasks.map(t => t.clientId === id ? { ...t, clientName: data.name || t.clientName } : t),
                 }));
-                supaUpdate('clients', id, data);
+                supaUpdate('clients', id, { ...data, ...m });
                 notify('Cliente atualizado ✓');
             };
             const deleteClient = id => {
@@ -695,15 +742,15 @@
             };
 
             /* ── TASKS ── */
-            const addTask = data => { const t = { id: genId(), createdAt: new Date().toISOString(), ...data }; upd(p => ({ tasks: [...p.tasks, t] })); supaSave('tasks', t); notify('Tarefa criada ✓'); };
-            const editTask = (id, data) => { upd(p => ({ tasks: p.tasks.map(t => t.id === id ? { ...t, ...data } : t) })); supaUpdate('tasks', id, data); };
+            const addTask = data => { const t = { id: genId(), createdAt: new Date().toISOString(), ...getModUser(), ...data }; upd(p => ({ tasks: [...p.tasks, t] })); supaSave('tasks', t); notify('Tarefa criada ✓'); };
+            const editTask = (id, data) => { const m = getModUser(); upd(p => ({ tasks: p.tasks.map(t => t.id === id ? { ...t, ...data, ...m } : t) })); supaUpdate('tasks', id, { ...data, ...m }); };
             const deleteTask = id => { upd(p => ({ tasks: p.tasks.filter(t => t.id !== id) })); supaDelete('tasks', id); notify('Tarefa excluída', 'warn'); };
             const moveTask = (id, status) => { upd(p => ({ tasks: p.tasks.map(t => t.id === id ? { ...t, status } : t) })); supaUpdate('tasks', id, { status }); };
             const resetTasks = () => { upd(p => { p.tasks.forEach(t => supaDelete('tasks', t.id)); return { tasks: [] }; }); notify('Todas as tarefas foram resetadas', 'warn'); };
 
             /* ── FINANCIALS ── */
-            const addFin = data => { const f = { id: genId(), createdAt: new Date().toISOString(), ...data }; upd(p => ({ financials: [...p.financials, f] })); supaSave('financials', f); notify('Registro adicionado ✓'); };
-            const editFin = (id, data) => { upd(p => ({ financials: p.financials.map(f => f.id === id ? { ...f, ...data } : f) })); supaUpdate('financials', id, data); notify('Registro atualizado ✓'); };
+            const addFin = data => { const f = { id: genId(), createdAt: new Date().toISOString(), ...getModUser(), ...data }; upd(p => ({ financials: [...p.financials, f] })); supaSave('financials', f); notify('Registro adicionado ✓'); };
+            const editFin = (id, data) => { const m = getModUser(); upd(p => ({ financials: p.financials.map(f => f.id === id ? { ...f, ...data, ...m } : f) })); supaUpdate('financials', id, { ...data, ...m }); notify('Registro atualizado ✓'); };
             const deleteFin = id => { upd(p => ({ financials: p.financials.filter(f => f.id !== id) })); supaDelete('financials', id); notify('Registro excluído', 'warn'); };
 
             const saveTraffic = data => {
@@ -716,13 +763,13 @@
             };
 
             /* ── DESIGN ── */
-            const addDesign = data => { const d = { id: genId(), revisions: 0, createdAt: new Date().toISOString(), ...data }; upd(p => ({ designReqs: [...p.designReqs, d] })); supaSave('designReqs', d); notify('Solicitação de design criada ✓'); };
-            const editDesign = (id, data) => { upd(p => ({ designReqs: p.designReqs.map(d => d.id === id ? { ...d, ...data } : d) })); supaUpdate('designReqs', id, data); notify('Atualizado ✓'); };
+            const addDesign = data => { const d = { id: genId(), revisions: 0, createdAt: new Date().toISOString(), ...getModUser(), ...data }; upd(p => ({ designReqs: [...p.designReqs, d] })); supaSave('designReqs', d); notify('Solicitação de design criada ✓'); };
+            const editDesign = (id, data) => { const m = getModUser(); upd(p => ({ designReqs: p.designReqs.map(d => d.id === id ? { ...d, ...data, ...m } : d) })); supaUpdate('designReqs', id, { ...data, ...m }); notify('Atualizado ✓'); };
             const deleteDesign = id => { upd(p => ({ designReqs: p.designReqs.filter(d => d.id !== id) })); supaDelete('designReqs', id); notify('Excluído', 'warn'); };
 
             /* ── PERFORMANCE ── */
-            const addPerformance = data => { const r = { id: genId(), createdAt: new Date().toISOString(), ...data }; upd(p => ({ performance: [...(p.performance || []), r] })); supaSave('performance', r); notify('Registro de performance criado ✓'); };
-            const editPerformance = (id, data) => { upd(p => ({ performance: (p.performance || []).map(r => r.id === id ? { ...r, ...data } : r) })); supaUpdate('performance', id, data); notify('Atualizado ✓'); };
+            const addPerformance = data => { const r = { id: genId(), createdAt: new Date().toISOString(), ...getModUser(), ...data }; upd(p => ({ performance: [...(p.performance || []), r] })); supaSave('performance', r); notify('Registro de performance criado ✓'); };
+            const editPerformance = (id, data) => { const m = getModUser(); upd(p => ({ performance: (p.performance || []).map(r => r.id === id ? { ...r, ...data, ...m } : r) })); supaUpdate('performance', id, { ...data, ...m }); notify('Atualizado ✓'); };
             const deletePerformance = id => { upd(p => ({ performance: (p.performance || []).filter(r => r.id !== id) })); supaDelete('performance', id); notify('Excluído', 'warn'); };
 
             /* ── CALENDAR EVENTS ── */
@@ -751,12 +798,12 @@
                 supaSave('calEvents', e);
                 notify('Evento criado ✓ — tarefa adicionada ao Kanban');
             };
-            const editCalEvent = (id, data) => { upd(p => ({ calEvents: (p.calEvents || []).map(e => e.id === id ? { ...e, ...data } : e) })); supaUpdate('calEvents', id, data); notify('Evento atualizado ✓'); };
+            const editCalEvent = (id, data) => { const m = getModUser(); upd(p => ({ calEvents: (p.calEvents || []).map(e => e.id === id ? { ...e, ...data, ...m } : e) })); supaUpdate('calEvents', id, { ...data, ...m }); notify('Evento atualizado ✓'); };
             const deleteCalEvent = id => { upd(p => ({ calEvents: (p.calEvents || []).filter(e => e.id !== id) })); supaDelete('calEvents', id); notify('Evento excluído', 'warn'); };
 
             /* ── COSTS ── */
-            const addCost = data => { const c = { id: genId(), createdAt: new Date().toISOString(), ...data }; upd(p => ({ costs: [...(p.costs || []), c] })); supaSave('costs', c); notify('Custo adicionado ✓'); };
-            const editCost = (id, data) => { upd(p => ({ costs: (p.costs || []).map(c => c.id === id ? { ...c, ...data } : c) })); supaUpdate('costs', id, data); notify('Custo atualizado ✓'); };
+            const addCost = data => { const c = { id: genId(), createdAt: new Date().toISOString(), ...getModUser(), ...data }; upd(p => ({ costs: [...(p.costs || []), c] })); supaSave('costs', c); notify('Custo adicionado ✓'); };
+            const editCost = (id, data) => { const m = getModUser(); upd(p => ({ costs: (p.costs || []).map(c => c.id === id ? { ...c, ...data, ...m } : c) })); supaUpdate('costs', id, { ...data, ...m }); notify('Custo atualizado ✓'); };
             const deleteCost = id => { upd(p => ({ costs: (p.costs || []).filter(c => c.id !== id) })); supaDelete('costs', id); notify('Custo excluído', 'warn'); };
 
             /* ── CAMPAIGNS (Tráfego Pago) ── */
@@ -792,7 +839,7 @@
                 });
                 notify('Campanha criada ✓');
             };
-            const editCampaign = (id, data) => { upd(p => ({ trafficData: p.trafficData.map(t => t.id === id ? { ...t, ...data } : t) })); supaUpdate('trafficData', id, data); notify('Campanha atualizada ✓'); };
+            const editCampaign = (id, data) => { const m = getModUser(); upd(p => ({ trafficData: p.trafficData.map(t => t.id === id ? { ...t, ...data, ...m } : t) })); supaUpdate('trafficData', id, { ...data, ...m }); notify('Campanha atualizada ✓'); };
             const deleteCampaign = id => { upd(p => ({ trafficData: p.trafficData.filter(t => t.id !== id) })); supaDelete('trafficData', id); notify('Campanha excluída', 'warn'); };
 
             if (!dbReady) return (
@@ -804,7 +851,7 @@
             );
 
             return (
-                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate }}>
+                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, presenceTrackRef, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate }}>
                     {children}
                 </Ctx.Provider>
             );
@@ -1281,10 +1328,7 @@
                         <div className="nav-item" onClick={() => setBackupOpen(true)} style={{ background: 'rgba(0,200,100,.06)', border: '1px solid rgba(0,200,100,.18)', borderRadius: 8, color: 'rgba(100,255,160,.8)' }}>
                             <Ic n="sync" s={15} /><span style={{ fontSize: 12 }}>Backup & DB</span>
                         </div>
-                        <div className="nav-item" onClick={() => { sessionStorage.removeItem('neos_auth'); window.location.reload(); }} style={{ background: 'rgba(255,0,64,.06)', border: '1px solid rgba(255,0,64,.18)', borderRadius: 8, color: 'rgba(255,100,120,.8)' }}>
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-                            <span style={{ fontSize: 12 }}>Sair</span>
-                        </div>
+                        <UserBox />
                     </div>
                     <div style={{ padding: '0 8px 8px', display: 'flex', flexDirection: 'column', gap: 4 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 6, background: supaStatus === 'ok' ? 'rgba(0,200,100,.08)' : supaStatus === 'error' ? 'rgba(255,0,64,.1)' : 'rgba(255,255,255,.04)', border: '1px solid ' + (supaStatus === 'ok' ? 'rgba(0,200,100,.2)' : supaStatus === 'error' ? 'rgba(255,0,64,.25)' : 'rgba(255,255,255,.08)') }}>
@@ -1571,7 +1615,7 @@
                                             <td>
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                                                     <div style={{ width: 30, height: 30, borderRadius: 7, background: '#ff0040', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{c.name[0]}</div>
-                                                    <div><div style={{ fontWeight: 600 }}>{c.name}</div><div style={{ fontSize: 11, color: 'rgba(255,255,255,.38)' }}>{c.email || '—'}</div></div>
+                                                    <div><div style={{ fontWeight: 600 }}>{c.name}</div><div style={{ fontSize: 11, color: 'rgba(255,255,255,.38)' }}>{c.email || '—'}</div><ModTag rec={c} /></div>
                                                 </div>
                                             </td>
                                             <td style={{ color: 'rgba(255,255,255,.65)' }}>{c.company || '—'}</td>
@@ -1634,6 +1678,7 @@
                                                     {t.dueDate && <span style={{ fontSize: 10, color: over ? '#ff4060' : dl <= 3 ? '#ffcc00' : 'rgba(255,255,255,.38)', display: 'flex', alignItems: 'center', gap: 3 }}><Ic n="clock" s={10} />{over ? 'Atrasada' : dl === 0 ? 'Hoje' : dl + 'd'}</span>}
                                                 </div>
                                                 {t.assignee && <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)', marginTop: 6 }}>→ {t.assignee.split(' ')[0]}</div>}
+                                                <ModTag rec={t} />
                                                 <div style={{ display: 'flex', gap: 5, marginTop: 9, justifyContent: 'flex-end' }}>
                                                     <button className="btn-secondary" style={{ padding: '3px 7px' }} onClick={() => setEditing(t)}><Ic n="edit" s={11} /></button>
                                                     <button className="btn-danger" style={{ padding: '3px 7px' }} onClick={() => setDel(t)}><Ic n="trash" s={11} /></button>
@@ -2855,8 +2900,34 @@
             const [gcSync, setGcSync] = useState(false);
             const [gcSetup, setGcSetup] = useState(false);
             const [gcIdInput, setGcIdInput] = useState(gcClientId);
+            const [showTextAdd, setShowTextAdd] = useState(false);
+            const [textInput, setTextInput] = useState('');
 
             useEffect(() => { if (calFocusDate) setFocus(new Date(calFocusDate + 'T12:00')); }, [calFocusDate]);
+
+            const parseEventText = raw => {
+                const text = raw.trim();
+                const ev = { title: '', date: '', type: 'Reunião', description: '', clientName: '' };
+                const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+                for (const line of lines) {
+                    const lower = line.toLowerCase();
+                    if (lower.startsWith('título:') || lower.startsWith('titulo:')) ev.title = line.split(':').slice(1).join(':').trim();
+                    else if (lower.startsWith('data:')) {
+                        const raw = line.split(':').slice(1).join(':').trim();
+                        const m = raw.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
+                        if (m) {
+                            const d = m[1].padStart(2,'0'), mo = m[2].padStart(2,'0');
+                            const y = m[3] ? (m[3].length === 2 ? '20'+m[3] : m[3]) : new Date().getFullYear();
+                            ev.date = `${y}-${mo}-${d}`;
+                        }
+                    } else if (lower.startsWith('tipo:')) ev.type = line.split(':').slice(1).join(':').trim();
+                    else if (lower.startsWith('cliente:')) ev.clientName = line.split(':').slice(1).join(':').trim();
+                    else if (lower.startsWith('descrição:') || lower.startsWith('descricao:') || lower.startsWith('obs:')) ev.description = line.split(':').slice(1).join(':').trim();
+                    else if (!ev.title && line.length > 2) ev.title = line;
+                }
+                if (!ev.title) ev.title = text.split('\n')[0].substring(0, 60);
+                return ev;
+            };
 
             const prev = () => { if (vMode === 'month') setFocus(d => new Date(d.getFullYear(), d.getMonth() - 1, 1)); else setFocus(d => { const n = new Date(d); n.setDate(d.getDate() - 7); return n; }); };
             const next = () => { if (vMode === 'month') setFocus(d => new Date(d.getFullYear(), d.getMonth() + 1, 1)); else setFocus(d => { const n = new Date(d); n.setDate(d.getDate() + 7); return n; }); };
@@ -2993,6 +3064,10 @@
                                     <Ic n="link" s={11} />Google Agenda
                                 </button>
                             )}
+                            <button className="btn-secondary" onClick={() => { setTextInput(''); setShowTextAdd(true); }} style={{ fontSize: 12, gap: 5 }}>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                Texto → Evento
+                            </button>
                             <button className="btn-primary" onClick={() => { setAddDef(null); setShowAdd(true); }}><Ic n="plus" s={13} />Novo Evento</button>
                         </div>
                     </div>
@@ -3039,6 +3114,41 @@
                     {showAdd && <EventModal defaultDate={addDef} onClose={() => setShowAdd(false)} />}
                     {editEv && <EventModal ev={editEv} onClose={() => setEditEv(null)} />}
                     {delEv && <Confirm msg={`Excluir "${delEv.title}"?`} onOk={() => { deleteCalEvent(delEv.id); setDelEv(null); }} onClose={() => setDelEv(null)} />}
+                    {showTextAdd && (
+                        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowTextAdd(false)}>
+                            <div className="modal-box fade-in" style={{ maxWidth: 460 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                                    <h3 style={{ fontSize: 15, fontWeight: 700 }}>Adicionar via Texto</h3>
+                                    <button onClick={() => setShowTextAdd(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.5)', cursor: 'pointer' }}><Ic n="x" s={16} /></button>
+                                </div>
+                                <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 7, padding: '10px 12px', marginBottom: 12, lineHeight: 1.8 }}>
+                                    <strong style={{ color: 'rgba(255,255,255,.55)' }}>Formato:</strong><br />
+                                    Título: Nome do evento<br />
+                                    Data: DD/MM/AAAA<br />
+                                    Tipo: Reunião | Entrega | Prazo | Outro<br />
+                                    Cliente: Nome do cliente (opcional)<br />
+                                    Obs: Descrição (opcional)
+                                </div>
+                                <textarea
+                                    className="input-field"
+                                    rows={7}
+                                    placeholder={"Título: Reunião de briefing\nData: 15/05/2026\nTipo: Reunião\nCliente: Empresa X\nObs: Apresentar proposta inicial"}
+                                    value={textInput}
+                                    onChange={e => setTextInput(e.target.value)}
+                                    style={{ width: '100%', resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
+                                />
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+                                    <button className="btn-secondary" onClick={() => setShowTextAdd(false)}>Cancelar</button>
+                                    <button className="btn-primary" onClick={() => {
+                                        const parsed = parseEventText(textInput);
+                                        if (!parsed.title || !parsed.date) { alert('Informe pelo menos Título e Data.'); return; }
+                                        addCalEvent(parsed);
+                                        setShowTextAdd(false);
+                                    }}>Criar Evento</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         }
@@ -3465,11 +3575,114 @@
             return <>{children}</>;
         }
 
+        function ModTag({ rec }) {
+            if (!rec?.modifiedBy || !rec?.modifiedAt) return null;
+            try {
+                const d = new Date(rec.modifiedAt);
+                const date = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+                const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                return <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.2)', marginTop: 3, lineHeight: 1.3 }}>Modificado por {rec.modifiedBy} em {date} às {time}</div>;
+            } catch { return null; }
+        }
+
+        /* ── USER BOX (sidebar) ─────────────────────────────── */
+        function UserBox() {
+            const { onlineUsers } = useApp();
+            const [open, setOpen] = useState(false);
+            const ref = useRef(null);
+            const me = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
+            const myColor = getUserColor(me?.username || '');
+            useEffect(() => {
+                const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+                document.addEventListener('mousedown', h);
+                return () => document.removeEventListener('mousedown', h);
+            }, []);
+            return (
+                <div ref={ref} style={{ padding: '0 8px 8px', position: 'relative' }}>
+                    <div onClick={() => setOpen(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', borderRadius: 8, cursor: 'pointer', background: open ? 'rgba(255,255,255,.08)' : 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.09)', transition: 'background .2s' }}>
+                        <div style={{ width: 26, height: 26, borderRadius: '50%', background: myColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
+                            {(me?.name || '?')[0].toUpperCase()}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{me?.name || 'Usuário'}</div>
+                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,.35)', marginTop: 1 }}>{onlineUsers.length + 1} online</div>
+                        </div>
+                        <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#00c864', boxShadow: '0 0 5px #00c864', flexShrink: 0 }} />
+                    </div>
+                    {open && (
+                        <div style={{ position: 'absolute', bottom: '100%', left: 0, right: 0, marginBottom: 6, background: 'rgba(8,8,22,.98)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 10, padding: '10px 12px', zIndex: 500, boxShadow: '0 -8px 30px rgba(0,0,0,.6)' }}>
+                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,.35)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '.5px', fontWeight: 600 }}>Online agora</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>
+                                <div style={{ width: 18, height: 18, borderRadius: '50%', background: myColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, color: '#fff' }}>{(me?.name || '?')[0]}</div>
+                                <span style={{ fontSize: 12, color: '#fff', fontWeight: 600 }}>{me?.name} <span style={{ color: 'rgba(255,255,255,.35)', fontWeight: 400 }}>(você)</span></span>
+                            </div>
+                            {onlineUsers.map(u => (
+                                <div key={u.k} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>
+                                    <div style={{ width: 18, height: 18, borderRadius: '50%', background: u.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, fontWeight: 700, color: '#fff' }}>{(u.name || '?')[0]}</div>
+                                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,.7)' }}>{u.name}</span>
+                                </div>
+                            ))}
+                            <div style={{ borderTop: '1px solid rgba(255,255,255,.07)', marginTop: 8, paddingTop: 8 }}>
+                                <button onClick={() => { sessionStorage.removeItem('neos_auth'); window.location.reload(); }}
+                                    style={{ width: '100%', background: 'rgba(255,0,64,.07)', border: '1px solid rgba(255,0,64,.18)', color: '#ff6070', borderRadius: 7, padding: '6px 10px', cursor: 'pointer', fontSize: 12, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                                    Sair
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        /* ── CHAT ────────────────────────────────────────────── */
+        function Chat() {
+            const { chatOpen, setChatOpen, chatMessages, sendChatMsg, onlineUsers, userRole } = useApp();
+            const [text, setText] = useState('');
+            const endRef = useRef(null);
+            const me = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
+            const myKey = me?.username || 'anon';
+            const isEmployee = userRole !== 'admin';
+            useEffect(() => { if (chatOpen && endRef.current) endRef.current.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages, chatOpen]);
+            if (!chatOpen) return null;
+            const send = () => { if (!text.trim()) return; sendChatMsg(text.trim()); setText(''); };
+            return (
+                <div className="glass fade-in" style={{ position: 'fixed', bottom: isEmployee ? 80 : 144, right: 22, zIndex: 198, width: 310, height: 420, display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,.55)', borderColor: 'rgba(160,96,255,.3)' }}>
+                    <div style={{ padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,.07)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+                        <div>
+                            <div style={{ fontSize: 13, fontWeight: 700 }}>Chat Interno</div>
+                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,.4)', marginTop: 1 }}>{onlineUsers.length > 0 ? onlineUsers.map(u => u.name).join(', ') + ' online' : 'Só você online'}</div>
+                        </div>
+                        <button onClick={() => setChatOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,.4)', padding: 4 }}><Ic n="x" s={14} /></button>
+                    </div>
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {chatMessages.length === 0 && <div style={{ textAlign: 'center', color: 'rgba(255,255,255,.22)', fontSize: 12, marginTop: 50, lineHeight: 1.8 }}>Nenhuma mensagem ainda.<br/><span style={{ fontSize: 10 }}>Mensagens não são salvas.</span></div>}
+                        {chatMessages.map((msg, i) => {
+                            const isMe = msg.k === myKey;
+                            return (
+                                <div key={i} style={{ display: 'flex', flexDirection: 'column', alignItems: isMe ? 'flex-end' : 'flex-start' }}>
+                                    {!isMe && <div style={{ fontSize: 10, color: msg.color, fontWeight: 700, marginBottom: 3 }}>{msg.name}</div>}
+                                    <div style={{ maxWidth: '82%', background: isMe ? 'rgba(160,96,255,.22)' : 'rgba(255,255,255,.07)', border: '1px solid ' + (isMe ? 'rgba(160,96,255,.3)' : 'rgba(255,255,255,.1)'), borderRadius: isMe ? '10px 10px 2px 10px' : '10px 10px 10px 2px', padding: '7px 11px', fontSize: 12, lineHeight: 1.45, wordBreak: 'break-word' }}>{msg.text}</div>
+                                    <div style={{ fontSize: 9, color: 'rgba(255,255,255,.2)', marginTop: 2 }}>{new Date(msg.ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
+                                </div>
+                            );
+                        })}
+                        <div ref={endRef} />
+                    </div>
+                    <div style={{ padding: '10px 14px', borderTop: '1px solid rgba(255,255,255,.07)', display: 'flex', gap: 8, flexShrink: 0 }}>
+                        <input className="input-field" placeholder="Mensagem… (Enter para enviar)" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()} style={{ fontSize: 12 }} />
+                        <button className="btn-primary" onClick={send} disabled={!text.trim()} style={{ padding: '0 12px', flexShrink: 0 }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                        </button>
+                    </div>
+                </div>
+            );
+        }
+
         /* ── APP ────────────────────────────────────────────── */
         function App() {
-            const { view, userRole } = useApp();
+            const { view, userRole, onlineUsers, presenceTrackRef, chatOpen, setChatOpen } = useApp();
             const [quickAdd, setQuickAdd] = useState(false);
-            const [otherCursors, setOtherCursors] = useState([]);
             const viewRef = useRef(view);
             useEffect(() => { viewRef.current = view; }, [view]);
 
@@ -3478,29 +3691,21 @@
                 const myKey = me?.username || 'anon';
                 const myName = me?.name || myKey;
                 const myColor = getUserColor(myKey);
-                const channel = supabase.channel('neos-cursors', { config: { presence: { key: myKey } } });
-                channel.on('presence', { event: 'sync' }, () => {
-                    const others = Object.values(channel.presenceState()).flat().filter(u => u.k !== myKey);
-                    setOtherCursors(others);
-                });
                 let lastT = 0;
                 const onMove = e => {
                     const now = Date.now();
                     if (now - lastT < 50) return;
                     lastT = now;
-                    channel.track({ k: myKey, name: myName, view: viewRef.current, x: e.clientX / window.innerWidth, y: e.clientY / window.innerHeight, color: myColor });
+                    if (presenceTrackRef.current) presenceTrackRef.current({ k: myKey, name: myName, view: viewRef.current, x: e.clientX / window.innerWidth, y: e.clientY / window.innerHeight, color: myColor });
                 };
                 window.addEventListener('mousemove', onMove);
-                channel.subscribe(async s => {
-                    if (s === 'SUBSCRIBED') await channel.track({ k: myKey, name: myName, view: viewRef.current, x: 0, y: 0, color: myColor });
-                });
-                return () => { window.removeEventListener('mousemove', onMove); supabase.removeChannel(channel); };
+                return () => window.removeEventListener('mousemove', onMove);
             }, []);
 
             const isEmployee = userRole !== 'admin';
             const ViewMap = { dashboard: Dashboard, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarPage };
             const V = (isEmployee && EMPLOYEE_BLOCKED.includes(view)) ? LockedView : (ViewMap[view] || Dashboard);
-            const visible = otherCursors.filter(c => c.view === view);
+            const visible = onlineUsers.filter(c => c.view === view);
             return (
                 <div style={{ display: 'flex', minHeight: '100vh' }}>
                     <Sidebar />
@@ -3513,6 +3718,11 @@
                             <Ic n="plus" s={20} />
                         </button>
                     )}
+                    <button onClick={() => setChatOpen(c => !c)} title="Chat Interno"
+                        style={{ position: 'fixed', bottom: isEmployee ? 22 : 82, right: 22, zIndex: 200, borderRadius: 50, width: 44, height: 44, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: chatOpen ? '#ff0040' : 'rgba(255,255,255,.08)', border: '1px solid ' + (chatOpen ? '#ff0040' : 'rgba(255,255,255,.15)'), cursor: 'pointer', boxShadow: chatOpen ? '0 0 18px rgba(255,0,64,.4)' : 'none', transition: 'all .2s' }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    </button>
+                    <Chat />
                     {quickAdd && <ClientModal onClose={() => setQuickAdd(false)} />}
                     <Toast />
                     <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 9990 }}>
