@@ -430,16 +430,16 @@
 
         /* ── SUPABASE HELPERS ───────────────────────────────── */
         const supaSave = async (table, record) => {
-            try { await supabase.from(table).upsert([record]); }
-            catch (e) { console.error(`[Neos] Supabase save error (${table}):`, e); }
+            const { error } = await supabase.from(table).upsert([record]);
+            if (error) console.error(`[Neos] Supabase save error (${table}):`, error.message || error);
         };
         const supaUpdate = async (table, id, data) => {
-            try { await supabase.from(table).update(data).eq('id', id); }
-            catch (e) { console.error(`[Neos] Supabase update error (${table}):`, e); }
+            const { error } = await supabase.from(table).update(data).eq('id', id);
+            if (error) console.error(`[Neos] Supabase update error (${table}):`, error.message || error);
         };
         const supaDelete = async (table, id) => {
-            try { await supabase.from(table).delete().eq('id', id); }
-            catch (e) { console.error(`[Neos] Supabase delete error (${table}):`, e); }
+            const { error } = await supabase.from(table).delete().eq('id', id);
+            if (error) console.error(`[Neos] Supabase delete error (${table}):`, error.message || error);
         };
 
         async function loadFromDB() {
@@ -617,9 +617,18 @@
             const addClient = async data => {
                 const c = { id: genId(), createdAt: new Date().toISOString(), ...data };
                 setStore(p => ({ ...p, clients: [...p.clients, c] }));
-                const { error } = await supabase.from('clients').insert([c]);
-                if (error) notify('Erro ao salvar no servidor. Dados salvos localmente.', 'warn');
-                else notify('Cliente adicionado ✓');
+                try {
+                    const { error } = await supabase.from('clients').insert([c]);
+                    if (error) {
+                        console.error('[Neos] addClient Supabase error:', error);
+                        notify('Supabase: ' + (error.message || error.code || 'Erro ao salvar. Verifique o console (F12).'), 'warn');
+                    } else {
+                        notify('Cliente adicionado ✓');
+                    }
+                } catch (e) {
+                    console.error('[Neos] addClient exception:', e);
+                    notify('Erro de conexão com Supabase. Dados salvos localmente.', 'warn');
+                }
             };
             const editClient = (id, data) => {
                 upd(p => ({
