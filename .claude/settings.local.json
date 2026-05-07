@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\Arthur Lemos\\\\Downloads\\\\DASHBOARD - BASE DE DADOS-20260504T182651Z-3-001\\\\DASHBOARD - BASE DE DADOS\" -Recurse -File | Select-Object FullName | ForEach-Object { $_.FullName })"
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\Arthur Lemos\\\\Downloads\\\\DASHBOARD - BASE DE DADOS-20260504T182651Z-3-001\\\\DASHBOARD - BASE DE DADOS\" -Recurse -File | Select-Object FullName | ForEach-Object { $_.FullName })",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Arthur Lemos\\\\Desktop\\\\DASHBOARD - BASE DE DADOS\" -Recurse -Force)",
+      "Bash(Select-Object FullName)",
+      "Bash(Format-Table -AutoSize)"
     ]
   }
 }

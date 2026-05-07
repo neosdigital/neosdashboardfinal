@@ -13,33 +13,7 @@
     <script src="https://unpkg.com/dexie@3.2.7/dist/dexie.min.js"></script>
     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script type="module">
-
-        import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm'
-
-        window.supabase = createClient(
-            'https://edlusjxoalqjkieugwce.supabase.co',
-            'sb_publishable_OfZfNYJUrtOqVUpv8bvU4Q_HyGHHIyx'
-        )
-
-        console.log('SUPABASE OK', window.supabase)
-
-    </script>
-
-
-    async function testeSupabase() {
-
-    const { data, error } = await supabase
-    .from('usuarios')
-    .select('*')
-
-    console.log('DATA:', data)
-    console.log('ERROR:', error)
-    }
-
-    testeSupabase()
-
-    </script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -407,36 +381,15 @@
     </style>
 </head>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
 <body>
     <div id="root"></div>
     <script type="text/babel">
 
-        const supabaseUrl = 'https://edlusjxoalqjkieugwce.supabase.co'
-
-        const supabaseKey = 'sb_publishable_OfZfNYJUrtOqVUpv8bvU4Q_HyGHHIyx'
-
         const supabase = window.supabase.createClient(
-            supabaseUrl,
-            supabaseKey
+            'https://edlusjxoalqjkieugwce.supabase.co',
+            'sb_publishable_OfZfNYJUrtOqVUpv8bvU4Q_HyGHHIyx'
         )
 
-        console.log('SUPABASE CONECTADO')
-
-        async function teste() {
-
-            const { data, error } = await supabase
-                .from('clients')
-                .select('*')
-
-            console.log(data)
-            console.log(error)
-        }
-
-        teste()
-
-        import { supabase } from 'lib/supabase.js'
         const { useState, useEffect, useContext, useRef } = React;
 
         /* ── CONSTANTS ─────────────────────────────────────── */
@@ -474,24 +427,63 @@
         });
         db.version(3).stores({ calEvents: 'id, date, type, source, googleEventId, createdAt', costs: 'id, type, category, date, createdAt' });
         const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [] };
+
+        /* ── SUPABASE HELPERS ───────────────────────────────── */
+        const supaSave = async (table, record) => {
+            try { await supabase.from(table).upsert([record]); }
+            catch (e) { console.error(`[Neos] Supabase save error (${table}):`, e); }
+        };
+        const supaUpdate = async (table, id, data) => {
+            try { await supabase.from(table).update(data).eq('id', id); }
+            catch (e) { console.error(`[Neos] Supabase update error (${table}):`, e); }
+        };
+        const supaDelete = async (table, id) => {
+            try { await supabase.from(table).delete().eq('id', id); }
+            catch (e) { console.error(`[Neos] Supabase delete error (${table}):`, e); }
+        };
+
         async function loadFromDB() {
-
-            const { data: clients } = await window.supabase
-                .from('clients')
-                .select('*')
-
-            return {
-                clients: clients || [],
-                tasks: [],
-                financials: [],
-                trafficData: [],
-                designReqs: [],
-                performance: [],
-                calEvents: [],
-                costs: []
+            try {
+                const [
+                    { data: clients }, { data: tasks }, { data: financials },
+                    { data: trafficData }, { data: designReqs }, { data: performance },
+                    { data: calEvents }, { data: costs }
+                ] = await Promise.all([
+                    supabase.from('clients').select('*'),
+                    supabase.from('tasks').select('*'),
+                    supabase.from('financials').select('*'),
+                    supabase.from('trafficData').select('*'),
+                    supabase.from('designReqs').select('*'),
+                    supabase.from('performance').select('*'),
+                    supabase.from('calEvents').select('*'),
+                    supabase.from('costs').select('*'),
+                ]);
+                const store = {
+                    clients: clients || [], tasks: tasks || [], financials: financials || [],
+                    trafficData: trafficData || [], designReqs: designReqs || [],
+                    performance: performance || [], calEvents: calEvents || [], costs: costs || []
+                };
+                const hasData = Object.values(store).some(arr => arr.length > 0);
+                if (!hasData) {
+                    const local = await loadFromIndexedDB();
+                    if (local && Object.values(local).some(arr => arr.length > 0)) return local;
+                }
+                return store;
+            } catch (e) {
+                console.error('[Neos] Erro ao carregar do Supabase, usando IndexedDB:', e);
+                return await loadFromIndexedDB();
             }
         }
-        return { clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs };
+
+        async function loadFromIndexedDB() {
+            try {
+                const [clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs] = await Promise.all([
+                    db.clients.toArray(), db.tasks.toArray(), db.financials.toArray(),
+                    db.trafficData.toArray(), db.designReqs.toArray(),
+                    db.performance.toArray(), db.calEvents.toArray(), db.costs.toArray()
+                ]);
+                return { clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs };
+            } catch (e) { return null; }
         }
         async function saveToDB(store) {
             await db.transaction('rw', db.clients, db.tasks, db.financials, db.trafficData, db.designReqs, db.performance, db.calEvents, db.costs, async () => {
@@ -621,85 +613,105 @@
             const notify = (msg, type = 'ok') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
             const upd = fn => setStore(p => ({ ...p, ...fn(p) }));
 
+            /* ── CLIENTS ── */
             const addClient = async data => {
-
-                const c = {
-                    id: genId(),
-                    ...data
-                }
-
-                console.log('ENVIANDO:', c)
-
-                const { data: result, error } = await supabase
-                    .from('clients')
-                    .insert([c])
-                    .select()
-
-                console.log('RESULT:', result)
-                console.log('ERROR:', error)
-
-                if (error) {
-                    alert('ERRO NO SUPABASE')
-                    console.log(error)
-                    return
-                }
-
-                setStore(p => ({
-                    ...p,
-                    clients: [...p.clients, c]
-                }))
-
-                alert('CLIENTE SALVO')
-            }
+                const c = { id: genId(), createdAt: new Date().toISOString(), ...data };
+                setStore(p => ({ ...p, clients: [...p.clients, c] }));
+                const { error } = await supabase.from('clients').insert([c]);
+                if (error) notify('Erro ao salvar no servidor. Dados salvos localmente.', 'warn');
+                else notify('Cliente adicionado ✓');
+            };
             const editClient = (id, data) => {
                 upd(p => ({
                     clients: p.clients.map(c => c.id === id ? { ...c, ...data } : c),
                     financials: p.financials.map(f => f.clientId === id ? { ...f, amount: parseFloat(data.plan) || f.amount, clientName: data.name || f.clientName } : f),
                     tasks: p.tasks.map(t => t.clientId === id ? { ...t, clientName: data.name || t.clientName } : t),
                 }));
+                supaUpdate('clients', id, data);
                 notify('Cliente atualizado ✓');
             };
             const deleteClient = id => {
                 upd(p => ({ clients: p.clients.filter(c => c.id !== id), tasks: p.tasks.filter(t => t.clientId !== id), financials: p.financials.filter(f => f.clientId !== id), trafficData: p.trafficData.filter(t => t.clientId !== id), designReqs: p.designReqs.filter(d => d.clientId !== id), performance: (p.performance || []).filter(r => r.clientId !== id) }));
+                supaDelete('clients', id);
                 notify('Cliente excluído', 'warn');
             };
 
-            const addTask = data => { upd(p => ({ tasks: [...p.tasks, { id: genId(), createdAt: new Date().toISOString(), ...data }] })); notify('Tarefa criada ✓'); };
-            const editTask = (id, data) => upd(p => ({ tasks: p.tasks.map(t => t.id === id ? { ...t, ...data } : t) }));
-            const deleteTask = id => { upd(p => ({ tasks: p.tasks.filter(t => t.id !== id) })); notify('Tarefa excluída', 'warn'); };
-            const moveTask = (id, status) => upd(p => ({ tasks: p.tasks.map(t => t.id === id ? { ...t, status } : t) }));
-            const resetTasks = () => { upd(() => ({ tasks: [] })); notify('Todas as tarefas foram resetadas', 'warn'); };
+            /* ── TASKS ── */
+            const addTask = data => { const t = { id: genId(), createdAt: new Date().toISOString(), ...data }; upd(p => ({ tasks: [...p.tasks, t] })); supaSave('tasks', t); notify('Tarefa criada ✓'); };
+            const editTask = (id, data) => { upd(p => ({ tasks: p.tasks.map(t => t.id === id ? { ...t, ...data } : t) })); supaUpdate('tasks', id, data); };
+            const deleteTask = id => { upd(p => ({ tasks: p.tasks.filter(t => t.id !== id) })); supaDelete('tasks', id); notify('Tarefa excluída', 'warn'); };
+            const moveTask = (id, status) => { upd(p => ({ tasks: p.tasks.map(t => t.id === id ? { ...t, status } : t) })); supaUpdate('tasks', id, { status }); };
+            const resetTasks = () => { upd(p => { p.tasks.forEach(t => supaDelete('tasks', t.id)); return { tasks: [] }; }); notify('Todas as tarefas foram resetadas', 'warn'); };
 
-            const addFin = data => { upd(p => ({ financials: [...p.financials, { id: genId(), createdAt: new Date().toISOString(), ...data }] })); notify('Registro adicionado ✓'); };
-            const editFin = (id, data) => { upd(p => ({ financials: p.financials.map(f => f.id === id ? { ...f, ...data } : f) })); notify('Registro atualizado ✓'); };
-            const deleteFin = id => { upd(p => ({ financials: p.financials.filter(f => f.id !== id) })); notify('Registro excluído', 'warn'); };
+            /* ── FINANCIALS ── */
+            const addFin = data => { const f = { id: genId(), createdAt: new Date().toISOString(), ...data }; upd(p => ({ financials: [...p.financials, f] })); supaSave('financials', f); notify('Registro adicionado ✓'); };
+            const editFin = (id, data) => { upd(p => ({ financials: p.financials.map(f => f.id === id ? { ...f, ...data } : f) })); supaUpdate('financials', id, data); notify('Registro atualizado ✓'); };
+            const deleteFin = id => { upd(p => ({ financials: p.financials.filter(f => f.id !== id) })); supaDelete('financials', id); notify('Registro excluído', 'warn'); };
 
             const saveTraffic = data => {
                 upd(p => {
                     const ex = p.trafficData.find(t => t.clientId === data.clientId);
-                    if (ex) return { trafficData: p.trafficData.map(t => t.clientId === data.clientId ? { ...t, ...data } : t) };
-                    return { trafficData: [...p.trafficData, { id: genId(), ...data }] };
+                    if (ex) { supaUpdate('trafficData', ex.id, data); return { trafficData: p.trafficData.map(t => t.clientId === data.clientId ? { ...t, ...data } : t) }; }
+                    const n = { id: genId(), ...data }; supaSave('trafficData', n); return { trafficData: [...p.trafficData, n] };
                 });
                 notify('Dados de tráfego salvos ✓');
             };
 
-            const addDesign = data => { upd(p => ({ designReqs: [...p.designReqs, { id: genId(), revisions: 0, createdAt: new Date().toISOString(), ...data }] })); notify('Solicitação de design criada ✓'); };
-            const editDesign = (id, data) => { upd(p => ({ designReqs: p.designReqs.map(d => d.id === id ? { ...d, ...data } : d) })); notify('Atualizado ✓'); };
-            const deleteDesign = id => { upd(p => ({ designReqs: p.designReqs.filter(d => d.id !== id) })); notify('Excluído', 'warn'); };
+            /* ── DESIGN ── */
+            const addDesign = data => { const d = { id: genId(), revisions: 0, createdAt: new Date().toISOString(), ...data }; upd(p => ({ designReqs: [...p.designReqs, d] })); supaSave('designReqs', d); notify('Solicitação de design criada ✓'); };
+            const editDesign = (id, data) => { upd(p => ({ designReqs: p.designReqs.map(d => d.id === id ? { ...d, ...data } : d) })); supaUpdate('designReqs', id, data); notify('Atualizado ✓'); };
+            const deleteDesign = id => { upd(p => ({ designReqs: p.designReqs.filter(d => d.id !== id) })); supaDelete('designReqs', id); notify('Excluído', 'warn'); };
 
-            const addPerformance = data => { upd(p => ({ performance: [...(p.performance || []), { id: genId(), createdAt: new Date().toISOString(), ...data }] })); notify('Registro de performance criado ✓'); };
-            const editPerformance = (id, data) => { upd(p => ({ performance: (p.performance || []).map(r => r.id === id ? { ...r, ...data } : r) })); notify('Atualizado ✓'); };
-            const deletePerformance = id => { upd(p => ({ performance: (p.performance || []).filter(r => r.id !== id) })); notify('Excluído', 'warn'); };
+            /* ── PERFORMANCE ── */
+            const addPerformance = data => { const r = { id: genId(), createdAt: new Date().toISOString(), ...data }; upd(p => ({ performance: [...(p.performance || []), r] })); supaSave('performance', r); notify('Registro de performance criado ✓'); };
+            const editPerformance = (id, data) => { upd(p => ({ performance: (p.performance || []).map(r => r.id === id ? { ...r, ...data } : r) })); supaUpdate('performance', id, data); notify('Atualizado ✓'); };
+            const deletePerformance = id => { upd(p => ({ performance: (p.performance || []).filter(r => r.id !== id) })); supaDelete('performance', id); notify('Excluído', 'warn'); };
 
-            const addCalEvent = data => { upd(p => ({ calEvents: [...(p.calEvents || []), { id: genId(), createdAt: new Date().toISOString(), source: 'local', ...data }] })); notify('Evento criado ✓'); };
-            const editCalEvent = (id, data) => { upd(p => ({ calEvents: (p.calEvents || []).map(e => e.id === id ? { ...e, ...data } : e) })); notify('Evento atualizado ✓'); };
-            const deleteCalEvent = id => { upd(p => ({ calEvents: (p.calEvents || []).filter(e => e.id !== id) })); notify('Evento excluído', 'warn'); };
-            const addCost = data => { upd(p => ({ costs: [...(p.costs || []), { id: genId(), createdAt: new Date().toISOString(), ...data }] })); notify('Custo adicionado ✓'); };
-            const editCost = (id, data) => { upd(p => ({ costs: (p.costs || []).map(c => c.id === id ? { ...c, ...data } : c) })); notify('Custo atualizado ✓'); };
-            const deleteCost = id => { upd(p => ({ costs: (p.costs || []).filter(c => c.id !== id) })); notify('Custo excluído', 'warn'); };
-            const addCampaign = data => { upd(p => ({ trafficData: [...p.trafficData, { id: genId(), createdAt: new Date().toISOString(), ...data }] })); notify('Campanha criada ✓'); };
-            const editCampaign = (id, data) => { upd(p => ({ trafficData: p.trafficData.map(t => t.id === id ? { ...t, ...data } : t) })); notify('Campanha atualizada ✓'); };
-            const deleteCampaign = id => { upd(p => ({ trafficData: p.trafficData.filter(t => t.id !== id) })); notify('Campanha excluída', 'warn'); };
+            /* ── CALENDAR EVENTS ── */
+            const addCalEvent = data => { const e = { id: genId(), createdAt: new Date().toISOString(), source: 'local', ...data }; upd(p => ({ calEvents: [...(p.calEvents || []), e] })); supaSave('calEvents', e); notify('Evento criado ✓'); };
+            const editCalEvent = (id, data) => { upd(p => ({ calEvents: (p.calEvents || []).map(e => e.id === id ? { ...e, ...data } : e) })); supaUpdate('calEvents', id, data); notify('Evento atualizado ✓'); };
+            const deleteCalEvent = id => { upd(p => ({ calEvents: (p.calEvents || []).filter(e => e.id !== id) })); supaDelete('calEvents', id); notify('Evento excluído', 'warn'); };
+
+            /* ── COSTS ── */
+            const addCost = data => { const c = { id: genId(), createdAt: new Date().toISOString(), ...data }; upd(p => ({ costs: [...(p.costs || []), c] })); supaSave('costs', c); notify('Custo adicionado ✓'); };
+            const editCost = (id, data) => { upd(p => ({ costs: (p.costs || []).map(c => c.id === id ? { ...c, ...data } : c) })); supaUpdate('costs', id, data); notify('Custo atualizado ✓'); };
+            const deleteCost = id => { upd(p => ({ costs: (p.costs || []).filter(c => c.id !== id) })); supaDelete('costs', id); notify('Custo excluído', 'warn'); };
+
+            /* ── CAMPAIGNS (Tráfego Pago) ── */
+            const addCampaign = data => {
+                upd(p => {
+                    const camp = { id: genId(), createdAt: new Date().toISOString(), ...data };
+                    const updates = { trafficData: [...p.trafficData, camp] };
+                    supaSave('trafficData', camp);
+
+                    /* Se o cliente for Neos, adiciona automaticamente em Custos e Financeiro */
+                    if (data.clientName === 'Neos' && parseFloat(data.budget) > 0) {
+                        const campLabel = `${data.campaignName || 'Campanha'} — ${MESES[(data.month || 1) - 1]}/${data.year || new Date().getFullYear()}`;
+                        const today = new Date().toISOString().slice(0, 10);
+
+                        const newCost = {
+                            id: genId(), createdAt: new Date().toISOString(),
+                            name: `Tráfego Pago: ${campLabel}`,
+                            type: 'Único', amount: parseFloat(data.budget),
+                            date: today, notes: `Gerado automaticamente da campanha "${campLabel}"`
+                        };
+                        const newFin = {
+                            id: genId(), createdAt: new Date().toISOString(),
+                            clientName: 'Neos', clientId: data.clientId,
+                            amount: parseFloat(data.budget), type: 'Avulso', status: 'Pendente',
+                            date: today, notes: `Investimento em tráfego pago: ${campLabel}`
+                        };
+                        supaSave('costs', newCost);
+                        supaSave('financials', newFin);
+                        updates.costs = [...(p.costs || []), newCost];
+                        updates.financials = [...p.financials, newFin];
+                    }
+                    return updates;
+                });
+                notify('Campanha criada ✓');
+            };
+            const editCampaign = (id, data) => { upd(p => ({ trafficData: p.trafficData.map(t => t.id === id ? { ...t, ...data } : t) })); supaUpdate('trafficData', id, data); notify('Campanha atualizada ✓'); };
+            const deleteCampaign = id => { upd(p => ({ trafficData: p.trafficData.filter(t => t.id !== id) })); supaDelete('trafficData', id); notify('Campanha excluída', 'warn'); };
 
             if (!dbReady) return (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 16, background: '#07070f', color: 'rgba(255,255,255,.6)' }}>
@@ -798,7 +810,7 @@
 
                         {/* Stats */}
                         <div style={{ background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.07)', borderRadius: 10, padding: '13px 14px', marginBottom: 16 }}>
-                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,.4)', marginBottom: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: .5 }}>Banco de Dados Local (IndexedDB)</div>
+                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,.4)', marginBottom: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: .5 }}>Banco de Dados — Supabase (Nuvem)</div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
                                 {[['Clientes', store.clients.length], ['Tarefas', store.tasks.length], ['Financeiro', store.financials.length], ['Tráfego Pago', store.trafficData.length], ['Design', store.designReqs.length], ['Performance', perf.length], ['Calendário', cal.length], ['Custos', costs.length]].map(([k, v]) => (
                                     <div key={k} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
@@ -828,7 +840,7 @@
                         {result === 'err' && <div style={{ fontSize: 12, color: 'rgba(255,100,100,.9)', background: 'rgba(255,100,100,.08)', border: '1px solid rgba(255,100,100,.2)', borderRadius: 6, padding: '8px 12px', marginBottom: 12 }}>✗ Arquivo inválido. Use um backup gerado pelo Neos.</div>}
 
                         <div style={{ fontSize: 11, color: 'rgba(255,255,255,.25)', lineHeight: 1.7 }}>
-                            Os dados ficam salvos no <strong style={{ color: 'rgba(255,255,255,.4)' }}>IndexedDB</strong> do navegador. Exporte backups regularmente e guarde o arquivo <code style={{ background: 'rgba(255,255,255,.07)', padding: '1px 4px', borderRadius: 3 }}>.json</code> em local seguro.
+                            Os dados ficam salvos no <strong style={{ color: 'rgba(255,255,255,.4)' }}>Supabase</strong> (nuvem) e em cache local. Exporte backups regularmente e guarde o arquivo <code style={{ background: 'rgba(255,255,255,.07)', padding: '1px 4px', borderRadius: 3 }}>.json</code> em local seguro.
                         </div>
                     </div>
                 </div>
@@ -3034,11 +3046,26 @@
             const tc = (r, g, b) => doc.setTextColor(r, g, b);
             const dc2 = (r, g, b) => doc.setDrawColor(r, g, b);
             const fnt = (st, sz) => { doc.setFont('helvetica', st); doc.setFontSize(sz); };
-            fill(10, 9, 28); doc.rect(0, 0, W, H, 'F');
-            fill(20, 18, 50); doc.rect(0, 0, W, 64, 'F');
-            fill(255, 0, 64); doc.rect(0, 0, W, 4, 'F');
-            fnt('bold', 22); tc(255, 255, 255); doc.text('Comparativo de Campanhas', M, 40);
-            fnt('normal', 10); tc(140, 138, 188); doc.text(camA.nome + ' vs ' + camB.nome, M, 56);
+
+            /* logo com proporção original */
+            let cmpLogoData = null, cmpLogoEndX = M;
+            try {
+                const img = new Image(); img.src = 'images/LOGOTIPO 2 copiar 2.png';
+                await new Promise(r => { img.onload = r; img.onerror = r; setTimeout(r, 1500); });
+                if (img.naturalWidth > 0) {
+                    const lgH = 44, lgW = Math.round((img.naturalWidth / img.naturalHeight) * lgH);
+                    const lc = document.createElement('canvas'); lc.width = img.naturalWidth; lc.height = img.naturalHeight;
+                    lc.getContext('2d').drawImage(img, 0, 0); cmpLogoData = lc.toDataURL('image/png');
+                    cmpLogoEndX = M + lgW + 12;
+                    fill(10, 9, 28); doc.rect(0, 0, W, H, 'F');
+                    fill(20, 18, 50); doc.rect(0, 0, W, 64, 'F');
+                    fill(255, 0, 64); doc.rect(0, 0, W, 4, 'F');
+                    doc.addImage(cmpLogoData, 'PNG', M, 10, lgW, lgH);
+                } else { fill(10, 9, 28); doc.rect(0, 0, W, H, 'F'); fill(20, 18, 50); doc.rect(0, 0, W, 64, 'F'); fill(255, 0, 64); doc.rect(0, 0, W, 4, 'F'); }
+            } catch { fill(10, 9, 28); doc.rect(0, 0, W, H, 'F'); fill(20, 18, 50); doc.rect(0, 0, W, 64, 'F'); fill(255, 0, 64); doc.rect(0, 0, W, 4, 'F'); }
+
+            fnt('bold', 22); tc(255, 255, 255); doc.text('Comparativo de Campanhas', cmpLogoEndX, 40);
+            fnt('normal', 10); tc(140, 138, 188); doc.text(camA.nome + ' vs ' + camB.nome, cmpLogoEndX, 56);
             fnt('normal', 9); tc(100, 98, 150); doc.text('Gerado em ' + new Date().toLocaleDateString('pt-BR'), W - M, 40, { align: 'right' });
             fill(255, 0, 64); doc.rect(W - 3, 0, 3, H, 'F');
             const colW = (W - M * 2 - 20) / 2;
@@ -3084,8 +3111,10 @@
             const dc2 = (r, g, b) => doc.setDrawColor(r, g, b);
             const fnt = (st, sz) => { doc.setFont('helvetica', st); doc.setFontSize(sz); };
             const fmtV = v => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            let logoData = null;
-            try { const img = new Image(); img.src = 'images/LOGOTIPO 2 copiar 2.png'; await new Promise(r => { img.onload = r; img.onerror = r; setTimeout(r, 1500); }); if (img.naturalWidth > 0) { const lc = document.createElement('canvas'); lc.width = img.naturalWidth; lc.height = img.naturalHeight; lc.getContext('2d').drawImage(img, 0, 0); logoData = lc.toDataURL('image/png'); } } catch { }
+            let logoData = null, logoNW = 0, logoNH = 0;
+            try { const img = new Image(); img.src = 'images/LOGOTIPO 2 copiar 2.png'; await new Promise(r => { img.onload = r; img.onerror = r; setTimeout(r, 1500); }); if (img.naturalWidth > 0) { logoNW = img.naturalWidth; logoNH = img.naturalHeight; const lc = document.createElement('canvas'); lc.width = logoNW; lc.height = logoNH; lc.getContext('2d').drawImage(img, 0, 0); logoData = lc.toDataURL('image/png'); } } catch { }
+            const lgH = 48, lgW = logoData && logoNH > 0 ? Math.round((logoNW / logoNH) * lgH) : 0;
+            const logoEndXMensal = logoData ? M + lgW + 12 : M;
             const renderPage = (rec, pageIdx) => {
                 const bgt = parseFloat(rec.budget) || 0, lds = parseInt(rec.leads) || 0, sls = parseInt(rec.sales) || 0, cpa = parseFloat(rec.cpa) || 0;
                 const cpl = lds > 0 && bgt > 0 ? bgt / lds : (parseFloat(rec.cpl) || 0);
@@ -3095,9 +3124,9 @@
                 fill(10, 9, 28); doc.rect(0, 0, W, H, 'F');
                 fill(20, 18, 52); doc.rect(0, 0, W, 72, 'F');
                 fill(255, 0, 64); doc.rect(0, 0, W, 4, 'F');
-                if (logoData) doc.addImage(logoData, 'PNG', M, 10, 52, 52);
-                fnt('bold', 18); tc(255, 255, 255); doc.text((client.name || '—'), logoData ? M + 62 : M, 36);
-                fnt('normal', 10); tc(160, 158, 205); doc.text((rec.campaignName || 'Campanha Principal') + ' — ' + (rec.month && rec.year ? MESES_SHORT[(rec.month || 1) - 1] + '/' + rec.year : ''), logoData ? M + 62 : M, 52);
+                if (logoData) doc.addImage(logoData, 'PNG', M, 12, lgW, lgH);
+                fnt('bold', 18); tc(255, 255, 255); doc.text((client.name || '—'), logoEndXMensal, 36);
+                fnt('normal', 10); tc(160, 158, 205); doc.text((rec.campaignName || 'Campanha Principal') + ' — ' + (rec.month && rec.year ? MESES_SHORT[(rec.month || 1) - 1] + '/' + rec.year : ''), logoEndXMensal, 52);
                 fnt('normal', 9); tc(100, 98, 150); doc.text('Pag. ' + (pageIdx + 1) + ' de ' + (campaigns.length + 1), W - M, 38, { align: 'right' });
                 fill(255, 0, 64); doc.rect(W - 3, 0, 3, H, 'F');
                 const cardY = 80, cardH = 130, cardG = 10, cardW = (W - M * 2 - 3 * cardG) / 4;
@@ -3129,9 +3158,9 @@
             fill(10, 9, 28); doc.rect(0, 0, W, H, 'F');
             fill(20, 18, 52); doc.rect(0, 0, W, 64, 'F');
             fill(255, 0, 64); doc.rect(0, 0, W, 4, 'F');
-            if (logoData) doc.addImage(logoData, 'PNG', M, 10, 52, 52);
-            fnt('bold', 18); tc(255, 255, 255); doc.text('Resumo Mensal — ' + (client.name || '—'), logoData ? M + 62 : M, 38);
-            fnt('normal', 10); tc(160, 158, 205); doc.text(campaigns.length + ' campanhas no período', logoData ? M + 62 : M, 54);
+            if (logoData) doc.addImage(logoData, 'PNG', M, 12, lgW, lgH);
+            fnt('bold', 18); tc(255, 255, 255); doc.text('Resumo Mensal — ' + (client.name || '—'), logoEndXMensal, 38);
+            fnt('normal', 10); tc(160, 158, 205); doc.text(campaigns.length + ' campanhas no período', logoEndXMensal, 54);
             fill(255, 0, 64); doc.rect(W - 3, 0, 3, H, 'F');
             const totBgt = campaigns.reduce((s, t) => s + (parseFloat(t.budget) || 0), 0), totLd = campaigns.reduce((s, t) => s + (parseInt(t.leads) || 0), 0), totSl = campaigns.reduce((s, t) => s + (parseInt(t.sales) || 0), 0), totRev = campaigns.reduce((s, t) => s + (parseInt(t.sales) || 0) * (parseFloat(t.cpa) || 0), 0);
             const avgRoas = totBgt > 0 ? totRev / totBgt : 0;
