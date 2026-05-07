@@ -698,7 +698,30 @@
             const deletePerformance = id => { upd(p => ({ performance: (p.performance || []).filter(r => r.id !== id) })); supaDelete('performance', id); notify('Excluído', 'warn'); };
 
             /* ── CALENDAR EVENTS ── */
-            const addCalEvent = data => { const e = { id: genId(), createdAt: new Date().toISOString(), source: 'local', ...data }; upd(p => ({ calEvents: [...(p.calEvents || []), e] })); supaSave('calEvents', e); notify('Evento criado ✓'); };
+            const addCalEvent = data => {
+                const e = { id: genId(), createdAt: new Date().toISOString(), source: 'local', ...data };
+                upd(p => {
+                    const clientEntry = (data.clientId && data.clientId !== '__outro__')
+                        ? p.clients.find(c => c.id === data.clientId) : null;
+                    const clientName = clientEntry?.name || data.clientCustomName || '';
+                    const task = {
+                        id: genId(),
+                        createdAt: new Date().toISOString(),
+                        title: data.title,
+                        description: data.desc || '',
+                        status: 'A Fazer',
+                        dueDate: data.date,
+                        clientId: clientEntry ? data.clientId : '',
+                        clientName,
+                        priority: 'Média',
+                        assignee: '',
+                    };
+                    supaSave('tasks', task);
+                    return { calEvents: [...(p.calEvents || []), e], tasks: [...p.tasks, task] };
+                });
+                supaSave('calEvents', e);
+                notify('Evento criado ✓ — tarefa adicionada ao Kanban');
+            };
             const editCalEvent = (id, data) => { upd(p => ({ calEvents: (p.calEvents || []).map(e => e.id === id ? { ...e, ...data } : e) })); supaUpdate('calEvents', id, data); notify('Evento atualizado ✓'); };
             const deleteCalEvent = id => { upd(p => ({ calEvents: (p.calEvents || []).filter(e => e.id !== id) })); supaDelete('calEvents', id); notify('Evento excluído', 'warn'); };
 
