@@ -563,6 +563,31 @@
                 saveToDB(store).catch(e => console.error('[Neos] Erro ao salvar no DB:', e));
             }, [store]);
 
+            /* ── SUPABASE REALTIME ── */
+            useEffect(() => {
+                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs'];
+                const channel = supabase.channel('neos-db-changes');
+                TABLES.forEach(tbl => {
+                    channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, ({ eventType, new: n, old: o }) => {
+                        setStore(p => {
+                            const arr = p[tbl] || [];
+                            if (eventType === 'INSERT') {
+                                if (arr.some(r => r.id === n.id)) return p;
+                                return { ...p, [tbl]: [...arr, n] };
+                            }
+                            if (eventType === 'UPDATE') return { ...p, [tbl]: arr.map(r => r.id === n.id ? n : r) };
+                            if (eventType === 'DELETE') return { ...p, [tbl]: arr.filter(r => r.id !== o?.id) };
+                            return p;
+                        });
+                    });
+                });
+                channel.subscribe(status => {
+                    if (status === 'SUBSCRIBED') console.log('[Neos] Realtime conectado ✓');
+                    if (status === 'CHANNEL_ERROR') console.warn('[Neos] Realtime: verifique a publicação no Supabase');
+                });
+                return () => { supabase.removeChannel(channel); };
+            }, [dbReady]);
+
             const exportJSON = async () => {
                 const ts = new Date();
                 const tsStr = ts.toISOString().replace(/[:.]/g, '-').slice(0, 19);
