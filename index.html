@@ -13,7 +13,7 @@
     <script src="https://unpkg.com/dexie@3.2.7/dist/dexie.min.js"></script>
     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -385,10 +385,18 @@
     <div id="root"></div>
     <script type="text/babel">
 
+        if (!window.supabase || !window.supabase.createClient) {
+            console.error('[Neos] ERRO: biblioteca Supabase não carregou. Verifique a CDN.');
+        }
         const supabase = window.supabase.createClient(
             'https://edlusjxoalqjkieugwce.supabase.co',
             'sb_publishable_OfZfNYJUrtOqVUpv8bvU4Q_HyGHHIyx'
         )
+        /* teste de conectividade no boot */
+        supabase.from('clients').select('id', { count: 'exact', head: true }).then(({ count, error }) => {
+            if (error) console.error('[Neos] Supabase ERRO de conexão:', error.message, error.code);
+            else console.log('[Neos] Supabase conectado ✓ — clients:', count);
+        });
 
         const { useState, useEffect, useContext, useRef } = React;
 
