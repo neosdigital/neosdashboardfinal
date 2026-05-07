@@ -715,6 +715,7 @@
                         clientName,
                         priority: 'Média',
                         assignee: '',
+                        fromCalendar: true,
                     };
                     supaSave('tasks', task);
                     return { calEvents: [...(p.calEvents || []), e], tasks: [...p.tasks, task] };
@@ -2659,7 +2660,7 @@
         function MiniCalendar() {
             const { store, setView, setCalFocusDate } = useApp();
             const calEvs = store.calEvents || [];
-            const kTasks = (store.tasks || []).filter(t => t.dueDate && t.status !== 'Concluído');
+            const kTasks = (store.tasks || []).filter(t => t.dueDate && t.status !== 'Concluído' && !t.fromCalendar);
             const today = new Date();
             const [mth, setMth] = useState(today.getMonth());
             const [yr, setYr] = useState(today.getFullYear());
@@ -2787,7 +2788,7 @@
                     if (isT) { fill(38, 8, 20); doc.rect(cx, cy, cellW, cellH, 'F'); dc2(255, 0, 64); doc.setLineWidth(.8); doc.rect(cx, cy, cellW, cellH, 'S'); }
                     fnt(isT ? 'bold' : 'normal', 8.5); tc(isT ? 255 : 160, isT ? 60 : 158, isT ? 80 : 200);
                     doc.text(String(dn), cx + cellW - 7, cy + 11, { align: 'right' });
-                    const dayItems = [...evs.filter(e => e.date === ds), ...tasks.filter(t => t.dueDate === ds).map(t => ({ ...t, color: '#a060ff', _task: true }))];
+                    const dayItems = [...evs.filter(e => e.date === ds), ...tasks.filter(t => t.dueDate === ds && !t.fromCalendar).map(t => ({ ...t, color: '#a060ff', _task: true }))];
                     let ey = cy + 16;
                     const maxItems = Math.floor((cellH - 16) / 11);
                     dayItems.slice(0, maxItems).forEach(ev => {
@@ -2811,7 +2812,7 @@
         function CalendarPage() {
             const { store, calFocusDate, setCalFocusDate, addCalEvent, editCalEvent, deleteCalEvent } = useApp();
             const calEvs = store.calEvents || [];
-            const kTasks = (store.tasks || []).filter(t => t.dueDate && t.status !== 'Concluído');
+            const kTasks = (store.tasks || []).filter(t => t.dueDate && t.status !== 'Concluído' && !t.fromCalendar);
             const today = new Date();
             const [vMode, setVMode] = useState('month');
             const [focus, setFocus] = useState(() => calFocusDate ? new Date(calFocusDate + 'T12:00') : new Date(today.getFullYear(), today.getMonth(), today.getDate()));
