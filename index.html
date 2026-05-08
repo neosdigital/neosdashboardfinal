@@ -685,7 +685,21 @@
                         supabase.from('calEvents').select('*'),
                         supabase.from('costs').select('*'),
                     ]);
-                    setStore({ clients: clients||[], tasks: tasks||[], financials: financials||[], trafficData: trafficData||[], designReqs: designReqs||[], performance: performance||[], calEvents: calEvents||[], costs: costs||[] });
+                    const merge = (remote, local) => {
+                        const remoteIds = new Set((remote || []).map(r => r.id));
+                        const localOnly = (local || []).filter(r => !remoteIds.has(r.id));
+                        return [...(remote || []), ...localOnly];
+                    };
+                    setStore(prev => ({
+                        clients:     merge(clients,     prev.clients),
+                        tasks:       merge(tasks,       prev.tasks),
+                        financials:  merge(financials,  prev.financials),
+                        trafficData: merge(trafficData, prev.trafficData),
+                        designReqs:  merge(designReqs,  prev.designReqs),
+                        performance: merge(performance, prev.performance),
+                        calEvents:   merge(calEvents,   prev.calEvents),
+                        costs:       merge(costs,       prev.costs),
+                    }));
                     notify('Dados atualizados ✓');
                 } catch { notify('Erro ao atualizar dados', 'warn'); }
             };
