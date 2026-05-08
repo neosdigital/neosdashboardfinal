@@ -2452,6 +2452,7 @@
             const [fonts, setFonts] = useState([]);
             const [colors, setColors] = useState([]);
             const [refImages, setRefImages] = useState([]);
+            const [pessoasImages, setPessoasImages] = useState([]);
             const [newFont, setNewFont] = useState('');
             const pj = s => { try { return JSON.parse(s || '[]'); } catch { return []; } };
             const pick = id => {
@@ -2462,16 +2463,18 @@
                 setFonts(pj(cl?.clientFonts));
                 setColors(pj(cl?.clientColors));
                 setRefImages(pj(cl?.refImages));
+                setPessoasImages(pj(cl?.pessoasImages));
             };
             const save = () => {
                 if (!selId) return;
-                editClient(selId, { promptTemplate: tmpl, visualStyle, clientFonts: JSON.stringify(fonts), clientColors: JSON.stringify(colors), refImages: JSON.stringify(refImages) });
+                editClient(selId, { promptTemplate: tmpl, visualStyle, clientFonts: JSON.stringify(fonts), clientColors: JSON.stringify(colors), refImages: JSON.stringify(refImages), pessoasImages: JSON.stringify(pessoasImages) });
                 onClose();
             };
             const addFont = () => { const f = newFont.trim(); if (!f || fonts.includes(f)) return; setFonts(p => [...p, f]); setNewFont(''); };
             const addColor = () => setColors(p => [...p, '#6366f1']);
             const updateColor = (i, v) => setColors(p => p.map((c, idx) => idx === i ? v : c));
             const addRefImage = file => { const r = new FileReader(); r.onload = e => setRefImages(p => [...p, { id: Date.now().toString(), name: file.name, data: e.target.result }]); r.readAsDataURL(file); };
+            const addPessoaImage = file => { const r = new FileReader(); r.onload = e => setPessoasImages(p => [...p, { id: Date.now().toString(), name: file.name, data: e.target.result }]); r.readAsDataURL(file); };
             return (
                 <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
                     <div className="modal-box fade-in" style={{ maxWidth: 580, maxHeight: '92vh', overflowY: 'auto' }}>
@@ -2488,7 +2491,7 @@
                         </div>
                         {selId && (<>
                             <div style={{ display: 'flex', gap: 3, marginBottom: 16, background: 'rgba(255,255,255,.04)', borderRadius: 8, padding: 3 }}>
-                                {[['modelo', 'Modelo & Estilo'], ['refs', 'Referências']].map(([k, label]) => (
+                                {[['modelo', 'Modelo & Estilo'], ['refs', 'Referências'], ['pessoas', 'Pessoas']].map(([k, label]) => (
                                     <button key={k} onClick={() => setTab(k)} style={{ flex: 1, padding: '7px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600, background: tab === k ? 'rgba(160,96,255,.22)' : 'transparent', color: tab === k ? 'rgba(200,155,255,.95)' : 'rgba(255,255,255,.4)', transition: 'all .15s' }}>{label}</button>
                                 ))}
                             </div>
@@ -2539,7 +2542,7 @@
                                         {colors.length === 0 && <span style={{ fontSize: 12, color: 'rgba(255,255,255,.22)' }}>Nenhuma cor adicionada</span>}
                                     </div>
                                 </div>
-                            </>) : (
+                            </>) : tab === 'refs' ? (
                                 <div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                                         <div style={{ fontSize: 12, color: 'rgba(255,255,255,.45)' }}>{refImages.length} referência(s)</div>
@@ -2558,6 +2561,32 @@
                                                 <div key={img.id} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
                                                     <img src={img.data} alt={img.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block' }} />
                                                     <button onClick={() => setRefImages(p => p.filter(r => r.id !== img.id))} style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(255,0,64,.8)', border: 'none', color: '#fff', borderRadius: 5, padding: '3px 7px', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>✕</button>
+                                                    <div style={{ padding: '4px 6px', background: 'rgba(0,0,0,.65)', fontSize: 9, color: 'rgba(255,255,255,.55)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{img.name}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            ) : (
+                                <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                        <div style={{ fontSize: 12, color: 'rgba(255,255,255,.45)' }}>{pessoasImages.length} pessoa(s)</div>
+                                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontSize: 11, padding: '5px 12px', borderRadius: 6, border: '1px solid rgba(160,96,255,.35)', color: 'rgba(190,140,255,.85)', background: 'rgba(160,96,255,.08)' }}>
+                                            <Ic n="plus" s={11} />Adicionar Pessoas
+                                            <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={e => Array.from(e.target.files).forEach(addPessoaImage)} />
+                                        </label>
+                                    </div>
+                                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,.28)', marginBottom: 10, lineHeight: 1.5 }}>Fotos de presskit com as pessoas/personagens que poderão aparecer nos posts.</div>
+                                    {pessoasImages.length === 0 ? (
+                                        <div style={{ padding: '28px 20px', textAlign: 'center', border: '1px dashed rgba(255,255,255,.1)', borderRadius: 10, color: 'rgba(255,255,255,.22)', fontSize: 13, lineHeight: 1.8 }}>
+                                            Nenhuma pessoa cadastrada.<br/>Adicione fotos do presskit do cliente.
+                                        </div>
+                                    ) : (
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 10 }}>
+                                            {pessoasImages.map(img => (
+                                                <div key={img.id} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
+                                                    <img src={img.data} alt={img.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block' }} />
+                                                    <button onClick={() => setPessoasImages(p => p.filter(r => r.id !== img.id))} style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(255,0,64,.8)', border: 'none', color: '#fff', borderRadius: 5, padding: '3px 7px', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>✕</button>
                                                     <div style={{ padding: '4px 6px', background: 'rgba(0,0,0,.65)', fontSize: 9, color: 'rgba(255,255,255,.55)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{img.name}</div>
                                                 </div>
                                             ))}
@@ -2588,11 +2617,13 @@
             const [tom, setTom] = useState('');
             const [generated, setGenerated] = useState(null);
             const [copied, setCopied] = useState(false);
+            const [copiedImgId, setCopiedImgId] = useState(null);
 
             const client = store.clients.find(c => c.id === selClientId);
             const clientFonts = pj(client?.clientFonts);
             const clientColors = pj(client?.clientColors);
             const refImages = pj(client?.refImages);
+            const pessoasImages = pj(client?.pessoasImages);
             const postTasks = selClientId ? (store.tasks || []).filter(t => t.clientId === selClientId && t.category === 'Post' && t.status !== 'Concluído') : [];
 
             const changeClient = id => { setSelClientId(id); setSelTaskId(''); setHeadline(''); setConteudo(''); setPersonagem(null); setFormato(''); setTom(''); setGenerated(null); };
@@ -2618,9 +2649,23 @@
                 return base + (specs.length ? '\n\n' + specs.join('\n') : '');
             };
 
-            const generate = () => { setGenerated({ prompt: buildPrompt(), refs: [...refImages] }); setCopied(false); };
+            const generate = () => { setGenerated({ prompt: buildPrompt(), refs: [...refImages], pessoas: [...pessoasImages] }); setCopied(false); setCopiedImgId(null); };
             const copy = () => { navigator.clipboard.writeText(generated.prompt).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2200); }); };
-            const downloadImg = img => { const a = document.createElement('a'); a.href = img.data; a.download = img.name; a.click(); };
+            const copyImgToClipboard = (dataUrl, id) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+                    canvas.getContext('2d').drawImage(img, 0, 0);
+                    canvas.toBlob(async blob => {
+                        try {
+                            await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+                            setCopiedImgId(id); setTimeout(() => setCopiedImgId(null), 2000);
+                        } catch { setCopiedImgId(id + '_err'); setTimeout(() => setCopiedImgId(null), 2000); }
+                    }, 'image/png');
+                };
+                img.src = dataUrl;
+            };
             const canGenerate = selClientId && (headline || conteudo);
 
             return (
@@ -2739,29 +2784,57 @@
                                 </div>
 
                                 {/* Referências */}
-                                {generated.refs.length > 0 && (
-                                    <div>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                                            <L>Referências do Cliente</L>
-                                            <span style={{ fontSize: 10, color: 'rgba(255,255,255,.28)' }}>Clique para baixar</span>
-                                        </div>
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                                            {generated.refs.map(img => (
-                                                <div key={img.id} onClick={() => downloadImg(img)} title={`Baixar: ${img.name}`} style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(160,96,255,.35)', position: 'relative', width: 76, height: 76, flexShrink: 0 }}>
-                                                    <img src={img.data} alt={img.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                                                    <div className="ref-hover-overlay" style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s' }}
-                                                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(0,0,0,.5)'}
-                                                        onMouseLeave={e => e.currentTarget.style.background = 'rgba(0,0,0,0)'}>
-                                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" opacity="0"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                {/* Imagens copiáveis — helper inline */}
+                                {(() => {
+                                    const ImgThumb = ({ img, accentColor }) => {
+                                        const isCopied = copiedImgId === img.id;
+                                        const isErr = copiedImgId === img.id + '_err';
+                                        return (
+                                            <div onClick={() => copyImgToClipboard(img.data, img.id)} title={img.name} style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: `1px solid ${isCopied ? 'rgba(0,200,100,.55)' : accentColor}`, position: 'relative', width: 76, height: 76, flexShrink: 0, transition: 'border-color .2s' }}>
+                                                <img src={img.data} alt={img.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                                                {(isCopied || isErr) ? (
+                                                    <div style={{ position: 'absolute', inset: 0, background: isCopied ? 'rgba(0,160,80,.82)' : 'rgba(200,50,50,.82)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: '#fff', letterSpacing: .3 }}>
+                                                        {isCopied ? '✓ Copiado' : '✕ Erro'}
                                                     </div>
+                                                ) : (
+                                                    <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s' }}
+                                                        onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,.52)'; e.currentTarget.querySelector('svg').style.opacity = '1'; }}
+                                                        onMouseLeave={e => { e.currentTarget.style.background = 'rgba(0,0,0,0)'; e.currentTarget.querySelector('svg').style.opacity = '0'; }}>
+                                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" style={{ opacity: 0, transition: 'opacity .15s' }}><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    };
+                                    return (<>
+                                        <div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                                <L>Referências do Cliente</L>
+                                                <span style={{ fontSize: 10, color: 'rgba(255,255,255,.28)' }}>Clique para copiar</span>
+                                            </div>
+                                            {generated.refs.length > 0 ? (
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                                    {generated.refs.map(img => <ImgThumb key={img.id} img={img} accentColor="rgba(160,96,255,.35)" />)}
                                                 </div>
-                                            ))}
+                                            ) : (
+                                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.22)', padding: '8px 0', lineHeight: 1.6 }}>Nenhuma referência cadastrada.<br/>Use "Criar Modelos → Referências".</div>
+                                            )}
                                         </div>
-                                    </div>
-                                )}
-                                {generated.refs.length === 0 && (
-                                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,.25)', padding: '10px 0' }}>Nenhuma referência cadastrada para este cliente.<br/>Use "Criar Modelos" para adicionar imagens de referência.</div>
-                                )}
+                                        <div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                                <L>Pessoas</L>
+                                                <span style={{ fontSize: 10, color: 'rgba(255,255,255,.28)' }}>Clique para copiar</span>
+                                            </div>
+                                            {generated.pessoas.length > 0 ? (
+                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                                    {generated.pessoas.map(img => <ImgThumb key={img.id} img={img} accentColor="rgba(96,160,255,.35)" />)}
+                                                </div>
+                                            ) : (
+                                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.22)', padding: '8px 0', lineHeight: 1.6 }}>Nenhuma pessoa cadastrada.<br/>Use "Criar Modelos → Pessoas".</div>
+                                            )}
+                                        </div>
+                                    </>);
+                                })()}
                             </>) : (
                                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'rgba(255,255,255,.13)', minHeight: 220 }}>
                                     <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
