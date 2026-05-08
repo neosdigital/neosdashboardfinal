@@ -2455,19 +2455,24 @@
             const [pessoasImages, setPessoasImages] = useState([]);
             const [newFont, setNewFont] = useState('');
             const pj = s => { try { return JSON.parse(s || '[]'); } catch { return []; } };
+            /* visualStyle column stores { s, f, c } JSON — or plain text (legacy) */
+            const parseVS = raw => { try { const o = JSON.parse(raw || '{}'); if (o && typeof o.s !== 'undefined') return { s: o.s || '', f: o.f || [], c: o.c || [] }; } catch {} return { s: raw || '', f: [], c: [] }; };
+            /* refImages column stores [{ id, name, data, type:'ref'|'pessoa' }] */
+            const parseAllImgs = raw => { try { const a = JSON.parse(raw || '[]'); return { refs: a.filter(i => i.type !== 'pessoa'), pessoas: a.filter(i => i.type === 'pessoa') }; } catch {} return { refs: [], pessoas: [] }; };
             const pick = id => {
                 setSelId(id); setTab('modelo');
                 const cl = store.clients.find(c => c.id === id);
                 setTmpl(cl?.promptTemplate || '');
-                setVisualStyle(cl?.visualStyle || '');
-                setFonts(pj(cl?.clientFonts));
-                setColors(pj(cl?.clientColors));
-                setRefImages(pj(cl?.refImages));
-                setPessoasImages(pj(cl?.pessoasImages));
+                const vs = parseVS(cl?.visualStyle);
+                setVisualStyle(vs.s); setFonts(vs.f); setColors(vs.c);
+                const imgs = parseAllImgs(cl?.refImages);
+                setRefImages(imgs.refs); setPessoasImages(imgs.pessoas);
             };
             const save = () => {
                 if (!selId) return;
-                editClient(selId, { promptTemplate: tmpl, visualStyle, clientFonts: JSON.stringify(fonts), clientColors: JSON.stringify(colors), refImages: JSON.stringify(refImages), pessoasImages: JSON.stringify(pessoasImages) });
+                const vsEncoded = JSON.stringify({ s: visualStyle, f: fonts, c: colors });
+                const allImgs = [...refImages.map(i => ({ ...i, type: 'ref' })), ...pessoasImages.map(i => ({ ...i, type: 'pessoa' }))];
+                editClient(selId, { promptTemplate: tmpl, visualStyle: vsEncoded, refImages: JSON.stringify(allImgs) });
                 onClose();
             };
             const addFont = () => { const f = newFont.trim(); if (!f || fonts.includes(f)) return; setFonts(p => [...p, f]); setNewFont(''); };
@@ -2620,10 +2625,14 @@
             const [copiedImgId, setCopiedImgId] = useState(null);
 
             const client = store.clients.find(c => c.id === selClientId);
-            const clientFonts = pj(client?.clientFonts);
-            const clientColors = pj(client?.clientColors);
-            const refImages = pj(client?.refImages);
-            const pessoasImages = pj(client?.pessoasImages);
+            /* Parse visualStyle JSON ({ s, f, c }) or fall back to plain text */
+            const parseVS = raw => { try { const o = JSON.parse(raw || '{}'); if (o && typeof o.s !== 'undefined') return { style: o.s || '', fonts: o.f || [], colors: o.c || [] }; } catch {} return { style: raw || '', fonts: [], colors: [] }; };
+            const parseAllImgs = raw => { try { const a = JSON.parse(raw || '[]'); return { refs: a.filter(i => i.type !== 'pessoa'), pessoas: a.filter(i => i.type === 'pessoa') }; } catch {} return { refs: [], pessoas: [] }; };
+            const vs = parseVS(client?.visualStyle);
+            const clientFonts = vs.fonts;
+            const clientColors = vs.colors;
+            const vsText = vs.style;
+            const { refs: refImages, pessoas: pessoasImages } = parseAllImgs(client?.refImages);
             const postTasks = selClientId ? (store.tasks || []).filter(t => t.clientId === selClientId && t.category === 'Post' && t.status !== 'Concluído') : [];
 
             const changeClient = id => { setSelClientId(id); setSelTaskId(''); setHeadline(''); setConteudo(''); setPersonagem(null); setFormato(''); setTom(''); setGenerated(null); };
@@ -2639,7 +2648,7 @@
                     ? tmpl.replace(/Titulo:/gi, headline).replace(/Conteúdo:/gi, conteudo)
                     : `Crie uma imagem para post de Instagram.\n\nTema: ${headline || '(sem headline)'}\n\nConteúdo: ${conteudo || '(sem conteúdo)'}`;
                 const specs = [];
-                if (client?.visualStyle) specs.push(`Estilo Visual: ${client.visualStyle}`);
+                if (vsText) specs.push(`Estilo Visual: ${vsText}`);
                 if (clientFonts.length) specs.push(`Fontes: ${clientFonts.join(', ')}`);
                 if (clientColors.length) specs.push(`Cores da marca: ${clientColors.join(', ')}`);
                 if (formato) specs.push(`Formato: ${formato}`);
@@ -2693,9 +2702,9 @@
                             </div>
 
                             {/* Specs do cliente */}
-                            {selClientId && (clientFonts.length > 0 || clientColors.length > 0 || client?.visualStyle) && (
+                            {selClientId && (clientFonts.length > 0 || clientColors.length > 0 || vsText) && (
                                 <div style={{ padding: '9px 12px', borderRadius: 8, background: 'rgba(160,96,255,.07)', border: '1px solid rgba(160,96,255,.16)', display: 'flex', flexDirection: 'column', gap: 5 }}>
-                                    {client?.visualStyle && <div style={{ fontSize: 11, color: 'rgba(255,255,255,.45)' }}>Estilo: <span style={{ color: 'rgba(200,155,255,.8)' }}>{client.visualStyle}</span></div>}
+                                    {vsText && <div style={{ fontSize: 11, color: 'rgba(255,255,255,.45)' }}>Estilo: <span style={{ color: 'rgba(200,155,255,.8)' }}>{vsText}</span></div>}
                                     {clientFonts.length > 0 && <div style={{ fontSize: 11, color: 'rgba(255,255,255,.45)' }}>Fontes: <span style={{ color: 'rgba(200,155,255,.8)' }}>{clientFonts.join(' · ')}</span></div>}
                                     {clientColors.length > 0 && <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                                         <span style={{ fontSize: 11, color: 'rgba(255,255,255,.45)' }}>Cores:</span>
