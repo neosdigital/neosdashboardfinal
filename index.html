@@ -2447,8 +2447,9 @@
             const { store, editClient } = useApp();
             const [selId, setSelId] = useState('');
             const [tmpl, setTmpl] = useState('');
-            const pick = id => { setSelId(id); const cl = store.clients.find(c => c.id === id); setTmpl(cl?.promptTemplate || ''); };
-            const save = () => { if (!selId) return; editClient(selId, { promptTemplate: tmpl }); onClose(); };
+            const [visualStyle, setVisualStyle] = useState('');
+            const pick = id => { setSelId(id); const cl = store.clients.find(c => c.id === id); setTmpl(cl?.promptTemplate || ''); setVisualStyle(cl?.visualStyle || ''); };
+            const save = () => { if (!selId) return; editClient(selId, { promptTemplate: tmpl, visualStyle }); onClose(); };
             return (
                 <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
                     <div className="modal-box fade-in" style={{ maxWidth: 540 }}>
@@ -2473,6 +2474,10 @@
                                     placeholder={"Exemplo:\n\nCrie um post para Instagram.\n\nTema: Titulo:\n\nDetalhes: Conteúdo:\n\nTom: profissional e descontraído.\nHashtags: 5 relevantes."}
                                     style={{ resize: 'vertical', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }} />
                             </div>
+                            <div style={{ marginBottom: 12 }}>
+                                <L>Estilo Visual Padrão</L>
+                                <input className="input-field" value={visualStyle} onChange={e => setVisualStyle(e.target.value)} placeholder="Ex: Minimalista, cores neutras, tipografia moderna" />
+                            </div>
                             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
                                 <button className="btn-secondary" onClick={onClose}>Cancelar</button>
                                 <button className="btn-primary" onClick={save}><Ic n="plus" s={13} />Salvar Modelo</button>
@@ -2483,22 +2488,220 @@
             );
         }
 
+        /* ── POST MODAL ──────────────────────────────────────── */
+        function PostModal({ task, client, onClose }) {
+            const { editClient } = useApp();
+            const [screen, setScreen] = useState('form');
+            const [headline, setHeadline] = useState('');
+            const [content, setContent] = useState(task.desc || task.description || '');
+            const [visualStyle, setVisualStyle] = useState(client?.visualStyle || '');
+            const [allFonts, setAllFonts] = useState(() => { try { return JSON.parse(localStorage.getItem('neos_fonts') || '[]'); } catch { return []; } });
+            const [selFonts, setSelFonts] = useState([]);
+            const [newFont, setNewFont] = useState('');
+            const [showAddFont, setShowAddFont] = useState(false);
+            const [colors, setColors] = useState(['#6366f1']);
+            const [comPersonagem, setComPersonagem] = useState(false);
+            const [semPersonagem, setSemPersonagem] = useState(false);
+            const [selRefs, setSelRefs] = useState([]);
+            const [generatedPrompt, setGeneratedPrompt] = useState('');
+            const [copied, setCopied] = useState(false);
+            const parseRefImages = () => { try { return JSON.parse(client?.refImages || '[]'); } catch { return []; } };
+            const [refImages, setRefImages] = useState(parseRefImages);
+
+            const addFont = () => {
+                if (!newFont.trim()) return;
+                const updated = [...new Set([...allFonts, newFont.trim()])];
+                localStorage.setItem('neos_fonts', JSON.stringify(updated));
+                setAllFonts(updated);
+                setSelFonts(prev => [...new Set([...prev, newFont.trim()])]);
+                setNewFont(''); setShowAddFont(false);
+            };
+            const toggleFont = f => setSelFonts(prev => prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f]);
+            const addColor = () => setColors(prev => [...prev, '#6366f1']);
+            const updateColor = (i, v) => setColors(prev => prev.map((c, idx) => idx === i ? v : c));
+            const removeColor = i => setColors(prev => prev.filter((_, idx) => idx !== i));
+            const toggleRef = id => setSelRefs(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+            const addRefImage = file => {
+                const reader = new FileReader();
+                reader.onload = e => {
+                    const newImg = { id: Date.now().toString(), name: file.name, data: e.target.result };
+                    const updated = [...refImages, newImg];
+                    setRefImages(updated);
+                    if (client) editClient(client.id, { refImages: JSON.stringify(updated) });
+                };
+                reader.readAsDataURL(file);
+            };
+            const buildPrompt = () => {
+                const tmpl = client?.promptTemplate || '';
+                let base = tmpl
+                    ? tmpl.replace(/Titulo:/gi, task.title || '').replace(/Conteúdo:/gi, content || '')
+                    : `Crie um post profissional.\n\nTítulo: ${task.title || ''}\n\nConteúdo: ${content || ''}`;
+                const extras = [];
+                if (headline) extras.push(`Headline: "${headline}"`);
+                if (visualStyle) extras.push(`Estilo Visual: ${visualStyle}`);
+                if (selFonts.length) extras.push(`Fontes utilizadas: ${selFonts.join(', ')}`);
+                const colorList = colors.filter(Boolean);
+                if (colorList.length) extras.push(`Cores predominantes: ${colorList.join(', ')}`);
+                if (comPersonagem && !semPersonagem) extras.push('Incluir uma pessoa/personagem humano no post.');
+                if (semPersonagem && !comPersonagem) extras.push('Não incluir nenhuma pessoa ou personagem no post.');
+                if (comPersonagem && semPersonagem) extras.push('Pode incluir ou não um personagem no post.');
+                return base + (extras.length ? '\n\n' + extras.join('\n') : '');
+            };
+            const generate = () => { setGeneratedPrompt(buildPrompt()); setScreen('result'); };
+            const copy = () => { navigator.clipboard.writeText(generatedPrompt).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2200); }); };
+            const selectedRefObjs = refImages.filter(r => selRefs.includes(r.id));
+
+            return (
+                <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+                    <div className="modal-box fade-in" style={{ maxWidth: 700, maxHeight: '92vh', overflowY: 'auto' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
+                            <div>
+                                <h3 style={{ fontSize: 15, fontWeight: 700 }}>Criar Post</h3>
+                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', marginTop: 3 }}>{task.title}{client ? ` — ${client.name}` : ''}</div>
+                            </div>
+                            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                                {screen === 'result' && <button className="btn-secondary" onClick={() => setScreen('form')} style={{ fontSize: 12 }}>← Voltar</button>}
+                                <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.5)', cursor: 'pointer', padding: 4 }}><Ic n="x" s={16} /></button>
+                            </div>
+                        </div>
+
+                        {screen === 'form' ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                                {/* Imagens de Referência */}
+                                <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                        <L>Imagens de Referência</L>
+                                        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer', fontSize: 11, padding: '4px 10px', borderRadius: 6, border: '1px solid rgba(160,96,255,.35)', color: 'rgba(190,140,255,.85)', background: 'rgba(160,96,255,.07)' }}>
+                                            <Ic n="plus" s={11} />Adicionar Referências Base
+                                            <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={e => Array.from(e.target.files).forEach(addRefImage)} />
+                                        </label>
+                                    </div>
+                                    {refImages.length === 0 ? (
+                                        <div style={{ padding: 14, textAlign: 'center', border: '1px dashed rgba(255,255,255,.1)', borderRadius: 8, fontSize: 12, color: 'rgba(255,255,255,.28)' }}>Nenhuma referência cadastrada. Use "Adicionar Referências Base" para incluir imagens.</div>
+                                    ) : (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                            {refImages.map(img => (
+                                                <div key={img.id} onClick={() => toggleRef(img.id)} style={{ cursor: 'pointer', borderRadius: 8, overflow: 'hidden', border: '2px solid', borderColor: selRefs.includes(img.id) ? 'rgba(160,96,255,.75)' : 'rgba(255,255,255,.1)', position: 'relative', width: 80, height: 80, flexShrink: 0 }}>
+                                                    <img src={img.data} alt={img.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                    {selRefs.includes(img.id) && <div style={{ position: 'absolute', inset: 0, background: 'rgba(160,96,255,.18)', display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', padding: 4 }}><div style={{ width: 18, height: 18, borderRadius: '50%', background: 'rgba(160,96,255,.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#fff', fontWeight: 700 }}>✓</div></div>}
+                                                    <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,.65)', padding: '3px 5px', fontSize: 9, color: 'rgba(255,255,255,.65)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{img.name}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                                {/* Headline */}
+                                <div>
+                                    <L>Headline</L>
+                                    <input className="input-field" value={headline} onChange={e => setHeadline(e.target.value)} placeholder="Ex: A solução que seu negócio precisava" />
+                                </div>
+                                {/* Conteúdo */}
+                                <div>
+                                    <L>Conteúdo</L>
+                                    <textarea className="input-field" rows={3} value={content} onChange={e => setContent(e.target.value)} placeholder="Descreva o que o post deve comunicar..." style={{ resize: 'vertical' }} />
+                                </div>
+                                {/* Estilo Visual */}
+                                <div>
+                                    <L>Estilo Visual</L>
+                                    <input className="input-field" value={visualStyle} onChange={e => setVisualStyle(e.target.value)} placeholder="Ex: Minimalista, cores neutras, tipografia moderna" />
+                                </div>
+                                {/* Fontes */}
+                                <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                        <L>Fontes</L>
+                                        <button className="btn-secondary" onClick={() => setShowAddFont(!showAddFont)} style={{ fontSize: 11, padding: '3px 10px' }}><Ic n="plus" s={11} />Adicionar Fonte</button>
+                                    </div>
+                                    {showAddFont && (
+                                        <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                                            <input className="input-field" value={newFont} onChange={e => setNewFont(e.target.value)} onKeyDown={e => e.key === 'Enter' && addFont()} placeholder="Nome da fonte (ex: Poppins)" style={{ flex: 1 }} autoFocus />
+                                            <button className="btn-primary" onClick={addFont} style={{ padding: '6px 14px' }}>Salvar</button>
+                                            <button className="btn-secondary" onClick={() => { setShowAddFont(false); setNewFont(''); }} style={{ padding: '6px 10px' }}>×</button>
+                                        </div>
+                                    )}
+                                    {allFonts.length === 0 ? (
+                                        <div style={{ fontSize: 12, color: 'rgba(255,255,255,.3)', padding: '6px 0' }}>Nenhuma fonte cadastrada ainda.</div>
+                                    ) : (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                            {allFonts.map(f => (
+                                                <button key={f} onClick={() => toggleFont(f)} style={{ padding: '4px 13px', borderRadius: 20, border: '1px solid', fontSize: 12, cursor: 'pointer', fontWeight: selFonts.includes(f) ? 700 : 400, background: selFonts.includes(f) ? 'rgba(160,96,255,.2)' : 'rgba(255,255,255,.03)', borderColor: selFonts.includes(f) ? 'rgba(160,96,255,.5)' : 'rgba(255,255,255,.1)', color: selFonts.includes(f) ? 'rgba(200,155,255,.95)' : 'rgba(255,255,255,.55)' }}>{f}</button>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                                {/* Cores Predominantes */}
+                                <div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                        <L>Cores Predominantes</L>
+                                        <button className="btn-secondary" onClick={addColor} style={{ fontSize: 11, padding: '3px 10px' }}><Ic n="plus" s={11} />Adicionar Cor</button>
+                                    </div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                                        {colors.map((c, i) => (
+                                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                <input type="color" value={c} onChange={e => updateColor(i, e.target.value)} style={{ width: 38, height: 38, borderRadius: 7, border: '1px solid rgba(255,255,255,.15)', cursor: 'pointer', padding: 2 }} />
+                                                <span style={{ fontSize: 11, color: 'rgba(255,255,255,.5)', fontFamily: 'monospace' }}>{c.toUpperCase()}</span>
+                                                {colors.length > 1 && <button onClick={() => removeColor(i)} style={{ background: 'none', border: 'none', color: 'rgba(255,100,100,.6)', cursor: 'pointer', fontSize: 16, padding: '0 2px', lineHeight: 1 }}>×</button>}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                                {/* Personagem */}
+                                <div>
+                                    <L>Personagem</L>
+                                    <div style={{ display: 'flex', gap: 24, marginTop: 6 }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: comPersonagem ? 'rgba(200,155,255,.95)' : 'rgba(255,255,255,.7)' }}>
+                                            <input type="checkbox" checked={comPersonagem} onChange={e => setComPersonagem(e.target.checked)} style={{ width: 15, height: 15, accentColor: '#a060ff', cursor: 'pointer' }} />
+                                            Com personagem
+                                        </label>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13, color: semPersonagem ? 'rgba(200,155,255,.95)' : 'rgba(255,255,255,.7)' }}>
+                                            <input type="checkbox" checked={semPersonagem} onChange={e => setSemPersonagem(e.target.checked)} style={{ width: 15, height: 15, accentColor: '#a060ff', cursor: 'pointer' }} />
+                                            Sem personagem
+                                        </label>
+                                    </div>
+                                </div>
+                                {/* Botão Gerar */}
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 10, borderTop: '1px solid rgba(255,255,255,.06)', marginTop: 4 }}>
+                                    <button className="btn-primary" onClick={generate} style={{ padding: '10px 28px', fontSize: 13, gap: 7 }}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                        Gerar Prompt
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <L>Prompt Gerado</L>
+                                    <button onClick={copy} className="btn-secondary" style={{ fontSize: 11, padding: '5px 16px', color: copied ? '#00c864' : undefined, borderColor: copied ? 'rgba(0,200,100,.4)' : undefined, transition: 'all .2s' }}>
+                                        {copied ? '✓ Copiado!' : 'Copiar Prompt'}
+                                    </button>
+                                </div>
+                                <textarea readOnly value={generatedPrompt} style={{ width: '100%', minHeight: 220, background: 'rgba(0,0,0,.28)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 8, padding: '12px 14px', color: 'rgba(255,255,255,.88)', fontSize: 12.5, lineHeight: 1.8, resize: 'vertical', fontFamily: 'inherit', outline: 'none' }} />
+                                {selectedRefObjs.length > 0 && (<>
+                                    <L>Imagens de Referência Selecionadas</L>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                                        {selectedRefObjs.map(img => (
+                                            <div key={img.id} style={{ borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(160,96,255,.4)' }}>
+                                                <img src={img.data} alt={img.name} style={{ width: 110, height: 110, objectFit: 'cover', display: 'block' }} />
+                                                <div style={{ padding: '4px 8px', background: 'rgba(0,0,0,.5)', fontSize: 10, color: 'rgba(255,255,255,.55)', textAlign: 'center' }}>{img.name}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </>)}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
         /* ── POST CREATOR ───────────────────────────────────── */
         function PostCreator() {
             const { store } = useApp();
             const [selClientId, setSelClientId] = useState('');
-            const [selTask, setSelTask] = useState(null);
-            const [copied, setCopied] = useState(false);
+            const [postModal, setPostModal] = useState(null);
             const client = store.clients.find(c => c.id === selClientId);
-            const tmpl = client?.promptTemplate || '';
             const postTasks = selClientId ? (store.tasks || []).filter(t => t.clientId === selClientId && t.category === 'Post' && t.status !== 'Concluído') : [];
-            const applyTmpl = t => {
-                if (!tmpl) return '⚠ Nenhum modelo configurado para este cliente.\nUse o botão "Criar Modelos" para definir o template.';
-                return tmpl.replace(/Titulo:/gi, t.title || '').replace(/Conteúdo:/gi, t.desc || t.description || '');
-            };
-            const prompt = selTask ? applyTmpl(selTask) : '';
-            const copy = () => { if (!prompt) return; navigator.clipboard.writeText(prompt).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2200); }); };
             return (
+                <>
                 <div className="glass fade-in" style={{ padding: '18px 20px', marginBottom: 24, borderColor: 'rgba(160,96,255,.25)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
                         <div style={{ width: 26, height: 26, borderRadius: 6, background: 'rgba(160,96,255,.15)', border: '1px solid rgba(160,96,255,.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -2508,7 +2711,7 @@
                     </div>
                     <div style={{ display: 'flex', gap: 16 }}>
                         <div style={{ width: 210, flexShrink: 0 }}>
-                            <select className="input-field" value={selClientId} onChange={e => { setSelClientId(e.target.value); setSelTask(null); }} style={{ fontSize: 12, marginBottom: 10 }}>
+                            <select className="input-field" value={selClientId} onChange={e => setSelClientId(e.target.value)} style={{ fontSize: 12, marginBottom: 10 }}>
                                 <option value="">Selecione o cliente</option>
                                 {store.clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                             </select>
@@ -2517,32 +2720,27 @@
                                     ? <div style={{ fontSize: 12, color: 'rgba(255,255,255,.28)', padding: '16px 0', textAlign: 'center', lineHeight: 1.6 }}>Nenhuma tarefa "Post"<br/>para este cliente</div>
                                     : <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                                         {postTasks.map(t => (
-                                            <div key={t.id} onClick={() => setSelTask(t)} style={{ padding: '8px 10px', borderRadius: 7, cursor: 'pointer', border: '1px solid', borderColor: selTask?.id === t.id ? 'rgba(160,96,255,.55)' : 'rgba(255,255,255,.08)', background: selTask?.id === t.id ? 'rgba(160,96,255,.14)' : 'rgba(255,255,255,.02)', transition: 'all .15s' }}>
-                                                <div style={{ fontSize: 12, fontWeight: 600, color: selTask?.id === t.id ? 'rgba(200,155,255,.95)' : 'rgba(255,255,255,.8)', lineHeight: 1.3 }}>{t.title}</div>
+                                            <div key={t.id} onClick={() => setPostModal({ task: t, client })}
+                                                style={{ padding: '8px 10px', borderRadius: 7, cursor: 'pointer', border: '1px solid rgba(255,255,255,.08)', background: 'rgba(255,255,255,.02)', transition: 'all .15s' }}
+                                                onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(160,96,255,.5)'; e.currentTarget.style.background = 'rgba(160,96,255,.1)'; }}
+                                                onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,.08)'; e.currentTarget.style.background = 'rgba(255,255,255,.02)'; }}>
+                                                <div style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,.8)', lineHeight: 1.3 }}>{t.title}</div>
                                                 {(t.desc || t.description) && <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.desc || t.description}</div>}
                                             </div>
                                         ))}
                                     </div>
                             )}
                         </div>
-                        <div style={{ flex: 1 }}>
-                            {selTask ? (<>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,.38)' }}>Prompt para: <strong style={{ color: 'rgba(255,255,255,.72)' }}>{selTask.title}</strong></div>
-                                    <button onClick={copy} className="btn-secondary" style={{ fontSize: 11, padding: '4px 12px', gap: 5, color: copied ? '#00c864' : undefined, borderColor: copied ? 'rgba(0,200,100,.4)' : undefined, transition: 'all .2s' }}>
-                                        {copied ? '✓ Copiado!' : 'Copiar'}
-                                    </button>
-                                </div>
-                                <textarea readOnly value={prompt} style={{ width: '100%', minHeight: 190, background: 'rgba(0,0,0,.28)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 8, padding: '10px 13px', color: 'rgba(255,255,255,.82)', fontSize: 12.5, lineHeight: 1.75, resize: 'vertical', fontFamily: 'inherit', outline: 'none' }} />
-                            </>) : (
-                                <div style={{ minHeight: 140, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: 10, color: 'rgba(255,255,255,.18)', fontSize: 13 }}>
-                                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                                    {selClientId ? 'Selecione uma tarefa Post ao lado' : 'Selecione um cliente para começar'}
-                                </div>
-                            )}
+                        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <div style={{ textAlign: 'center', color: 'rgba(255,255,255,.18)', fontSize: 13, lineHeight: 1.8 }}>
+                                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3" style={{ display: 'block', margin: '0 auto 10px' }}><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                {selClientId ? 'Clique em uma tarefa para criar o post' : 'Selecione um cliente para começar'}
+                            </div>
                         </div>
                     </div>
                 </div>
+                {postModal && <PostModal task={postModal.task} client={postModal.client} onClose={() => setPostModal(null)} />}
+                </>
             );
         }
 
