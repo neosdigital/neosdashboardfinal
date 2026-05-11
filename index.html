@@ -438,7 +438,8 @@
             performance: 'id, clientId, platform, month, year, createdAt'
         });
         db.version(3).stores({ calEvents: 'id, date, type, source, googleEventId, createdAt', costs: 'id, type, category, date, createdAt' });
-        const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [] };
+        db.version(4).stores({ clientImages: 'id, clientId, type, createdAt' });
+        const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [] };
 
         /* ── SUPABASE HELPERS ───────────────────────────────── */
         const _stripCol = (err, obj) => {
@@ -483,7 +484,7 @@
                 const [
                     { data: clients }, { data: tasks }, { data: financials },
                     { data: trafficData }, { data: designReqs }, { data: performance },
-                    { data: calEvents }, { data: costs }
+                    { data: calEvents }, { data: costs }, { data: clientImages }
                 ] = await Promise.all([
                     supabase.from('clients').select('*'),
                     supabase.from('tasks').select('*'),
@@ -493,11 +494,13 @@
                     supabase.from('performance').select('*'),
                     supabase.from('calEvents').select('*'),
                     supabase.from('costs').select('*'),
+                    supabase.from('clientImages').select('*'),
                 ]);
                 const store = {
                     clients: clients || [], tasks: tasks || [], financials: financials || [],
                     trafficData: trafficData || [], designReqs: designReqs || [],
-                    performance: performance || [], calEvents: calEvents || [], costs: costs || []
+                    performance: performance || [], calEvents: calEvents || [], costs: costs || [],
+                    clientImages: clientImages || []
                 };
                 const hasData = Object.values(store).some(arr => arr.length > 0);
                 if (!hasData) {
@@ -513,16 +516,17 @@
 
         async function loadFromIndexedDB() {
             try {
-                const [clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs] = await Promise.all([
+                const [clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages] = await Promise.all([
                     db.clients.toArray(), db.tasks.toArray(), db.financials.toArray(),
                     db.trafficData.toArray(), db.designReqs.toArray(),
-                    db.performance.toArray(), db.calEvents.toArray(), db.costs.toArray()
+                    db.performance.toArray(), db.calEvents.toArray(), db.costs.toArray(),
+                    db.clientImages.toArray()
                 ]);
-                return { clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs };
+                return { clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages };
             } catch (e) { return null; }
         }
         async function saveToDB(store) {
-            await db.transaction('rw', db.clients, db.tasks, db.financials, db.trafficData, db.designReqs, db.performance, db.calEvents, db.costs, async () => {
+            await db.transaction('rw', db.clients, db.tasks, db.financials, db.trafficData, db.designReqs, db.performance, db.calEvents, db.costs, db.clientImages, async () => {
                 await db.clients.clear(); await db.clients.bulkPut(store.clients);
                 await db.tasks.clear(); await db.tasks.bulkPut(store.tasks);
                 await db.financials.clear(); await db.financials.bulkPut(store.financials);
@@ -531,6 +535,7 @@
                 await db.performance.clear(); await db.performance.bulkPut(store.performance || []);
                 await db.calEvents.clear(); await db.calEvents.bulkPut(store.calEvents || []);
                 await db.costs.clear(); await db.costs.bulkPut(store.costs || []);
+                await db.clientImages.clear(); await db.clientImages.bulkPut(store.clientImages || []);
             });
         }
         async function migrateFromLocalStorage() {
@@ -595,7 +600,7 @@
 
             /* ── SUPABASE REALTIME ── */
             useEffect(() => {
-                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs'];
+                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages'];
                 const channel = supabase.channel('neos-db-changes');
                 TABLES.forEach(tbl => {
                     channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, ({ eventType, new: n, old: o }) => {
@@ -863,6 +868,10 @@
             const editCalEvent = (id, data) => { const m = getModUser(); upd(p => ({ calEvents: (p.calEvents || []).map(e => e.id === id ? { ...e, ...data, ...m } : e) })); supaUpdate('calEvents', id, { ...data, ...m }); notify('Evento atualizado ✓'); };
             const deleteCalEvent = id => { upd(p => ({ calEvents: (p.calEvents || []).filter(e => e.id !== id) })); supaDelete('calEvents', id); notify('Evento excluído', 'warn'); };
 
+            /* ── CLIENT IMAGES ── */
+            const addClientImage = (clientId, imgData) => { const img = { id: genId(), clientId, ...imgData, createdAt: new Date().toISOString() }; upd(p => ({ clientImages: [...(p.clientImages || []), img] })); supaSave('clientImages', img); };
+            const deleteClientImage = id => { upd(p => ({ clientImages: (p.clientImages || []).filter(i => i.id !== id) })); supaDelete('clientImages', id); };
+
             /* ── COSTS ── */
             const addCost = data => { const c = { id: genId(), createdAt: new Date().toISOString(), ...getModUser(), ...data }; upd(p => ({ costs: [...(p.costs || []), c] })); supaSave('costs', c); notify('Custo adicionado ✓'); };
             const editCost = (id, data) => { const m = getModUser(); upd(p => ({ costs: (p.costs || []).map(c => c.id === id ? { ...c, ...data, ...m } : c) })); supaUpdate('costs', id, { ...data, ...m }); notify('Custo atualizado ✓'); };
@@ -913,7 +922,7 @@
             );
 
             return (
-                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify }}>
+                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage }}>
                     {children}
                 </Ctx.Provider>
             );
@@ -2438,43 +2447,38 @@
         /* ── DESIGN ─────────────────────────────────────────── */
         /* ── CRIAR MODELOS MODAL ─────────────────────────────── */
         function PromptTemplateModal({ onClose }) {
-            const { store, editClient } = useApp();
+            const { store, editClient, addClientImage, deleteClientImage } = useApp();
             const [selId, setSelId] = useState('');
             const [tab, setTab] = useState('modelo');
             const [tmpl, setTmpl] = useState('');
             const [visualStyle, setVisualStyle] = useState('');
             const [fonts, setFonts] = useState([]);
             const [colors, setColors] = useState([]);
-            const [refImages, setRefImages] = useState([]);
-            const [pessoasImages, setPessoasImages] = useState([]);
             const [newFont, setNewFont] = useState('');
-            const pj = s => { try { return JSON.parse(s || '[]'); } catch { return []; } };
+            /* Imagens derivadas do store global — não precisam de estado local */
+            const refImages = (store.clientImages || []).filter(i => i.clientId === selId && i.type !== 'pessoa');
+            const pessoasImages = (store.clientImages || []).filter(i => i.clientId === selId && i.type === 'pessoa');
             /* visualStyle column stores { s, f, c } JSON — or plain text (legacy) */
             const parseVS = raw => { try { const o = JSON.parse(raw || '{}'); if (o && typeof o.s !== 'undefined') return { s: o.s || '', f: o.f || [], c: o.c || [] }; } catch {} return { s: raw || '', f: [], c: [] }; };
-            /* refImages column stores [{ id, name, data, type:'ref'|'pessoa' }] */
-            const parseAllImgs = raw => { try { const a = JSON.parse(raw || '[]'); return { refs: a.filter(i => i.type !== 'pessoa'), pessoas: a.filter(i => i.type === 'pessoa') }; } catch {} return { refs: [], pessoas: [] }; };
             const pick = id => {
                 setSelId(id); setTab('modelo');
                 const cl = store.clients.find(c => c.id === id);
                 setTmpl(cl?.promptTemplate || '');
                 const vs = parseVS(cl?.visualStyle);
                 setVisualStyle(vs.s); setFonts(vs.f); setColors(vs.c);
-                const imgs = parseAllImgs(cl?.refImages);
-                setRefImages(imgs.refs); setPessoasImages(imgs.pessoas);
             };
             const save = () => {
                 if (!selId) return;
                 const vsEncoded = JSON.stringify({ s: visualStyle, f: fonts, c: colors });
-                const allImgs = [...refImages.map(i => ({ ...i, type: 'ref' })), ...pessoasImages.map(i => ({ ...i, type: 'pessoa' }))];
-                editClient(selId, { promptTemplate: tmpl, visualStyle: vsEncoded, refImages: JSON.stringify(allImgs) });
+                editClient(selId, { promptTemplate: tmpl, visualStyle: vsEncoded });
                 onClose();
             };
             const addFont = () => { const f = newFont.trim(); if (!f || fonts.includes(f)) return; setFonts(p => [...p, f]); setNewFont(''); };
             const addColor = () => setColors(p => [...p, '#6366f1']);
             const updateColor = (i, v) => setColors(p => p.map((c, idx) => idx === i ? v : c));
             const compressImg = file => new Promise(resolve => { const r = new FileReader(); r.onload = e => { const img = new Image(); img.onload = () => { const MAX = 500; let w = img.naturalWidth, h = img.naturalHeight; if (w > MAX || h > MAX) { if (w > h) { h = Math.round(h * MAX / w); w = MAX; } else { w = Math.round(w * MAX / h); h = MAX; } } const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h); resolve(c.toDataURL('image/jpeg', 0.75)); }; img.src = e.target.result; }; r.readAsDataURL(file); });
-            const addRefImage = async file => { const data = await compressImg(file); setRefImages(p => [...p, { id: Date.now().toString(), name: file.name, data }]); };
-            const addPessoaImage = async file => { const data = await compressImg(file); setPessoasImages(p => [...p, { id: Date.now().toString(), name: file.name, data }]); };
+            const addRefImage = async file => { const data = await compressImg(file); addClientImage(selId, { name: file.name, data, type: 'ref' }); };
+            const addPessoaImage = async file => { const data = await compressImg(file); addClientImage(selId, { name: file.name, data, type: 'pessoa' }); };
             return (
                 <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
                     <div className="modal-box fade-in" style={{ maxWidth: 580, maxHeight: '92vh', overflowY: 'auto' }}>
@@ -2560,7 +2564,7 @@
                                             {refImages.map(img => (
                                                 <div key={img.id} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
                                                     <img src={img.data} alt={img.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block' }} />
-                                                    <button onClick={() => setRefImages(p => p.filter(r => r.id !== img.id))} style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(255,0,64,.8)', border: 'none', color: '#fff', borderRadius: 5, padding: '3px 7px', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>✕</button>
+                                                    <button onClick={() => deleteClientImage(img.id)} style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(255,0,64,.8)', border: 'none', color: '#fff', borderRadius: 5, padding: '3px 7px', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>✕</button>
                                                     <div style={{ padding: '4px 6px', background: 'rgba(0,0,0,.65)', fontSize: 9, color: 'rgba(255,255,255,.55)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{img.name}</div>
                                                 </div>
                                             ))}
@@ -2586,7 +2590,7 @@
                                             {pessoasImages.map(img => (
                                                 <div key={img.id} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)' }}>
                                                     <img src={img.data} alt={img.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block' }} />
-                                                    <button onClick={() => setPessoasImages(p => p.filter(r => r.id !== img.id))} style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(255,0,64,.8)', border: 'none', color: '#fff', borderRadius: 5, padding: '3px 7px', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>✕</button>
+                                                    <button onClick={() => deleteClientImage(img.id)} style={{ position: 'absolute', top: 4, right: 4, background: 'rgba(255,0,64,.8)', border: 'none', color: '#fff', borderRadius: 5, padding: '3px 7px', cursor: 'pointer', fontSize: 10, fontWeight: 700 }}>✕</button>
                                                     <div style={{ padding: '4px 6px', background: 'rgba(0,0,0,.65)', fontSize: 9, color: 'rgba(255,255,255,.55)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{img.name}</div>
                                                 </div>
                                             ))}
@@ -2622,12 +2626,12 @@
             const client = store.clients.find(c => c.id === selClientId);
             /* Parse visualStyle JSON ({ s, f, c }) or fall back to plain text */
             const parseVS = raw => { try { const o = JSON.parse(raw || '{}'); if (o && typeof o.s !== 'undefined') return { style: o.s || '', fonts: o.f || [], colors: o.c || [] }; } catch {} return { style: raw || '', fonts: [], colors: [] }; };
-            const parseAllImgs = raw => { try { const a = JSON.parse(raw || '[]'); return { refs: a.filter(i => i.type !== 'pessoa'), pessoas: a.filter(i => i.type === 'pessoa') }; } catch {} return { refs: [], pessoas: [] }; };
             const vs = parseVS(client?.visualStyle);
             const clientFonts = vs.fonts;
             const clientColors = vs.colors;
             const vsText = vs.style;
-            const { refs: refImages, pessoas: pessoasImages } = parseAllImgs(client?.refImages);
+            const refImages = (store.clientImages || []).filter(i => i.clientId === selClientId && i.type !== 'pessoa');
+            const pessoasImages = (store.clientImages || []).filter(i => i.clientId === selClientId && i.type === 'pessoa');
             const postTasks = selClientId ? (store.tasks || []).filter(t => t.clientId === selClientId && t.category === 'Post' && t.status !== 'Concluído') : [];
 
             const changeClient = id => { setSelClientId(id); setSelTaskId(''); setHeadline(''); setConteudo(''); setPersonagem(null); setFormato(''); setTom(''); setGenerated(null); };
