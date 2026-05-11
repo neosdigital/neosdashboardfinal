@@ -456,7 +456,7 @@
                 const { error } = await supabase.from(table).upsert([r]);
                 if (!error) return;
                 const next = _stripCol(error, r);
-                if (next) { r = next; } else { console.error(`[Neos] Supabase save (${table}):`, error.message); return; }
+                if (next) { r = next; } else { console.error(`[Neos] Supabase save (${table}):`, error.message); _neosNotifyRef.current?.(`Erro ao salvar (${table}): ${error.message.slice(0, 60)}`, 'warn'); return; }
             }
         };
         const supaUpdate = async (table, id, data) => {
@@ -465,7 +465,7 @@
                 const { error } = await supabase.from(table).update(d).eq('id', id);
                 if (!error) return;
                 const next = _stripCol(error, d);
-                if (next) { d = next; } else { console.error(`[Neos] Supabase update (${table}):`, error.message); return; }
+                if (next) { d = next; } else { console.error(`[Neos] Supabase update (${table}):`, error.message); _neosNotifyRef.current?.(`Erro ao atualizar (${table}): ${error.message.slice(0, 60)}`, 'warn'); return; }
             }
         };
         const supaDelete = async (table, id) => {
@@ -550,6 +550,7 @@
         /* ── CONTEXT ────────────────────────────────────────── */
         const Ctx = React.createContext(null);
         const useApp = () => useContext(Ctx);
+        const _neosNotifyRef = { current: null };
 
         function AppProvider({ children, authed }) {
             const userRole = authed?.role || 'employee';
@@ -773,6 +774,7 @@
             };
 
             const notify = (msg, type = 'ok') => { setToast({ msg, type }); setTimeout(() => setToast(null), 3000); };
+            useEffect(() => { _neosNotifyRef.current = (msg, type = 'warn') => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); }; return () => { _neosNotifyRef.current = null; }; }, []);
             const upd = fn => setStore(p => ({ ...p, ...fn(p) }));
 
             /* ── CLIENTS ── */
@@ -840,31 +842,23 @@
             const deletePerformance = id => { upd(p => ({ performance: (p.performance || []).filter(r => r.id !== id) })); supaDelete('performance', id); notify('Excluído', 'warn'); };
 
             /* ── CALENDAR EVENTS ── */
-            const addCalEvent = data => {
+            const addCalEvent = (data, silent = false) => {
                 const e = { id: genId(), createdAt: new Date().toISOString(), source: 'local', ...data };
-                upd(p => {
-                    const clientEntry = (data.clientId && data.clientId !== '__outro__')
-                        ? p.clients.find(c => c.id === data.clientId) : null;
-                    const clientName = clientEntry?.name || data.clientCustomName || '';
-                    const task = {
-                        id: genId(),
-                        createdAt: new Date().toISOString(),
-                        title: data.title,
-                        desc: data.desc || '',
-                        status: 'A Fazer',
-                        dueDate: data.date,
-                        clientId: clientEntry ? data.clientId : '',
-                        clientName,
-                        priority: 'Média',
-                        assignee: '',
-                        category: data.category || '',
-                        fromCalendar: true,
-                    };
-                    supaSave('tasks', task);
-                    return { calEvents: [...(p.calEvents || []), e], tasks: [...p.tasks, task] };
-                });
+                const clientEntry = (data.clientId && data.clientId !== '__outro__')
+                    ? store.clients.find(c => c.id === data.clientId) : null;
+                const clientName = clientEntry?.name || data.clientCustomName || data.clientName || '';
+                const task = {
+                    id: genId(), createdAt: new Date().toISOString(),
+                    title: data.title, desc: data.desc || '',
+                    status: 'A Fazer', dueDate: data.date,
+                    clientId: clientEntry ? data.clientId : '', clientName,
+                    priority: 'Média', assignee: '',
+                    category: data.category || '', fromCalendar: true,
+                };
+                upd(p => ({ calEvents: [...(p.calEvents || []), e], tasks: [...p.tasks, task] }));
                 supaSave('calEvents', e);
-                notify('Evento criado ✓ — tarefa adicionada ao Kanban');
+                supaSave('tasks', task);
+                if (!silent) notify('Evento criado ✓ — tarefa adicionada ao Kanban');
             };
             const editCalEvent = (id, data) => { const m = getModUser(); upd(p => ({ calEvents: (p.calEvents || []).map(e => e.id === id ? { ...e, ...data, ...m } : e) })); supaUpdate('calEvents', id, { ...data, ...m }); notify('Evento atualizado ✓'); };
             const deleteCalEvent = id => { upd(p => ({ calEvents: (p.calEvents || []).filter(e => e.id !== id) })); supaDelete('calEvents', id); notify('Evento excluído', 'warn'); };
@@ -919,7 +913,7 @@
             );
 
             return (
-                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate }}>
+                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify }}>
                     {children}
                 </Ctx.Provider>
             );
@@ -3398,7 +3392,7 @@
 
         /* ── CALENDAR PAGE ───────────────────────────────────── */
         function CalendarPage() {
-            const { store, calFocusDate, setCalFocusDate, addCalEvent, editCalEvent, deleteCalEvent } = useApp();
+            const { store, calFocusDate, setCalFocusDate, addCalEvent, editCalEvent, deleteCalEvent, notify } = useApp();
             const calEvs = store.calEvents || [];
             const kTasks = (store.tasks || []).filter(t => t.dueDate && t.status !== 'Concluído' && !t.fromCalendar);
             const today = new Date();
@@ -3420,28 +3414,26 @@
 
             useEffect(() => { if (calFocusDate) setFocus(new Date(calFocusDate + 'T12:00')); }, [calFocusDate]);
 
-            const parseEventText = raw => {
-                const text = raw.trim();
-                const ev = { title: '', date: '', type: 'Reunião', description: '', clientName: '' };
-                const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+            const parseOneEvent = block => {
+                const ev = { title: '', date: '', type: 'Reunião', desc: '', clientName: '' };
+                const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
                 for (const line of lines) {
                     const lower = line.toLowerCase();
-                    if (lower.startsWith('título:') || lower.startsWith('titulo:')) ev.title = line.split(':').slice(1).join(':').trim();
+                    const val = line.split(':').slice(1).join(':').trim();
+                    if (lower.startsWith('título:') || lower.startsWith('titulo:')) ev.title = val;
                     else if (lower.startsWith('data:')) {
-                        const raw = line.split(':').slice(1).join(':').trim();
-                        const m = raw.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
-                        if (m) {
-                            const d = m[1].padStart(2,'0'), mo = m[2].padStart(2,'0');
-                            const y = m[3] ? (m[3].length === 2 ? '20'+m[3] : m[3]) : new Date().getFullYear();
-                            ev.date = `${y}-${mo}-${d}`;
-                        }
-                    } else if (lower.startsWith('tipo:')) ev.type = line.split(':').slice(1).join(':').trim();
-                    else if (lower.startsWith('cliente:')) ev.clientName = line.split(':').slice(1).join(':').trim();
-                    else if (lower.startsWith('descrição:') || lower.startsWith('descricao:') || lower.startsWith('obs:')) ev.description = line.split(':').slice(1).join(':').trim();
-                    else if (!ev.title && line.length > 2) ev.title = line;
+                        const m = val.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
+                        if (m) { const d = m[1].padStart(2,'0'), mo = m[2].padStart(2,'0'); const y = m[3] ? (m[3].length===2?'20'+m[3]:m[3]) : new Date().getFullYear(); ev.date = `${y}-${mo}-${d}`; }
+                    } else if (lower.startsWith('tipo:')) ev.type = val;
+                    else if (lower.startsWith('cliente:')) ev.clientName = val;
+                    else if (lower.startsWith('descrição:') || lower.startsWith('descricao:') || lower.startsWith('obs:')) ev.desc = val;
+                    else if (!ev.title && line.length > 2 && !lower.includes(':')) ev.title = line;
                 }
-                if (!ev.title) ev.title = text.split('\n')[0].substring(0, 60);
                 return ev;
+            };
+            const parseEventTexts = raw => {
+                const blocks = raw.trim().split(/\n[ \t]*\n+/);
+                return blocks.map(parseOneEvent).filter(ev => ev.title && ev.date);
             };
 
             const prev = () => { if (vMode === 'month') setFocus(d => new Date(d.getFullYear(), d.getMonth() - 1, 1)); else setFocus(d => { const n = new Date(d); n.setDate(d.getDate() - 7); return n; }); };
@@ -3637,7 +3629,7 @@
                                     <button onClick={() => setShowTextAdd(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.5)', cursor: 'pointer' }}><Ic n="x" s={16} /></button>
                                 </div>
                                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 7, padding: '10px 12px', marginBottom: 12, lineHeight: 1.8 }}>
-                                    <strong style={{ color: 'rgba(255,255,255,.55)' }}>Formato:</strong><br />
+                                    <strong style={{ color: 'rgba(255,255,255,.55)' }}>Formato (separe múltiplos eventos com linha em branco):</strong><br />
                                     Título: Nome do evento<br />
                                     Data: DD/MM/AAAA<br />
                                     Tipo: Reunião | Entrega | Prazo | Outro<br />
@@ -3646,8 +3638,8 @@
                                 </div>
                                 <textarea
                                     className="input-field"
-                                    rows={7}
-                                    placeholder={"Título: Reunião de briefing\nData: 15/05/2026\nTipo: Reunião\nCliente: Empresa X\nObs: Apresentar proposta inicial"}
+                                    rows={10}
+                                    placeholder={"Título: Reunião de briefing\nData: 15/05/2026\nTipo: Reunião\nCliente: Empresa X\nObs: Apresentar proposta\n\nTítulo: Entrega de arte\nData: 20/05/2026\nTipo: Entrega\nCliente: Empresa X"}
                                     value={textInput}
                                     onChange={e => setTextInput(e.target.value)}
                                     style={{ width: '100%', resize: 'vertical', fontFamily: 'monospace', fontSize: 12 }}
@@ -3655,11 +3647,12 @@
                                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
                                     <button className="btn-secondary" onClick={() => setShowTextAdd(false)}>Cancelar</button>
                                     <button className="btn-primary" onClick={() => {
-                                        const parsed = parseEventText(textInput);
-                                        if (!parsed.title || !parsed.date) { alert('Informe pelo menos Título e Data.'); return; }
-                                        addCalEvent(parsed);
-                                        setShowTextAdd(false);
-                                    }}>Criar Evento</button>
+                                        const events = parseEventTexts(textInput);
+                                        if (!events.length) { alert('Nenhum evento válido encontrado. Verifique se cada bloco tem Título e Data.'); return; }
+                                        events.forEach(ev => addCalEvent(ev, true));
+                                        setShowTextAdd(false); setTextInput('');
+                                        notify(`${events.length} evento${events.length > 1 ? 's' : ''} criado${events.length > 1 ? 's' : ''} ✓`);
+                                    }}>Criar Eventos</button>
                                 </div>
                             </div>
                         </div>
