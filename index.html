@@ -3504,13 +3504,13 @@
                                                 return (
                                                 <div key={j} style={{ fontSize: 9.5, padding: '2px 4px', borderRadius: 3, background: clr + '2a', color: done ? '#555' : clr, border: `1px solid ${clr}44`, minWidth: 0, overflow: 'hidden', flexShrink: 0 }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
-                                                        {hasCheck && <input type="checkbox" checked={done} onChange={e => { e.stopPropagation(); if (checkId) moveTask(checkId, done ? 'A Fazer' : 'Concluído'); }} onClick={e => e.stopPropagation()} style={{ accentColor: '#a060ff', flexShrink: 0, cursor: 'pointer', width: 10, height: 10, margin: 0 }} />}
+                                                        {hasCheck && <span onClick={e => { e.stopPropagation(); if (checkId) moveTask(checkId, done ? 'A Fazer' : 'Concluído'); }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 10, height: 10, borderRadius: 2, border: `1.5px solid ${done ? '#555' : clr}`, background: done ? '#555' : 'transparent', flexShrink: 0, cursor: 'pointer', fontSize: 7, color: '#fff', lineHeight: 1 }}>{done ? '✓' : ''}</span>}
                                                         <span onClick={e => { e.stopPropagation(); if (!ev._task && !linkedTask) setEditEv(ev); }} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: (!ev._task && !linkedTask) ? 'pointer' : 'default', textDecoration: done ? 'line-through' : 'none', opacity: done ? .5 : 1, minWidth: 0 }}>
                                                             {!ev.allDay && !ev._task && !linkedTask && ev.startTime ? ev.startTime + ' ' : ''}{ev.title}
                                                         </span>
                                                         {!ev._task && <button onClick={e => { e.stopPropagation(); setDelEv(ev); }} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '0 1px', opacity: .55, fontSize: 9, lineHeight: 1, flexShrink: 0 }}>✕</button>}
                                                     </div>
-                                                    {clientName && <div style={{ fontSize: 8.5, color: done ? '#444' : 'rgba(160,96,255,.7)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: hasCheck ? 14 : 0 }}>{clientName}</div>}
+                                                    {clientName && <div style={{ fontSize: 8.5, color: done ? '#444' : clr, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: hasCheck ? 14 : 0, opacity: .75 }}>{clientName}</div>}
                                                 </div>
                                                 );
                                             })}
