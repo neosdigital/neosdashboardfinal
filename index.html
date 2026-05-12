@@ -3478,38 +3478,43 @@
                 const first = new Date(yr, mth, 1).getDay(), dim = new Date(yr, mth + 1, 0).getDate();
                 const cells = [...Array(first).fill(null), ...Array.from({ length: dim }, (_, i) => i + 1)];
                 while (cells.length % 7 !== 0) cells.push(null);
+                const allTasks = store.tasks || [];
                 return (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', border: '1px solid rgba(255,255,255,.07)', borderRadius: 10, overflow: 'hidden', flex: 1 }}>
-                        {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => <div key={d} style={{ textAlign: 'center', fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,.3)', padding: '8px 4px', background: 'rgba(255,255,255,.02)', borderBottom: '1px solid rgba(255,255,255,.06)' }}>{d}</div>)}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gridAutoRows: '105px', border: '1px solid rgba(255,255,255,.07)', borderRadius: 10, overflow: 'hidden', flex: 1 }}>
+                        {['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'].map(d => <div key={d} style={{ textAlign: 'center', fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,.3)', padding: '8px 4px', background: 'rgba(255,255,255,.02)', borderBottom: '1px solid rgba(255,255,255,.06)', gridRow: 'auto', height: 'auto' }}>{d}</div>)}
                         {cells.map((day, i) => {
                             const ds = day ? `${yr}-${String(mth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}` : null;
                             const items = ds ? getAll(ds) : [];
                             const isT = day && day === today.getDate() && mth === today.getMonth() && yr === today.getFullYear();
                             return (
                                 <div key={i} onClick={() => day && (setAddDef(ds), setShowAdd(true))}
-                                    style={{ minHeight: 88, padding: '5px 5px 3px', borderRight: (i + 1) % 7 === 0 ? 'none' : '1px solid rgba(255,255,255,.04)', borderBottom: '1px solid rgba(255,255,255,.04)', cursor: day ? 'pointer' : 'default', background: isT ? 'rgba(255,0,64,.04)' : 'transparent', transition: 'background .15s' }}
+                                    style={{ height: 105, overflow: 'hidden', padding: '5px 5px 3px', borderRight: (i + 1) % 7 === 0 ? 'none' : '1px solid rgba(255,255,255,.04)', borderBottom: '1px solid rgba(255,255,255,.04)', cursor: day ? 'pointer' : 'default', background: isT ? 'rgba(255,0,64,.04)' : 'transparent', transition: 'background .15s', boxSizing: 'border-box' }}
                                     onMouseEnter={e => { if (day) e.currentTarget.style.background = isT ? 'rgba(255,0,64,.08)' : 'rgba(255,255,255,.025)'; }}
                                     onMouseLeave={e => { e.currentTarget.style.background = isT ? 'rgba(255,0,64,.04)' : 'transparent'; }}>
                                     {day && <>
-                                        <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: isT ? 700 : 400, color: isT ? '#ff0040' : 'rgba(255,255,255,.5)', background: isT ? 'rgba(255,0,64,.2)' : 'transparent', marginBottom: 3 }}>{day}</div>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-                                            {items.slice(0, 3).map((ev, j) => {
-                                                const done = ev._task && ev.status === 'Concluído';
+                                        <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: isT ? 700 : 400, color: isT ? '#ff0040' : 'rgba(255,255,255,.5)', background: isT ? 'rgba(255,0,64,.2)' : 'transparent', marginBottom: 3, flexShrink: 0 }}>{day}</div>
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, overflow: 'hidden' }}>
+                                            {items.slice(0, 2).map((ev, j) => {
+                                                const linkedTask = !ev._task ? allTasks.find(t => t.fromCalendar && t.dueDate === ev.date && t.title === ev.title) : null;
+                                                const done = ev._task ? ev.status === 'Concluído' : (linkedTask?.status === 'Concluído');
+                                                const checkId = ev._task ? ev.id : linkedTask?.id;
+                                                const hasCheck = ev._task || !!linkedTask;
+                                                const clientName = ev._task ? (ev.clientName || '') : (ev.clientName || linkedTask?.clientName || '');
                                                 const clr = done ? '#555' : (ev.color || '#ff0040');
                                                 return (
-                                                <div key={j} style={{ fontSize: 9.5, padding: '2px 4px', borderRadius: 3, background: clr + '2a', color: clr, border: `1px solid ${clr}44`, minWidth: 0, overflow: 'hidden' }}>
+                                                <div key={j} style={{ fontSize: 9.5, padding: '2px 4px', borderRadius: 3, background: clr + '2a', color: done ? '#555' : clr, border: `1px solid ${clr}44`, minWidth: 0, overflow: 'hidden', flexShrink: 0 }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
-                                                        {ev._task && <input type="checkbox" checked={done} onChange={e => { e.stopPropagation(); moveTask(ev.id, done ? 'A Fazer' : 'Concluído'); }} onClick={e => e.stopPropagation()} style={{ accentColor: '#a060ff', flexShrink: 0, cursor: 'pointer', width: 10, height: 10, margin: 0 }} />}
-                                                        <span onClick={e => { e.stopPropagation(); if (!ev._task) setEditEv(ev); }} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: ev._task ? 'default' : 'pointer', textDecoration: done ? 'line-through' : 'none', opacity: done ? .5 : 1, minWidth: 0 }}>
-                                                            {!ev.allDay && !ev._task && ev.startTime ? ev.startTime + ' ' : ''}{ev.title}
+                                                        {hasCheck && <input type="checkbox" checked={done} onChange={e => { e.stopPropagation(); if (checkId) moveTask(checkId, done ? 'A Fazer' : 'Concluído'); }} onClick={e => e.stopPropagation()} style={{ accentColor: '#a060ff', flexShrink: 0, cursor: 'pointer', width: 10, height: 10, margin: 0 }} />}
+                                                        <span onClick={e => { e.stopPropagation(); if (!ev._task && !linkedTask) setEditEv(ev); }} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: (!ev._task && !linkedTask) ? 'pointer' : 'default', textDecoration: done ? 'line-through' : 'none', opacity: done ? .5 : 1, minWidth: 0 }}>
+                                                            {!ev.allDay && !ev._task && !linkedTask && ev.startTime ? ev.startTime + ' ' : ''}{ev.title}
                                                         </span>
                                                         {!ev._task && <button onClick={e => { e.stopPropagation(); setDelEv(ev); }} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '0 1px', opacity: .55, fontSize: 9, lineHeight: 1, flexShrink: 0 }}>✕</button>}
                                                     </div>
-                                                    {ev._task && ev.clientName && <div style={{ fontSize: 8.5, color: done ? '#444' : 'rgba(160,96,255,.7)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: 14 }}>{ev.clientName}</div>}
+                                                    {clientName && <div style={{ fontSize: 8.5, color: done ? '#444' : 'rgba(160,96,255,.7)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: hasCheck ? 14 : 0 }}>{clientName}</div>}
                                                 </div>
                                                 );
                                             })}
-                                            {items.length > 3 && <div style={{ fontSize: 8.5, color: 'rgba(255,255,255,.28)', paddingLeft: 3 }}>+{items.length - 3} mais</div>}
+                                            {items.length > 2 && <div style={{ fontSize: 8.5, color: 'rgba(255,255,255,.28)', paddingLeft: 3 }}>+{items.length - 2} mais</div>}
                                         </div>
                                     </>}
                                 </div>
