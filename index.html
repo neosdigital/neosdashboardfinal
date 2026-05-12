@@ -697,14 +697,14 @@
                         return [...(remote || []), ...localOnly];
                     };
                     setStore(prev => ({
-                        clients:     merge(clients,     prev.clients),
-                        tasks:       merge(tasks,       prev.tasks),
-                        financials:  merge(financials,  prev.financials),
+                        clients: merge(clients, prev.clients),
+                        tasks: merge(tasks, prev.tasks),
+                        financials: merge(financials, prev.financials),
                         trafficData: merge(trafficData, prev.trafficData),
-                        designReqs:  merge(designReqs,  prev.designReqs),
+                        designReqs: merge(designReqs, prev.designReqs),
                         performance: merge(performance, prev.performance),
-                        calEvents:   merge(calEvents,   prev.calEvents),
-                        costs:       merge(costs,       prev.costs),
+                        calEvents: merge(calEvents, prev.calEvents),
+                        costs: merge(costs, prev.costs),
                     }));
                     notify('Dados atualizados ✓');
                 } catch { notify('Erro ao atualizar dados', 'warn'); }
@@ -1395,8 +1395,8 @@
                                     <span style={{ flex: 1 }}>{it.label}</span>
                                     {blocked && (
                                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                                            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                                            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                                         </svg>
                                     )}
                                 </div>
@@ -1409,7 +1409,7 @@
                             <Ic n="sync" s={15} /><span style={{ fontSize: 12 }}>Backup & DB</span>
                         </div>
                         <div className="nav-item" onClick={async () => { if (refreshing) return; setRefreshing(true); await refreshData(); setRefreshing(false); }} style={{ background: 'rgba(64,144,255,.06)', border: '1px solid rgba(64,144,255,.18)', borderRadius: 8, color: 'rgba(120,180,255,.8)', opacity: refreshing ? .6 : 1, cursor: refreshing ? 'wait' : 'pointer' }}>
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ animation: refreshing ? 'spin .7s linear infinite' : 'none' }}><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ animation: refreshing ? 'spin .7s linear infinite' : 'none' }}><polyline points="1 4 1 10 7 10" /><path d="M3.51 15a9 9 0 1 0 .49-3.51" /></svg>
                             <span style={{ fontSize: 12 }}>{refreshing ? 'Atualizando...' : 'Atualizar Dados'}</span>
                         </div>
                         <UserBox />
@@ -1730,19 +1730,27 @@
             const [del, setDel] = useState(null);
             const [dragging, setDragging] = useState(null);
             const [dragOver, setDragOver] = useState(null);
+            const [filtClientId, setFiltClientId] = useState('');
             const onDS = (e, t) => { setDragging(t); e.dataTransfer.effectAllowed = 'move'; };
             const onDO = (e, col) => { e.preventDefault(); setDragOver(col); };
             const onDrop = (e, col) => { e.preventDefault(); if (dragging && dragging.status !== col) moveTask(dragging.id, col); setDragging(null); setDragOver(null); };
             const colColor = { 'Backlog': 'rgba(140,140,210,.7)', 'A Fazer': 'rgba(100,160,255,.7)', 'Em Andamento': 'rgba(255,200,0,.7)', 'Em Revisão': 'rgba(180,80,255,.7)', 'Concluído': 'rgba(0,200,100,.7)' };
+            const allTasks = filtClientId ? store.tasks.filter(t => t.clientId === filtClientId) : store.tasks;
             return (
                 <div className="fade-in">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
-                        <div><h1 style={{ fontSize: 21, fontWeight: 700 }}>Kanban Board</h1><p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>{store.tasks.length} tarefas · arraste para mover</p></div>
-                        <button className="btn-primary" onClick={() => setShowAdd(true)}><Ic n="plus" s={15} />Nova Tarefa</button>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22, flexWrap: 'wrap', gap: 10 }}>
+                        <div><h1 style={{ fontSize: 21, fontWeight: 700 }}>Kanban Board</h1><p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>{allTasks.length} tarefas · arraste para mover</p></div>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <select value={filtClientId} onChange={e => setFiltClientId(e.target.value)} style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 8, color: filtClientId ? '#fff' : 'rgba(255,255,255,.45)', padding: '7px 12px', fontSize: 12, cursor: 'pointer' }}>
+                                <option value="">Todos os clientes</option>
+                                {store.clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                            <button className="btn-primary" onClick={() => setShowAdd(true)}><Ic n="plus" s={15} />Nova Tarefa</button>
+                        </div>
                     </div>
                     <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 16 }}>
                         {COLS.map(col => {
-                            const ct = store.tasks.filter(t => t.status === col);
+                            const ct = allTasks.filter(t => t.status === col);
                             return (
                                 <div key={col} className={'kanban-col' + (dragOver === col ? ' drag-over' : '')} style={{ flex: '0 0 232px' }} onDragOver={e => onDO(e, col)} onDrop={e => onDrop(e, col)} onDragLeave={() => setDragOver(null)}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
@@ -1799,11 +1807,24 @@
             const overdue = financials.filter(f => f.status === 'Atrasado').reduce((s, f) => s + (f.amount || 0), 0);
             const totalCosts = costs.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
             const netProfit = paid - totalCosts;
+            const monthlyMRR = (store.clients || []).filter(c => c.status === 'Ativo').reduce((s, c) => s + (parseFloat(c.plan) || 0), 0);
+            const activeCount = (store.clients || []).filter(c => c.status === 'Ativo').length;
             return (
                 <div className="fade-in">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                         <div><h1 style={{ fontSize: 21, fontWeight: 700 }}>Financeiro</h1><p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>{financials.length} registros de receita · {costs.length} custos</p></div>
                         <button className="btn-primary" onClick={() => setShowAdd(true)}><Ic n="plus" s={15} />Adicionar Receita</button>
+                    </div>
+                    <div className="glass" style={{ padding: '16px 20px', marginBottom: 16, background: 'rgba(0,200,100,.06)', border: '1px solid rgba(0,200,100,.18)', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                        <div>
+                            <div style={{ fontSize: 11, color: 'rgba(0,200,100,.7)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>Recorrência Mensal (MRR)</div>
+                            <div style={{ fontSize: 28, fontWeight: 800, color: '#00c864' }}><BlurVal>{fmt(monthlyMRR)}</BlurVal></div>
+                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginTop: 4 }}>{activeCount} cliente{activeCount !== 1 ? 's' : ''} ativo{activeCount !== 1 ? 's' : ''} · pacotes mensais somados</div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 20 }}>
+                            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 10, color: 'rgba(255,255,255,.35)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: .4 }}>Anualizado</div><div style={{ fontSize: 16, fontWeight: 700, color: 'rgba(0,200,100,.8)' }}><BlurVal>{fmt(monthlyMRR * 12)}</BlurVal></div></div>
+                            <div style={{ textAlign: 'center' }}><div style={{ fontSize: 10, color: 'rgba(255,255,255,.35)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: .4 }}>Ticket Médio</div><div style={{ fontSize: 16, fontWeight: 700, color: 'rgba(0,200,100,.8)' }}><BlurVal>{activeCount ? fmt(monthlyMRR / activeCount) : 'R$ 0'}</BlurVal></div></div>
+                        </div>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 14, marginBottom: 20 }}>
                         {[{ l: 'Total Pago', v: fmt(paid), c: '#00c864', bg: 'rgba(0,200,100,.07)' }, { l: 'Pendente', v: fmt(pending), c: '#ffcc00', bg: 'rgba(255,200,0,.07)' }, { l: 'Atrasado', v: fmt(overdue), c: '#ff4060', bg: 'rgba(255,0,64,.07)' }, { l: 'Custos', v: fmt(totalCosts), c: '#ff8030', bg: 'rgba(255,128,0,.07)' }, { l: 'Lucro Líquido', v: fmt(netProfit), c: netProfit >= 0 ? '#00c864' : '#ff4060', bg: netProfit >= 0 ? 'rgba(0,200,100,.07)' : 'rgba(255,0,64,.07)' }].map(({ l, v, c, bg }) => (
@@ -2459,7 +2480,7 @@
             const refImages = (store.clientImages || []).filter(i => i.clientId === selId && i.type !== 'pessoa');
             const pessoasImages = (store.clientImages || []).filter(i => i.clientId === selId && i.type === 'pessoa');
             /* visualStyle column stores { s, f, c } JSON — or plain text (legacy) */
-            const parseVS = raw => { try { const o = JSON.parse(raw || '{}'); if (o && typeof o.s !== 'undefined') return { s: o.s || '', f: o.f || [], c: o.c || [] }; } catch {} return { s: raw || '', f: [], c: [] }; };
+            const parseVS = raw => { try { const o = JSON.parse(raw || '{}'); if (o && typeof o.s !== 'undefined') return { s: o.s || '', f: o.f || [], c: o.c || [] }; } catch { } return { s: raw || '', f: [], c: [] }; };
             const pick = id => {
                 setSelId(id); setTab('modelo');
                 const cl = store.clients.find(c => c.id === id);
@@ -2557,7 +2578,7 @@
                                     </div>
                                     {refImages.length === 0 ? (
                                         <div style={{ padding: '28px 20px', textAlign: 'center', border: '1px dashed rgba(255,255,255,.1)', borderRadius: 10, color: 'rgba(255,255,255,.22)', fontSize: 13, lineHeight: 1.8 }}>
-                                            Nenhuma referência cadastrada.<br/>Adicione imagens que representam o estilo do cliente.
+                                            Nenhuma referência cadastrada.<br />Adicione imagens que representam o estilo do cliente.
                                         </div>
                                     ) : (
                                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 10 }}>
@@ -2583,7 +2604,7 @@
                                     <div style={{ fontSize: 11, color: 'rgba(255,255,255,.28)', marginBottom: 10, lineHeight: 1.5 }}>Fotos de presskit com as pessoas/personagens que poderão aparecer nos posts.</div>
                                     {pessoasImages.length === 0 ? (
                                         <div style={{ padding: '28px 20px', textAlign: 'center', border: '1px dashed rgba(255,255,255,.1)', borderRadius: 10, color: 'rgba(255,255,255,.22)', fontSize: 13, lineHeight: 1.8 }}>
-                                            Nenhuma pessoa cadastrada.<br/>Adicione fotos do presskit do cliente.
+                                            Nenhuma pessoa cadastrada.<br />Adicione fotos do presskit do cliente.
                                         </div>
                                     ) : (
                                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 10 }}>
@@ -2625,7 +2646,7 @@
 
             const client = store.clients.find(c => c.id === selClientId);
             /* Parse visualStyle JSON ({ s, f, c }) or fall back to plain text */
-            const parseVS = raw => { try { const o = JSON.parse(raw || '{}'); if (o && typeof o.s !== 'undefined') return { style: o.s || '', fonts: o.f || [], colors: o.c || [] }; } catch {} return { style: raw || '', fonts: [], colors: [] }; };
+            const parseVS = raw => { try { const o = JSON.parse(raw || '{}'); if (o && typeof o.s !== 'undefined') return { style: o.s || '', fonts: o.f || [], colors: o.c || [] }; } catch { } return { style: raw || '', fonts: [], colors: [] }; };
             const vs = parseVS(client?.visualStyle);
             const clientFonts = vs.fonts;
             const clientColors = vs.colors;
@@ -2681,7 +2702,7 @@
                     {/* Header */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,.05)' }}>
                         <div style={{ width: 26, height: 26, borderRadius: 6, background: 'rgba(160,96,255,.15)', border: '1px solid rgba(160,96,255,.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(180,120,255,.9)" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="rgba(180,120,255,.9)" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
                         </div>
                         <h3 style={{ fontSize: 14, fontWeight: 700, color: 'rgba(190,140,255,.95)' }}>Criar Post</h3>
                         {generated && <button className="btn-secondary" onClick={() => setGenerated(null)} style={{ marginLeft: 'auto', fontSize: 11, padding: '3px 10px' }}>← Novo</button>}
@@ -2772,7 +2793,7 @@
                             </div>
 
                             <button className="btn-primary" onClick={generate} disabled={!canGenerate} style={{ width: '100%', padding: '11px', fontSize: 13, opacity: canGenerate ? 1 : 0.38, cursor: canGenerate ? 'pointer' : 'default', marginTop: 2 }}>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
                                 Gerar Prompt
                             </button>
                         </div>
@@ -2808,7 +2829,7 @@
                                                     <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s' }}
                                                         onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,.52)'; e.currentTarget.querySelector('svg').style.opacity = '1'; }}
                                                         onMouseLeave={e => { e.currentTarget.style.background = 'rgba(0,0,0,0)'; e.currentTarget.querySelector('svg').style.opacity = '0'; }}>
-                                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" style={{ opacity: 0, transition: 'opacity .15s' }}><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2" style={{ opacity: 0, transition: 'opacity .15s' }}><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
                                                     </div>
                                                 )}
                                             </div>
@@ -2825,7 +2846,7 @@
                                                     {generated.refs.map(img => <ImgThumb key={img.id} img={img} accentColor="rgba(160,96,255,.35)" />)}
                                                 </div>
                                             ) : (
-                                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.22)', padding: '8px 0', lineHeight: 1.6 }}>Nenhuma referência cadastrada.<br/>Use "Criar Modelos → Referências".</div>
+                                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.22)', padding: '8px 0', lineHeight: 1.6 }}>Nenhuma referência cadastrada.<br />Use "Criar Modelos → Referências".</div>
                                             )}
                                         </div>
                                         <div>
@@ -2838,15 +2859,15 @@
                                                     {generated.pessoas.map(img => <ImgThumb key={img.id} img={img} accentColor="rgba(96,160,255,.35)" />)}
                                                 </div>
                                             ) : (
-                                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.22)', padding: '8px 0', lineHeight: 1.6 }}>Nenhuma pessoa cadastrada.<br/>Use "Criar Modelos → Pessoas".</div>
+                                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,.22)', padding: '8px 0', lineHeight: 1.6 }}>Nenhuma pessoa cadastrada.<br />Use "Criar Modelos → Pessoas".</div>
                                             )}
                                         </div>
                                     </>);
                                 })()}
                             </>) : (
                                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'rgba(255,255,255,.13)', minHeight: 220 }}>
-                                    <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                                    <span style={{ fontSize: 13, textAlign: 'center', lineHeight: 1.7 }}>Preencha os campos e<br/>clique em "Gerar Prompt"</span>
+                                    <svg width="38" height="38" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
+                                    <span style={{ fontSize: 13, textAlign: 'center', lineHeight: 1.7 }}>Preencha os campos e<br />clique em "Gerar Prompt"</span>
                                 </div>
                             )}
                         </div>
@@ -2892,7 +2913,7 @@
                         <div><h1 style={{ fontSize: 21, fontWeight: 700 }}>Solicitações de Design</h1><p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>{store.designReqs.length} solicitações</p></div>
                         <div style={{ display: 'flex', gap: 8 }}>
                             <button className="btn-secondary" onClick={() => setShowModelos(true)} style={{ fontSize: 12, borderColor: 'rgba(160,96,255,.35)', color: 'rgba(190,140,255,.85)' }}>
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /><polyline points="10 9 9 9 8 9" /></svg>
                                 Criar Modelos
                             </button>
                             <button className="btn-primary" onClick={() => setShowAdd(true)}><Ic n="plus" s={15} />Nova Solicitação</button>
@@ -3396,9 +3417,9 @@
 
         /* ── CALENDAR PAGE ───────────────────────────────────── */
         function CalendarPage() {
-            const { store, calFocusDate, setCalFocusDate, addCalEvent, editCalEvent, deleteCalEvent, notify } = useApp();
+            const { store, calFocusDate, setCalFocusDate, addCalEvent, editCalEvent, deleteCalEvent, notify, moveTask } = useApp();
             const calEvs = store.calEvents || [];
-            const kTasks = (store.tasks || []).filter(t => t.dueDate && t.status !== 'Concluído' && !t.fromCalendar);
+            const kTasks = (store.tasks || []).filter(t => t.dueDate && !t.fromCalendar);
             const today = new Date();
             const [vMode, setVMode] = useState('month');
             const [focus, setFocus] = useState(() => calFocusDate ? new Date(calFocusDate + 'T12:00') : new Date(today.getFullYear(), today.getMonth(), today.getDate()));
@@ -3427,7 +3448,7 @@
                     if (lower.startsWith('título:') || lower.startsWith('titulo:')) ev.title = val;
                     else if (lower.startsWith('data:')) {
                         const m = val.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
-                        if (m) { const d = m[1].padStart(2,'0'), mo = m[2].padStart(2,'0'); const y = m[3] ? (m[3].length===2?'20'+m[3]:m[3]) : new Date().getFullYear(); ev.date = `${y}-${mo}-${d}`; }
+                        if (m) { const d = m[1].padStart(2, '0'), mo = m[2].padStart(2, '0'); const y = m[3] ? (m[3].length === 2 ? '20' + m[3] : m[3]) : new Date().getFullYear(); ev.date = `${y}-${mo}-${d}`; }
                     } else if (lower.startsWith('tipo:')) ev.type = val;
                     else if (lower.startsWith('cliente:')) ev.clientName = val;
                     else if (lower.startsWith('descrição:') || lower.startsWith('descricao:') || lower.startsWith('obs:')) ev.desc = val;
@@ -3471,15 +3492,23 @@
                                     onMouseLeave={e => { e.currentTarget.style.background = isT ? 'rgba(255,0,64,.04)' : 'transparent'; }}>
                                     {day && <>
                                         <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: isT ? 700 : 400, color: isT ? '#ff0040' : 'rgba(255,255,255,.5)', background: isT ? 'rgba(255,0,64,.2)' : 'transparent', marginBottom: 3 }}>{day}</div>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                                            {items.slice(0, 3).map((ev, j) => (
-                                                <div key={j} style={{ fontSize: 9.5, padding: '2px 5px', borderRadius: 3, background: (ev.color || '#ff0040') + '2a', color: ev.color || '#ff0040', border: `1px solid ${ev.color || '#ff0040'}44`, display: 'flex', alignItems: 'center', gap: 2 }}>
-                                                    <span onClick={e => { e.stopPropagation(); if (!ev._task) setEditEv(ev); }} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: ev._task ? 'default' : 'pointer' }}>
-                                                        {!ev.allDay && !ev._task && ev.startTime ? ev.startTime + ' ' : ''}{ev._task ? '☑ ' : ''}{ev.title}
-                                                    </span>
-                                                    {!ev._task && <button onClick={e => { e.stopPropagation(); setDelEv(ev); }} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '0 1px', opacity: .55, fontSize: 9, lineHeight: 1, flexShrink: 0 }}>✕</button>}
+                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                                            {items.slice(0, 3).map((ev, j) => {
+                                                const done = ev._task && ev.status === 'Concluído';
+                                                const clr = done ? '#555' : (ev.color || '#ff0040');
+                                                return (
+                                                <div key={j} style={{ fontSize: 9.5, padding: '2px 4px', borderRadius: 3, background: clr + '2a', color: clr, border: `1px solid ${clr}44`, minWidth: 0, overflow: 'hidden' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
+                                                        {ev._task && <input type="checkbox" checked={done} onChange={e => { e.stopPropagation(); moveTask(ev.id, done ? 'A Fazer' : 'Concluído'); }} onClick={e => e.stopPropagation()} style={{ accentColor: '#a060ff', flexShrink: 0, cursor: 'pointer', width: 10, height: 10, margin: 0 }} />}
+                                                        <span onClick={e => { e.stopPropagation(); if (!ev._task) setEditEv(ev); }} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: ev._task ? 'default' : 'pointer', textDecoration: done ? 'line-through' : 'none', opacity: done ? .5 : 1, minWidth: 0 }}>
+                                                            {!ev.allDay && !ev._task && ev.startTime ? ev.startTime + ' ' : ''}{ev.title}
+                                                        </span>
+                                                        {!ev._task && <button onClick={e => { e.stopPropagation(); setDelEv(ev); }} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '0 1px', opacity: .55, fontSize: 9, lineHeight: 1, flexShrink: 0 }}>✕</button>}
+                                                    </div>
+                                                    {ev._task && ev.clientName && <div style={{ fontSize: 8.5, color: done ? '#444' : 'rgba(160,96,255,.7)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: 14 }}>{ev.clientName}</div>}
                                                 </div>
-                                            ))}
+                                                );
+                                            })}
                                             {items.length > 3 && <div style={{ fontSize: 8.5, color: 'rgba(255,255,255,.28)', paddingLeft: 3 }}>+{items.length - 3} mais</div>}
                                         </div>
                                     </>}
@@ -3576,7 +3605,7 @@
                                 </button>
                             )}
                             <button className="btn-secondary" onClick={() => { setTextInput(''); setShowTextAdd(true); }} style={{ fontSize: 12, gap: 5 }}>
-                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
                                 Texto → Evento
                             </button>
                             <button className="btn-primary" onClick={() => { setAddDef(null); setShowAdd(true); }}><Ic n="plus" s={13} />Novo Evento</button>
@@ -4005,8 +4034,8 @@
                             <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
                                 <div style={{ width: 46, height: 46, background: 'rgba(255,0,64,.1)', border: '1px solid rgba(255,0,64,.28)', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff0040" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                                        <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                                     </svg>
                                 </div>
                                 <div>
@@ -4030,15 +4059,15 @@
                                         <button type="button" onClick={() => setShowPwd(v => !v)}
                                             style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,.35)', padding: 0, lineHeight: 1, display: 'flex', alignItems: 'center' }}>
                                             {showPwd
-                                                ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-                                                : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                                                ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                                                : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
                                             }
                                         </button>
                                     </div>
                                 </div>
                                 {error && (
                                     <div style={{ background: 'rgba(255,0,64,.08)', border: '1px solid rgba(255,0,64,.3)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: '#ff5070', display: 'flex', alignItems: 'center', gap: 8 }}>
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>
                                         {error}
                                     </div>
                                 )}
@@ -4067,13 +4096,13 @@
                 <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '65vh', gap: 22 }}>
                     <div style={{ width: 76, height: 76, background: 'rgba(255,0,64,.07)', border: '1px solid rgba(255,0,64,.22)', borderRadius: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="rgba(255,0,64,.65)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                         </svg>
                     </div>
                     <div style={{ textAlign: 'center' }}>
                         <div style={{ fontSize: 20, fontWeight: 700, color: 'rgba(255,255,255,.8)', marginBottom: 10 }}>Acesso Restrito</div>
-                        <div style={{ fontSize: 13, color: 'rgba(255,255,255,.35)', lineHeight: 1.7 }}>Esta seção é exclusiva para administradores.<br/>Entre em contato com o responsável.</div>
+                        <div style={{ fontSize: 13, color: 'rgba(255,255,255,.35)', lineHeight: 1.7 }}>Esta seção é exclusiva para administradores.<br />Entre em contato com o responsável.</div>
                     </div>
                 </div>
             );
@@ -4137,7 +4166,7 @@
                             <div style={{ borderTop: '1px solid rgba(255,255,255,.07)', marginTop: 8, paddingTop: 8 }}>
                                 <button onClick={() => { sessionStorage.removeItem('neos_auth'); window.location.reload(); }}
                                     style={{ width: '100%', background: 'rgba(255,0,64,.07)', border: '1px solid rgba(255,0,64,.18)', color: '#ff6070', borderRadius: 7, padding: '6px 10px', cursor: 'pointer', fontSize: 12, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8 }}>
-                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
                                     Sair
                                 </button>
                             </div>
@@ -4168,7 +4197,7 @@
                         <button onClick={() => setChatOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,.4)', padding: 4 }}><Ic n="x" s={14} /></button>
                     </div>
                     <div style={{ flex: 1, overflowY: 'auto', padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                        {chatMessages.length === 0 && <div style={{ textAlign: 'center', color: 'rgba(255,255,255,.22)', fontSize: 12, marginTop: 50, lineHeight: 1.8 }}>Nenhuma mensagem ainda.<br/><span style={{ fontSize: 10 }}>Mensagens não são salvas.</span></div>}
+                        {chatMessages.length === 0 && <div style={{ textAlign: 'center', color: 'rgba(255,255,255,.22)', fontSize: 12, marginTop: 50, lineHeight: 1.8 }}>Nenhuma mensagem ainda.<br /><span style={{ fontSize: 10 }}>Mensagens não são salvas.</span></div>}
                         {chatMessages.map((msg, i) => {
                             const isMe = msg.k === myKey;
                             return (
@@ -4184,7 +4213,7 @@
                     <div style={{ padding: '10px 14px', borderTop: '1px solid rgba(255,255,255,.07)', display: 'flex', gap: 8, flexShrink: 0 }}>
                         <input className="input-field" placeholder="Mensagem… (Enter para enviar)" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()} style={{ fontSize: 12 }} />
                         <button className="btn-primary" onClick={send} disabled={!text.trim()} style={{ padding: '0 12px', flexShrink: 0 }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
                         </button>
                     </div>
                 </div>
@@ -4213,7 +4242,7 @@
                     )}
                     <button onClick={() => setChatOpen(c => !c)} title="Chat Interno"
                         style={{ position: 'fixed', bottom: isEmployee ? 22 : 82, right: 22, zIndex: 200, borderRadius: 50, width: 44, height: 44, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: chatOpen ? '#ff0040' : 'rgba(255,255,255,.08)', border: '1px solid ' + (chatOpen ? '#ff0040' : 'rgba(255,255,255,.15)'), cursor: 'pointer', boxShadow: chatOpen ? '0 0 18px rgba(255,0,64,.4)' : 'none', transition: 'all .2s' }}>
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
                     </button>
                     <Chat />
                     {quickAdd && <ClientModal onClose={() => setQuickAdd(false)} />}
@@ -4222,7 +4251,7 @@
                         {visible.map(c => (
                             <div key={c.k} style={{ position: 'absolute', left: `${c.x * 100}%`, top: `${c.y * 100}%`, transition: 'left 55ms linear, top 55ms linear', pointerEvents: 'none', transform: 'translate(-2px, -2px)' }}>
                                 <svg width="18" height="22" viewBox="0 0 18 22" fill="none">
-                                    <path d="M2 2L16 10L10 12L7 19L2 2Z" fill={c.color} stroke="#fff" strokeWidth="1.2" strokeLinejoin="round"/>
+                                    <path d="M2 2L16 10L10 12L7 19L2 2Z" fill={c.color} stroke="#fff" strokeWidth="1.2" strokeLinejoin="round" />
                                 </svg>
                                 <div style={{ position: 'absolute', top: 18, left: 14, background: c.color, color: '#fff', fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 6, whiteSpace: 'nowrap', boxShadow: '0 2px 10px rgba(0,0,0,.45)' }}>
                                     {c.name}
