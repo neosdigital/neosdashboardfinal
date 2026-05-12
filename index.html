@@ -3461,10 +3461,10 @@
                 return blocks.map(parseOneEvent).filter(ev => ev.title && ev.date);
             };
 
-            const prev = () => { if (vMode === 'month') setFocus(d => new Date(d.getFullYear(), d.getMonth() - 1, 1)); else setFocus(d => { const n = new Date(d); n.setDate(d.getDate() - 7); return n; }); };
-            const next = () => { if (vMode === 'month') setFocus(d => new Date(d.getFullYear(), d.getMonth() + 1, 1)); else setFocus(d => { const n = new Date(d); n.setDate(d.getDate() + 7); return n; }); };
+            const prev = () => { if (vMode === 'month') setFocus(d => new Date(d.getFullYear(), d.getMonth() - 1, 1)); else if (vMode === 'day') setFocus(d => { const n = new Date(d); n.setDate(d.getDate() - 1); return n; }); else setFocus(d => { const n = new Date(d); n.setDate(d.getDate() - 7); return n; }); };
+            const next = () => { if (vMode === 'month') setFocus(d => new Date(d.getFullYear(), d.getMonth() + 1, 1)); else if (vMode === 'day') setFocus(d => { const n = new Date(d); n.setDate(d.getDate() + 1); return n; }); else setFocus(d => { const n = new Date(d); n.setDate(d.getDate() + 7); return n; }); };
             const goToday = () => setFocus(new Date(today.getFullYear(), today.getMonth(), today.getDate()));
-            const pLabel = () => { if (vMode === 'month') return MESES[focus.getMonth()] + ' ' + focus.getFullYear(); const dow = focus.getDay(); const ws = new Date(focus); ws.setDate(focus.getDate() - dow); const we = new Date(ws); we.setDate(ws.getDate() + 6); return ws.getDate() + ' ' + (ws.getMonth() !== we.getMonth() ? MESES_SHORT[ws.getMonth()] + ' ' : '') + '– ' + we.getDate() + ' ' + MESES_SHORT[we.getMonth()] + ' ' + we.getFullYear(); };
+            const pLabel = () => { if (vMode === 'month') return MESES[focus.getMonth()] + ' ' + focus.getFullYear(); if (vMode === 'day') return ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'][focus.getDay()] + ', ' + focus.getDate() + ' de ' + MESES[focus.getMonth()] + ' ' + focus.getFullYear(); const dow = focus.getDay(); const ws = new Date(focus); ws.setDate(focus.getDate() - dow); const we = new Date(ws); we.setDate(ws.getDate() + 6); return ws.getDate() + ' ' + (ws.getMonth() !== we.getMonth() ? MESES_SHORT[ws.getMonth()] + ' ' : '') + '– ' + we.getDate() + ' ' + MESES_SHORT[we.getMonth()] + ' ' + we.getFullYear(); };
 
             const fEvs = evs => filtClient ? evs.filter(e => e.clientId === filtClient) : evs;
             const fTks = tks => filtClient ? tks.filter(t => t.clientId === filtClient) : tks;
@@ -3493,8 +3493,8 @@
                                     onMouseLeave={e => { e.currentTarget.style.background = isT ? 'rgba(255,0,64,.04)' : 'transparent'; }}>
                                     {day && <>
                                         <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: isT ? 700 : 400, color: isT ? '#ff0040' : 'rgba(255,255,255,.5)', background: isT ? 'rgba(255,0,64,.2)' : 'transparent', marginBottom: 3, flexShrink: 0 }}>{day}</div>
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, overflow: 'hidden' }}>
-                                            {items.slice(0, 2).map((ev, j) => {
+                                        <div onClick={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, maxHeight: 70, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,.12) transparent' }}>
+                                            {items.map((ev, j) => {
                                                 const linkedTask = !ev._task ? allTasks.find(t => t.fromCalendar && t.dueDate === ev.date && t.title === ev.title) : null;
                                                 const done = ev._task ? ev.status === 'Concluído' : (linkedTask?.status === 'Concluído');
                                                 const checkId = ev._task ? ev.id : linkedTask?.id;
@@ -3514,7 +3514,6 @@
                                                 </div>
                                                 );
                                             })}
-                                            {items.length > 2 && <div style={{ fontSize: 8.5, color: 'rgba(255,255,255,.28)', paddingLeft: 3 }}>+{items.length - 2} mais</div>}
                                         </div>
                                     </>}
                                 </div>
@@ -3569,6 +3568,77 @@
                 );
             };
 
+            const renderDay = () => {
+                const ds = `${focus.getFullYear()}-${String(focus.getMonth()+1).padStart(2,'0')}-${String(focus.getDate()).padStart(2,'0')}`;
+                const isT = focus.toDateString() === today.toDateString();
+                const hours = Array.from({ length: 24 }, (_, i) => i);
+                const dayEvs = fEvs(calEvs.filter(e => e.date === ds));
+                const dayTasks = fTks(kTasks.filter(t => t.dueDate === ds));
+                const allTasksDay = store.tasks || [];
+                const allDayEvs = dayEvs.filter(e => e.allDay || !e.startTime);
+                const timedEvs = dayEvs.filter(e => !e.allDay && e.startTime);
+                const nowMin = isT ? today.getHours() * 60 + today.getMinutes() : -1;
+                const HOUR_H = 64;
+                return (
+                    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, border: '1px solid rgba(255,255,255,.07)', borderRadius: 10, overflow: 'hidden' }}>
+                        <div style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,.07)', background: 'rgba(255,255,255,.02)', display: 'flex', alignItems: 'flex-start', gap: 14, flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                <div style={{ fontSize: 9.5, fontWeight: 600, color: 'rgba(255,255,255,.3)', textTransform: 'uppercase', letterSpacing: .5 }}>{'Dom Seg Ter Qua Qui Sex Sáb'.split(' ')[focus.getDay()]}</div>
+                                <div style={{ fontSize: 26, fontWeight: 700, color: isT ? '#ff0040' : 'rgba(255,255,255,.85)', width: 44, height: 44, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: isT ? 'rgba(255,0,64,.18)' : 'transparent', lineHeight: 1 }}>{focus.getDate()}</div>
+                            </div>
+                            <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 5, alignItems: 'center', paddingTop: 4 }}>
+                                {allDayEvs.map(ev => (
+                                    <div key={ev.id} onClick={e => e.stopPropagation()} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 5, background: (ev.color||'#ff0040')+'2a', color: ev.color||'#ff0040', border: `1px solid ${ev.color||'#ff0040'}44`, display: 'flex', alignItems: 'center', gap: 5 }}>
+                                        <span onClick={() => setEditEv(ev)} style={{ cursor: 'pointer' }}>{ev.title}</span>
+                                        <button onClick={() => setDelEv(ev)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', opacity: .55, fontSize: 10, lineHeight: 1 }}>✕</button>
+                                    </div>
+                                ))}
+                                {dayTasks.map(t => {
+                                    const done = t.status === 'Concluído';
+                                    return (
+                                        <div key={t.id} onClick={e => e.stopPropagation()} style={{ fontSize: 11, padding: '3px 8px', borderRadius: 5, background: '#a060ff2a', color: done ? '#555' : '#a060ff', border: `1px solid #a060ff44`, display: 'flex', alignItems: 'center', gap: 5, textDecoration: done ? 'line-through' : 'none', opacity: done ? .6 : 1 }}>
+                                            <span onClick={() => moveTask(t.id, done ? 'A Fazer' : 'Concluído')} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 13, height: 13, borderRadius: 3, border: `1.5px solid ${done ? '#555' : '#a060ff'}`, background: done ? '#555' : 'transparent', cursor: 'pointer', fontSize: 8, color: '#fff' }}>{done ? '✓' : ''}</span>
+                                            <span>{t.title}</span>
+                                            {t.clientName && <span style={{ fontSize: 9.5, opacity: .6 }}>· {t.clientName}</span>}
+                                        </div>
+                                    );
+                                })}
+                                {allDayEvs.length === 0 && dayTasks.length === 0 && <span style={{ fontSize: 11, color: 'rgba(255,255,255,.22)', fontStyle: 'italic' }}>Sem eventos dia todo</span>}
+                                <button className="btn-primary" onClick={() => { setAddDef(ds); setShowAdd(true); }} style={{ fontSize: 11, padding: '4px 10px', marginLeft: 'auto' }}><Ic n="plus" s={11} />Novo</button>
+                            </div>
+                        </div>
+                        <div style={{ flex: 1, overflowY: 'auto', maxHeight: 'calc(100vh - 300px)', position: 'relative' }}>
+                            {isT && nowMin >= 0 && (
+                                <div style={{ position: 'absolute', left: 52, right: 0, top: nowMin / 60 * HOUR_H, borderTop: '2px solid #ff0040', zIndex: 5, pointerEvents: 'none', display: 'flex', alignItems: 'center' }}>
+                                    <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#ff0040', flexShrink: 0, marginLeft: -5, marginTop: -4 }} />
+                                </div>
+                            )}
+                            {hours.map(h => {
+                                const slotEvs = timedEvs.filter(e => parseInt((e.startTime||'00').split(':')[0]) === h);
+                                const isNowHour = isT && today.getHours() === h;
+                                return (
+                                    <div key={h} style={{ display: 'flex', minHeight: HOUR_H, borderBottom: '1px solid rgba(255,255,255,.04)', background: isNowHour ? 'rgba(255,0,64,.025)' : 'transparent' }}>
+                                        <div style={{ width: 52, paddingTop: 5, paddingRight: 10, textAlign: 'right', fontSize: 9.5, color: isNowHour ? 'rgba(255,60,80,.6)' : 'rgba(255,255,255,.2)', flexShrink: 0, fontWeight: isNowHour ? 600 : 400 }}>{String(h).padStart(2,'0')}:00</div>
+                                        <div onClick={() => { setAddDef(ds); setShowAdd(true); }} style={{ flex: 1, borderLeft: `1px solid ${isNowHour ? 'rgba(255,0,64,.15)' : 'rgba(255,255,255,.05)'}`, padding: '4px 8px', cursor: 'pointer', position: 'relative' }}
+                                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,.025)'}
+                                            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                                            {slotEvs.map(ev => (
+                                                <div key={ev.id} onClick={e => e.stopPropagation()} style={{ marginBottom: 5, fontSize: 12, padding: '6px 10px', borderRadius: 6, background: (ev.color||'#ff0040')+'22', color: ev.color||'#ff0040', border: `1px solid ${ev.color||'#ff0040'}44`, borderLeft: `3px solid ${ev.color||'#ff0040'}`, display: 'flex', alignItems: 'center', gap: 7 }}>
+                                                    <span style={{ fontSize: 10, opacity: .7, flexShrink: 0, fontWeight: 600 }}>{ev.startTime}{ev.endTime ? '–'+ev.endTime : ''}</span>
+                                                    <span onClick={() => setEditEv(ev)} style={{ flex: 1, cursor: 'pointer', fontWeight: 500 }}>{ev.title}</span>
+                                                    {ev.clientName && <span style={{ fontSize: 10, opacity: .55, flexShrink: 0 }}>{ev.clientName}</span>}
+                                                    <button onClick={() => setDelEv(ev)} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', opacity: .5, fontSize: 11, lineHeight: 1, flexShrink: 0 }}>✕</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            };
+
             return (
                 <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 52px)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
@@ -3578,7 +3648,7 @@
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                             <div style={{ display: 'flex', background: 'rgba(255,255,255,.04)', borderRadius: 7, border: '1px solid rgba(255,255,255,.07)', overflow: 'hidden' }}>
-                                {[['month', 'Mês'], ['week', 'Semana']].map(([m, l]) => (
+                                {[['month', 'Mês'], ['week', 'Semana'], ['day', 'Dia']].map(([m, l]) => (
                                     <button key={m} onClick={() => setVMode(m)} style={{ padding: '6px 13px', fontSize: 12, background: vMode === m ? 'rgba(255,0,64,.18)' : 'transparent', color: vMode === m ? '#ff4060' : 'rgba(255,255,255,.45)', border: 'none', cursor: 'pointer', fontWeight: vMode === m ? 600 : 400 }}>{l}</button>
                                 ))}
                             </div>
@@ -3655,7 +3725,7 @@
                             </div>
                         </div>
                     )}
-                    {vMode === 'month' ? renderMonth() : renderWeek()}
+                    {vMode === 'month' ? renderMonth() : vMode === 'week' ? renderWeek() : renderDay()}
                     {showAdd && <EventModal defaultDate={addDef} onClose={() => setShowAdd(false)} />}
                     {editEv && <EventModal ev={editEv} onClose={() => setEditEv(null)} />}
                     {delEv && <Confirm msg={`Excluir "${delEv.title}"?`} onOk={() => { deleteCalEvent(delEv.id); setDelEv(null); }} onClose={() => setDelEv(null)} />}
