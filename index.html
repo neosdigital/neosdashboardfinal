@@ -4758,13 +4758,15 @@
         }
 
         /* ── GOALS / KPIs PAGE ──────────────────────────────── */
-        const GOAL_CATS = ['Comercial','Financeiro','Marketing','Social Media','Operacional','Outro'];
-        const GOAL_CAT_CLR = { Comercial:'#4090ff', Financeiro:'#00c853', Marketing:'#e91e63', 'Social Media':'#a060ff', Operacional:'#ff9800', Outro:'#888' };
-        const GOAL_UNITS = ['%','R$','leads','clientes','posts','seguidores','curtidas','campanhas','tarefas','outro'];
+        const GOAL_CATS = ['Comercial','Financeiro','Marketing','Social Media','Operacional','Tráfego','Equipe','Outro'];
+        const GOAL_CAT_CLR = { Comercial:'#4090ff', Financeiro:'#00c853', Marketing:'#e91e63', 'Social Media':'#a060ff', Operacional:'#ff9800', Tráfego:'#00bcd4', Equipe:'#ff6b35', Outro:'#888' };
+        const GOAL_UNITS = ['%','R$','leads','clientes','reuniões','propostas','posts','seguidores','tarefas','entregas','campanhas','outro'];
+        const GOAL_PERIODS = ['Semanal','Mensal','Trimestral','Anual'];
+        const GOAL_SCOPES = ['Agência','Equipe','Colaborador','Setor','Cliente'];
 
         function GoalModal({ goal, onClose }) {
             const { addGoal, editGoal } = useApp();
-            const blank = { name:'', category:'Comercial', target:'', current:'', unit:'%', period:'', responsible:'', deadline:'', notes:'', color:'' };
+            const blank = { name:'', category:'Comercial', target:'', current:'', unit:'%', period:'Mensal', scope:'Agência', responsible:'', deadline:'', notes:'', color:'' };
             const [f, setF] = useState(goal ? { ...blank, ...goal } : blank);
             const set = (k,v) => setF(p=>({...p,[k]:v}));
             const save = () => { if (!f.name.trim() || !f.target) return; goal ? editGoal(goal.id, f) : addGoal(f); onClose(); };
@@ -4782,7 +4784,8 @@
                                 <FRow label="Unidade"><select className="input-field" style={{ fontSize:13 }} value={f.unit} onChange={e=>set('unit',e.target.value)}>{GOAL_UNITS.map(u=><option key={u}>{u}</option>)}</select></FRow>
                                 <FRow label="Valor Meta *"><input className="input-field" style={{ fontSize:13 }} type="number" value={f.target} onChange={e=>set('target',e.target.value)} placeholder="Ex: 50" /></FRow>
                                 <FRow label="Valor Atual"><input className="input-field" style={{ fontSize:13 }} type="number" value={f.current} onChange={e=>set('current',e.target.value)} placeholder="Ex: 18" /></FRow>
-                                <FRow label="Período"><input className="input-field" style={{ fontSize:13 }} value={f.period} onChange={e=>set('period',e.target.value)} placeholder="Ex: Maio/2025" /></FRow>
+                                <FRow label="Período"><select className="input-field" style={{ fontSize:13 }} value={f.period} onChange={e=>set('period',e.target.value)}>{GOAL_PERIODS.map(p=><option key={p}>{p}</option>)}</select></FRow>
+                                <FRow label="Escopo"><select className="input-field" style={{ fontSize:13 }} value={f.scope} onChange={e=>set('scope',e.target.value)}>{GOAL_SCOPES.map(s=><option key={s}>{s}</option>)}</select></FRow>
                                 <FRow label="Prazo"><input className="input-field" style={{ fontSize:13 }} type="date" value={f.deadline} onChange={e=>set('deadline',e.target.value)} /></FRow>
                                 <FRow label="Responsável"><input className="input-field" style={{ fontSize:13 }} value={f.responsible} onChange={e=>set('responsible',e.target.value)} placeholder="Nome" /></FRow>
                                 <FRow label="Cor (hex opcional)"><input className="input-field" style={{ fontSize:13 }} value={f.color} onChange={e=>set('color',e.target.value)} placeholder="#4090ff" /></FRow>
@@ -4805,154 +4808,528 @@
             const clients = store.clients || [];
             const tasks = store.tasks || [];
             const financials = store.financials || [];
-            const performance = store.performance || [];
+            const trafficData = store.trafficData || [];
+
+            const [tab, setTab] = useState('overview');
             const [showAdd, setShowAdd] = useState(false);
             const [editing, setEditing] = useState(null);
             const [filterCat, setFilterCat] = useState('');
+            const [filterPeriod, setFilterPeriod] = useState('');
             const [updateId, setUpdateId] = useState(null);
             const [updateVal, setUpdateVal] = useState('');
 
-            const fmtNum = (v, unit) => {
-                if (!v && v !== 0) return '—';
-                const n = parseFloat(v);
-                if (unit === 'R$') return 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-                return n.toLocaleString('pt-BR') + ' ' + (unit || '');
-            };
-
             const now = new Date();
-            const AUTO_KPIS = [
-                { id:'kpi_leads_total', name:'Total de Leads', category:'Comercial', current: leads.length, unit:'leads', auto:true, color:'#4090ff' },
-                { id:'kpi_leads_won', name:'Leads Convertidos', category:'Comercial', current: leads.filter(l=>l.status==='Fechado Ganho').length, unit:'leads', auto:true, color:'#00c853' },
-                { id:'kpi_clients_active', name:'Clientes Ativos', category:'Comercial', current: clients.filter(c=>c.status==='Ativo').length, unit:'clientes', auto:true, color:'#a060ff' },
-                { id:'kpi_tasks_done', name:'Tarefas Concluídas', category:'Operacional', current: tasks.filter(t=>t.status==='Concluído').length, unit:'tarefas', auto:true, color:'#ff9800' },
-                { id:'kpi_mrr', name:'Receita Mensal (MRR)', category:'Financeiro', current: clients.filter(c=>c.status==='Ativo').reduce((s,c)=>s+(parseFloat(c.plan)||0),0), unit:'R$', auto:true, color:'#00c853' },
-                { id:'kpi_leads_conv', name:'Taxa de Conversão Leads', category:'Comercial', current: leads.length > 0 ? ((leads.filter(l=>l.status==='Fechado Ganho').length/leads.length)*100).toFixed(1) : 0, unit:'%', auto:true, color:'#e91e63' },
-            ];
+            const today = now.toISOString().slice(0, 10);
+            const thisMonth = now.toISOString().slice(0, 7);
+            const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString().slice(0, 7);
+            const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+            const dayOfMonth = now.getDate();
+            const monthProg = dayOfMonth / daysInMonth;
 
-            const displayed = [
-                ...(filterCat ? [] : AUTO_KPIS),
-                ...(filterCat ? goals.filter(g=>g.category===filterCat) : goals)
-            ].filter(g => !filterCat || g.category === filterCat);
+            const fmtR = v => 'R$ ' + (parseFloat(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+            const fmtN = (v, u) => { if (!v && v !== 0) return '—'; const n = parseFloat(v); if (u === 'R$') return fmtR(n); return n.toLocaleString('pt-BR') + (u ? ' ' + u : ''); };
+            const pctOf = (v, t) => t > 0 ? Math.min((v / t * 100), 100).toFixed(0) : 0;
+            const deltaClr = d => parseFloat(d) >= 0 ? '#00c853' : '#ff4060';
+            const deltaSign = d => parseFloat(d) >= 0 ? '+' : '';
 
-            const manualGoals = filterCat ? goals.filter(g=>g.category===filterCat) : goals;
+            /* ── FINANCIAL ── */
+            const recMes = financials.filter(f => f.status === 'Pago' && (f.date || '').startsWith(thisMonth)).reduce((s, f) => s + (parseFloat(f.amount) || 0), 0);
+            const recUlt = financials.filter(f => f.status === 'Pago' && (f.date || '').startsWith(lastMonth)).reduce((s, f) => s + (parseFloat(f.amount) || 0), 0);
+            const recGrowth = recUlt > 0 ? ((recMes - recUlt) / recUlt * 100).toFixed(1) : null;
 
-            const catCounts = GOAL_CATS.reduce((acc,c)=>{ acc[c]=(goals.filter(g=>g.category===c).length); return acc; },{});
+            /* ── CLIENTS ── */
+            const ativos = clients.filter(c => c.status === 'Ativo');
+            const mrr = ativos.reduce((s, c) => s + (parseFloat(c.plan) || 0), 0);
+            const ticket = ativos.length > 0 ? mrr / ativos.length : 0;
+            const churnCt = clients.filter(c => ['Inativo', 'Churned', 'Cancelado', 'Encerrado'].includes(c.status)).length;
+            const churnRate = clients.length > 0 ? (churnCt / clients.length * 100).toFixed(1) : 0;
+            const retRate = (100 - parseFloat(churnRate)).toFixed(1);
+
+            /* ── LEADS ── */
+            const wonLeads = leads.filter(l => l.status === 'Fechado Ganho');
+            const leadsThisMon = leads.filter(l => (l.createdAt || '').startsWith(thisMonth));
+            const convRate = leads.length > 0 ? (wonLeads.length / leads.length * 100).toFixed(1) : 0;
+            const mrrVendido = wonLeads.reduce((s, l) => s + (parseFloat(l.value) || 0), 0);
+
+            /* ── TASKS ── */
+            const done = tasks.filter(t => t.status === 'Concluído');
+            const overdue = tasks.filter(t => t.dueDate && t.dueDate < today && t.status !== 'Concluído');
+            const sla = (done.length + overdue.length) > 0 ? (done.length / (done.length + overdue.length) * 100).toFixed(0) : 100;
+
+            /* ── TRAFFIC ── */
+            const tdWithBudget = trafficData.filter(t => parseFloat(t.budget) > 0);
+            const totalBudget = tdWithBudget.reduce((s, t) => s + (parseFloat(t.budget) || 0), 0);
+            const totalRevEst = tdWithBudget.reduce((s, t) => s + (parseFloat(t.revenueEstimate) || parseFloat(t.revenue) || 0), 0);
+            const avgROAS = totalBudget > 0 ? (totalRevEst / totalBudget).toFixed(2) : 0;
+            const avgCPL = tdWithBudget.length > 0 ? (tdWithBudget.reduce((s, t) => s + (parseFloat(t.cpl) || 0), 0) / tdWithBudget.filter(t => t.cpl).length || 0).toFixed(2) : 0;
+
+            /* ── GOALS ANALYSIS ── */
+            const manualGoals = goals.filter(g => !filterCat || g.category === filterCat).filter(g => !filterPeriod || g.period === filterPeriod);
+            const goalsTotal = goals.length;
+            const goalsDone = goals.filter(g => parseFloat(g.target) > 0 && parseFloat(g.current) >= parseFloat(g.target)).length;
+            const goalsLate = goals.filter(g => {
+                if (!g.deadline) return false;
+                const tgt = parseFloat(g.target) || 0;
+                const cur = parseFloat(g.current) || 0;
+                if (tgt === 0 || cur >= tgt) return false;
+                const dl = new Date(g.deadline + 'T12:00');
+                if (dl < now) return true;
+                const totalDays = (dl - new Date(g.createdAt || g.deadline + 'T12:00')) / 86400000;
+                const doneDays = (now - new Date(g.createdAt || now)) / 86400000;
+                const expectedPct = totalDays > 0 ? doneDays / totalDays : 1;
+                return (cur / tgt) < expectedPct * 0.75;
+            });
+            const goalsOnTrack = goals.filter(g => !goalsLate.includes(g) && parseFloat(g.target) > 0 && parseFloat(g.current) < parseFloat(g.target));
+            const avgPct = goalsTotal > 0 ? (goals.reduce((s, g) => { const t = parseFloat(g.target) || 0; const c = parseFloat(g.current) || 0; return s + (t > 0 ? Math.min(c / t, 1) : 0); }, 0) / goalsTotal * 100).toFixed(0) : 0;
+
+            /* ── RANKINGS ── */
+            const respMap = {};
+            leads.forEach(l => { if (!l.responsible) return; if (!respMap[l.responsible]) respMap[l.responsible] = { leads: 0, won: 0, tasks: 0, tasksDone: 0, name: l.responsible }; respMap[l.responsible].leads++; if (l.status === 'Fechado Ganho') respMap[l.responsible].won++; });
+            tasks.forEach(t => { const r = t.assignee || t.responsible; if (!r) return; if (!respMap[r]) respMap[r] = { leads: 0, won: 0, tasks: 0, tasksDone: 0, name: r }; respMap[r].tasks++; if (t.status === 'Concluído') respMap[r].tasksDone++; });
+            const rankings = Object.values(respMap).map(r => ({ ...r, score: r.won * 10 + r.tasksDone * 2 + r.leads, conv: r.leads > 0 ? (r.won / r.leads * 100).toFixed(0) : 0, eff: r.tasks > 0 ? (r.tasksDone / r.tasks * 100).toFixed(0) : 0 })).sort((a, b) => b.score - a.score);
+
+            /* ── ALERTS ── */
+            const alerts = [];
+            const alertPriClr = { Alta: '#ff4060', Média: '#ffcc00', Baixa: '#4090ff' };
+            if (leadsThisMon.length === 0) alerts.push({ p: 'Alta', cat: 'Comercial', msg: 'Nenhum lead gerado este mês', action: 'Intensificar prospecção' });
+            if (overdue.length >= 3) alerts.push({ p: 'Média', cat: 'Operação', msg: `${overdue.length} tarefas atrasadas no Kanban`, action: 'Revisar prioridades urgentes' });
+            if (parseFloat(churnRate) > 10) alerts.push({ p: 'Alta', cat: 'Retenção', msg: `Churn em ${churnRate}% — acima do aceitável`, action: 'Contatar clientes em risco' });
+            if (parseFloat(convRate) < 10 && leads.length > 5) alerts.push({ p: 'Média', cat: 'Comercial', msg: `Conversão de leads em ${convRate}% — abaixo da meta`, action: 'Revisar processo comercial' });
+            goalsLate.forEach(g => alerts.push({ p: 'Média', cat: 'Metas', msg: `Meta "${g.name}" está abaixo do ritmo esperado`, action: 'Ajustar plano de ação' }));
+            if (recMes < recUlt * 0.8 && recUlt > 0) alerts.push({ p: 'Alta', cat: 'Financeiro', msg: `Receita este mês (${fmtR(recMes)}) abaixo do mês anterior`, action: 'Revisar pipeline financeiro' });
+            if (ativos.length === 0) alerts.push({ p: 'Alta', cat: 'Clientes', msg: 'Nenhum cliente ativo cadastrado', action: 'Cadastrar clientes na aba Clientes' });
+
+            /* ── PROJECTIONS ── */
+            const projReceita = monthProg > 0 ? recMes / monthProg : 0;
+            const projLeads = monthProg > 0 ? leadsThisMon.length / monthProg : 0;
+            const daysLeft = daysInMonth - dayOfMonth;
+
+            const TABS = [{ id: 'overview', label: 'Visão Geral' }, { id: 'metas', label: 'Central de Metas' }, { id: 'kpis', label: 'KPIs por Setor' }, { id: 'rankings', label: 'Rankings & Alertas' }];
+
+            const cardStyle = (clr) => ({ background: `${clr}0d`, border: `1px solid ${clr}33`, borderRadius: 12, padding: '14px 16px' });
+            const labelSt = { fontSize: 10.5, color: 'rgba(255,255,255,.4)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: .5, fontWeight: 600 };
+            const valSt = (clr) => ({ fontSize: 24, fontWeight: 800, color: clr, lineHeight: 1.1, marginBottom: 4 });
+            const secHead = { fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,.3)', textTransform: 'uppercase', letterSpacing: .6, marginBottom: 12, marginTop: 20 };
+            const kpiCard = (clr) => ({ background: 'rgba(255,255,255,.03)', border: `1px solid ${clr}22`, borderRadius: 10, padding: '12px 14px' });
 
             return (
-                <div className="fade-in">
-                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20, flexWrap:'wrap', gap:10 }}>
-                        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                <div className="fade-in" style={{ paddingBottom: 40 }}>
+                    {/* HEADER */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, flexWrap: 'wrap', gap: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <Ic n="goals" s={20} />
                             <div>
-                                <h1 style={{ fontSize:20, fontWeight:700 }}>Metas & KPIs</h1>
-                                <p style={{ fontSize:11, color:'rgba(255,255,255,.35)', marginTop:1 }}>{goals.length} metas cadastradas · {AUTO_KPIS.length} KPIs automáticos</p>
+                                <h1 style={{ fontSize: 20, fontWeight: 700 }}>Metas & KPIs</h1>
+                                <p style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginTop: 1 }}>Centro estratégico · {goalsTotal} metas · {alerts.length} alertas ativos</p>
                             </div>
                         </div>
-                        <button className="btn-primary" onClick={()=>setShowAdd(true)} style={{ fontSize:12 }}><Ic n="plus" s={13} />Nova Meta</button>
+                        <button className="btn-primary" onClick={() => setShowAdd(true)} style={{ fontSize: 12 }}><Ic n="plus" s={13} />Nova Meta</button>
                     </div>
 
-                    {/* Category filter */}
-                    <div style={{ display:'flex', gap:7, marginBottom:20, flexWrap:'wrap' }}>
-                        {[{id:'',label:'Todos'},...GOAL_CATS.map(c=>({id:c,label:c}))].map(cat=>(
-                            <button key={cat.id} onClick={()=>setFilterCat(cat.id)}
-                                style={{ padding:'5px 13px', borderRadius:20, border:'1px solid', fontSize:11, cursor:'pointer', fontWeight:600, background: filterCat===cat.id ? (GOAL_CAT_CLR[cat.id]||'rgba(255,0,64,.18)') + (filterCat===cat.id?'33':'') : 'rgba(255,255,255,.03)', borderColor: filterCat===cat.id ? (GOAL_CAT_CLR[cat.id]||'#ff0040') : 'rgba(255,255,255,.1)', color: filterCat===cat.id ? (GOAL_CAT_CLR[cat.id]||'#ff4060') : 'rgba(255,255,255,.5)' }}>
-                                {cat.label}{cat.id && catCounts[cat.id] > 0 ? ` (${catCounts[cat.id]})` : ''}
-                            </button>
+                    {/* TABS */}
+                    <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid rgba(255,255,255,.07)', paddingBottom: 0 }}>
+                        {TABS.map(t => (
+                            <button key={t.id} onClick={() => setTab(t.id)} style={{ padding: '8px 16px', background: 'none', border: 'none', borderBottom: tab === t.id ? '2px solid #ff0040' : '2px solid transparent', color: tab === t.id ? '#fff' : 'rgba(255,255,255,.4)', cursor: 'pointer', fontSize: 12.5, fontWeight: tab === t.id ? 700 : 400, transition: 'all .12s', marginBottom: -1 }}>{t.label}{t.id === 'rankings' && alerts.length > 0 ? ` (${alerts.length})` : ''}</button>
                         ))}
                     </div>
 
-                    {/* Auto KPIs section */}
-                    {!filterCat && (
-                        <div style={{ marginBottom:28 }}>
-                            <div style={{ fontSize:11, fontWeight:700, color:'rgba(255,255,255,.35)', textTransform:'uppercase', letterSpacing:.6, marginBottom:12 }}>KPIs Automáticos (calculados em tempo real)</div>
-                            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(240px,1fr))', gap:12 }}>
-                                {AUTO_KPIS.map(kpi=>(
-                                    <div key={kpi.id} className="glass" style={{ padding:'16px 18px', borderRadius:12, borderColor:kpi.color+'33' }}>
-                                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:10 }}>
-                                            <div>
-                                                <div style={{ fontSize:11, color:'rgba(255,255,255,.4)', marginBottom:3 }}>{kpi.category}</div>
-                                                <div style={{ fontSize:13, fontWeight:600 }}>{kpi.name}</div>
+                    {/* ═══ TAB: VISÃO GERAL ═══ */}
+                    {tab === 'overview' && (
+                        <div>
+                            <div style={secHead}>Overview Executivo</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 24 }}>
+                                <div style={cardStyle('#00c853')}>
+                                    <div style={labelSt}>MRR Atual</div>
+                                    <div style={valSt('#00c853')}>{fmtR(mrr)}</div>
+                                    <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.35)' }}>{ativos.length} clientes ativos</div>
+                                </div>
+                                <div style={cardStyle('#4090ff')}>
+                                    <div style={labelSt}>Receita Este Mês</div>
+                                    <div style={valSt('#4090ff')}>{fmtR(recMes)}</div>
+                                    {recGrowth !== null && <div style={{ fontSize: 10.5, color: deltaClr(recGrowth), fontWeight: 600 }}>{deltaSign(recGrowth)}{recGrowth}% vs mês anterior</div>}
+                                </div>
+                                <div style={cardStyle('#a060ff')}>
+                                    <div style={labelSt}>Ticket Médio</div>
+                                    <div style={valSt('#a060ff')}>{fmtR(ticket)}</div>
+                                    <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.35)' }}>por cliente ativo</div>
+                                </div>
+                                <div style={cardStyle('#ff9800')}>
+                                    <div style={labelSt}>Conversão Leads</div>
+                                    <div style={valSt('#ff9800')}>{convRate}%</div>
+                                    <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.35)' }}>{wonLeads.length} de {leads.length} leads</div>
+                                </div>
+                                <div style={cardStyle('#e91e63')}>
+                                    <div style={labelSt}>Churn Rate</div>
+                                    <div style={valSt(parseFloat(churnRate) > 10 ? '#ff4060' : '#e91e63')}>{churnRate}%</div>
+                                    <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.35)' }}>Retenção: {retRate}%</div>
+                                </div>
+                                <div style={cardStyle('#00bcd4')}>
+                                    <div style={labelSt}>Leads Este Mês</div>
+                                    <div style={valSt('#00bcd4')}>{leadsThisMon.length}</div>
+                                    <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.35)' }}>Total: {leads.length}</div>
+                                </div>
+                                <div style={cardStyle('#ff6b35')}>
+                                    <div style={labelSt}>MRR Vendido</div>
+                                    <div style={valSt('#ff6b35')}>{fmtR(mrrVendido)}</div>
+                                    <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.35)' }}>de leads ganhos</div>
+                                </div>
+                                <div style={cardStyle(parseFloat(sla) < 70 ? '#ff4060' : '#4caf50')}>
+                                    <div style={labelSt}>SLA Operação</div>
+                                    <div style={valSt(parseFloat(sla) < 70 ? '#ff4060' : '#4caf50')}>{sla}%</div>
+                                    <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.35)' }}>{overdue.length} tarefas atrasadas</div>
+                                </div>
+                            </div>
+
+                            {/* Projeções */}
+                            <div style={secHead}>Projeções do Mês ({dayOfMonth}/{daysInMonth} dias — {(monthProg * 100).toFixed(0)}% do mês)</div>
+                            <div className="glass" style={{ padding: '16px 20px', borderRadius: 12, marginBottom: 20 }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 16 }}>
+                                    <div>
+                                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,.4)', marginBottom: 6 }}>Projeção de Receita</div>
+                                        <div style={{ fontSize: 20, fontWeight: 700, color: '#4090ff', marginBottom: 4 }}>{fmtR(projReceita)}</div>
+                                        <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.4)' }}>Mantendo ritmo atual ({fmtR(recMes)} realizados)</div>
+                                        <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,.07)', marginTop: 8 }}>
+                                            <div style={{ height: '100%', width: `${Math.min(monthProg * 100, 100)}%`, background: '#4090ff', borderRadius: 2, transition: 'width .5s' }} />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,.4)', marginBottom: 6 }}>Projeção de Leads</div>
+                                        <div style={{ fontSize: 20, fontWeight: 700, color: '#00bcd4', marginBottom: 4 }}>{projLeads.toFixed(0)} leads</div>
+                                        <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.4)' }}>Projeção para o mês cheio</div>
+                                        <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,.07)', marginTop: 8 }}>
+                                            <div style={{ height: '100%', width: `${Math.min(monthProg * 100, 100)}%`, background: '#00bcd4', borderRadius: 2 }} />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,.4)', marginBottom: 6 }}>Média das Metas</div>
+                                        <div style={{ fontSize: 20, fontWeight: 700, color: parseFloat(avgPct) >= 70 ? '#00c853' : '#ff9800', marginBottom: 4 }}>{avgPct}% concluído</div>
+                                        <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.4)' }}>{goalsDone} metas atingidas de {goalsTotal}</div>
+                                        <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,.07)', marginTop: 8 }}>
+                                            <div style={{ height: '100%', width: `${avgPct}%`, background: parseFloat(avgPct) >= 70 ? '#00c853' : '#ff9800', borderRadius: 2 }} />
+                                        </div>
+                                    </div>
+                                </div>
+                                <div style={{ marginTop: 14, padding: '10px 14px', background: 'rgba(255,255,255,.03)', borderRadius: 8, fontSize: 12, color: 'rgba(255,255,255,.55)', fontStyle: 'italic' }}>
+                                    {monthProg > 0
+                                        ? `Mantendo o ritmo atual, a agência fechará ${MESES[now.getMonth()]} com ${fmtR(projReceita)} de receita e ${projLeads.toFixed(0)} novos leads. Restam ${daysLeft} dias no mês.`
+                                        : 'Dados insuficientes para projeção.'}
+                                </div>
+                            </div>
+
+                            {/* Funil de Metas por Categoria */}
+                            <div style={secHead}>Funil de Metas por Setor</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12 }}>
+                                {GOAL_CATS.map(cat => {
+                                    const catGoals = goals.filter(g => g.category === cat);
+                                    if (catGoals.length === 0) return null;
+                                    const clr = GOAL_CAT_CLR[cat] || '#888';
+                                    const avgCatPct = catGoals.reduce((s, g) => { const t = parseFloat(g.target) || 0; const c = parseFloat(g.current) || 0; return s + (t > 0 ? Math.min(c / t, 1) : 0); }, 0) / catGoals.length * 100;
+                                    const catDone = catGoals.filter(g => parseFloat(g.target) > 0 && parseFloat(g.current) >= parseFloat(g.target)).length;
+                                    return (
+                                        <div key={cat} style={cardStyle(clr)}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                                                <div style={{ fontSize: 12, fontWeight: 700, color: clr }}>{cat}</div>
+                                                <div style={{ fontSize: 10, background: clr + '22', color: clr, borderRadius: 10, padding: '2px 8px', fontWeight: 700 }}>{catGoals.length} metas</div>
                                             </div>
-                                            <div style={{ fontSize:22, fontWeight:800, color:kpi.color, lineHeight:1 }}>{fmtNum(kpi.current,kpi.unit)}</div>
+                                            <div style={{ fontSize: 22, fontWeight: 800, color: '#fff', marginBottom: 6 }}>{avgCatPct.toFixed(0)}%</div>
+                                            <div style={{ height: 6, borderRadius: 3, background: 'rgba(255,255,255,.08)', marginBottom: 6 }}>
+                                                <div style={{ height: '100%', width: `${avgCatPct}%`, background: avgCatPct >= 100 ? '#00c853' : avgCatPct >= 70 ? clr : '#ff6b35', borderRadius: 3, transition: 'width .5s' }} />
+                                            </div>
+                                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,.4)' }}>{catDone} atingidas · {catGoals.length - catDone} em andamento</div>
                                         </div>
-                                        <div style={{ height:4, borderRadius:2, background:'rgba(255,255,255,.06)' }}>
-                                            <div style={{ height:'100%', width:'100%', borderRadius:2, background:kpi.color+'55' }} />
-                                        </div>
-                                        <div style={{ fontSize:9.5, color:kpi.color, marginTop:5, opacity:.7 }}>Calculado automaticamente</div>
+                                    );
+                                })}
+                                {goals.length === 0 && (
+                                    <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: 32, color: 'rgba(255,255,255,.3)', fontSize: 13 }}>
+                                        Cadastre metas para visualizar o funil por setor
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ═══ TAB: CENTRAL DE METAS ═══ */}
+                    {tab === 'metas' && (
+                        <div>
+                            {/* Filters */}
+                            <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap', alignItems: 'center' }}>
+                                <select className="input-field" style={{ fontSize: 12, padding: '6px 10px', width: 'auto' }} value={filterCat} onChange={e => setFilterCat(e.target.value)}>
+                                    <option value="">Todas categorias</option>
+                                    {GOAL_CATS.map(c => <option key={c}>{c}</option>)}
+                                </select>
+                                <select className="input-field" style={{ fontSize: 12, padding: '6px 10px', width: 'auto' }} value={filterPeriod} onChange={e => setFilterPeriod(e.target.value)}>
+                                    <option value="">Todos períodos</option>
+                                    {GOAL_PERIODS.map(p => <option key={p}>{p}</option>)}
+                                </select>
+                                {(filterCat || filterPeriod) && <button className="btn-secondary" style={{ fontSize: 11 }} onClick={() => { setFilterCat(''); setFilterPeriod(''); }}>Limpar filtros</button>}
+                                <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, fontSize: 11, color: 'rgba(255,255,255,.4)' }}>
+                                    <span style={{ color: '#00c853' }}>● {goalsDone} atingidas</span>
+                                    <span style={{ color: '#ff9800' }}>● {goalsOnTrack.length} no ritmo</span>
+                                    <span style={{ color: '#ff4060' }}>● {goalsLate.length} atrasadas</span>
+                                </div>
+                            </div>
+
+                            {manualGoals.length === 0 ? (
+                                <div className="glass" style={{ padding: '48px 24px', textAlign: 'center', color: 'rgba(255,255,255,.28)' }}>
+                                    <div style={{ fontSize: 36, marginBottom: 12 }}>🎯</div>
+                                    <div style={{ fontSize: 14, marginBottom: 6 }}>Nenhuma meta cadastrada{filterCat || filterPeriod ? ' com esses filtros' : ''}.</div>
+                                    <button className="btn-primary" style={{ fontSize: 12, marginTop: 8 }} onClick={() => setShowAdd(true)}><Ic n="plus" s={12} />Criar primeira meta</button>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 }}>
+                                    {manualGoals.map(goal => {
+                                        const clr = goal.color || GOAL_CAT_CLR[goal.category] || '#4090ff';
+                                        const tgt = parseFloat(goal.target) || 0;
+                                        const cur = parseFloat(goal.current) || 0;
+                                        const pct = tgt > 0 ? Math.min((cur / tgt) * 100, 100) : 0;
+                                        const isOver = cur >= tgt && tgt > 0;
+                                        const isLate = goalsLate.includes(goal);
+                                        const daysLeftGoal = goal.deadline ? Math.ceil((new Date(goal.deadline + 'T12:00') - now) / 86400000) : null;
+                                        const pace = tgt > 0 && monthProg > 0 ? (cur / (tgt * monthProg) * 100).toFixed(0) : null;
+                                        const isUpdating = updateId === goal.id;
+                                        return (
+                                            <div key={goal.id} className="glass" style={{ padding: '16px 18px', borderRadius: 12, borderColor: isLate ? '#ff406044' : clr + '33', position: 'relative', borderLeft: `3px solid ${isOver ? '#00c853' : isLate ? '#ff4060' : clr}` }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                                                    <div style={{ flex: 1, marginRight: 8 }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                                            <span style={{ fontSize: 9.5, background: clr + '22', color: clr, borderRadius: 10, padding: '1px 7px', fontWeight: 700 }}>{goal.category}</span>
+                                                            {goal.period && <span style={{ fontSize: 9.5, color: 'rgba(255,255,255,.35)' }}>{goal.period}</span>}
+                                                            {isOver && <span style={{ fontSize: 11 }}>🏆</span>}
+                                                            {isLate && !isOver && <span style={{ fontSize: 10, color: '#ff4060', fontWeight: 700 }}>ATRASADA</span>}
+                                                        </div>
+                                                        <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.3 }}>{goal.name}</div>
+                                                        {goal.responsible && <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.4)', marginTop: 3 }}>→ {goal.responsible}</div>}
+                                                    </div>
+                                                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                                        <button onClick={() => setEditing(goal)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.35)', cursor: 'pointer', padding: '2px 4px' }}><Ic n="edit" s={12} /></button>
+                                                        <button onClick={() => { if (confirm('Excluir esta meta?')) deleteGoal(goal.id); }} style={{ background: 'none', border: 'none', color: 'rgba(255,0,64,.45)', cursor: 'pointer', padding: '2px 4px' }}><Ic n="trash" s={12} /></button>
+                                                    </div>
+                                                </div>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6, fontSize: 12 }}>
+                                                    <span style={{ color: 'rgba(255,255,255,.5)' }}>{fmtN(cur, goal.unit)} <span style={{ color: 'rgba(255,255,255,.25)' }}>/ {fmtN(tgt, goal.unit)}</span></span>
+                                                    <span style={{ fontWeight: 700, color: isOver ? '#00c853' : isLate ? '#ff4060' : clr }}>{pct.toFixed(0)}%</span>
+                                                </div>
+                                                <div style={{ height: 6, borderRadius: 3, background: 'rgba(255,255,255,.07)', marginBottom: 8 }}>
+                                                    <div style={{ height: '100%', width: `${pct}%`, borderRadius: 3, background: isOver ? '#00c853' : isLate ? '#ff4060' : pct >= 70 ? clr : '#ff6b35', transition: 'width .5s' }} />
+                                                </div>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'rgba(255,255,255,.35)', marginBottom: 8 }}>
+                                                    <span>{daysLeftGoal !== null ? (daysLeftGoal < 0 ? `${Math.abs(daysLeftGoal)}d expirada` : `${daysLeftGoal}d restantes`) : '—'}</span>
+                                                    {pace !== null && <span>Ritmo: <span style={{ color: parseFloat(pace) >= 80 ? '#00c853' : '#ff9800', fontWeight: 600 }}>{pace}% do esperado</span></span>}
+                                                </div>
+                                                {isUpdating ? (
+                                                    <div style={{ display: 'flex', gap: 6 }}>
+                                                        <input className="input-field" type="number" value={updateVal} onChange={e => setUpdateVal(e.target.value)} placeholder="Novo valor" style={{ fontSize: 12, flex: 1 }} />
+                                                        <button className="btn-primary" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => { editGoal(goal.id, { current: parseFloat(updateVal) || 0 }); setUpdateId(null); setUpdateVal(''); }}>OK</button>
+                                                        <button className="btn-secondary" style={{ fontSize: 11, padding: '4px 8px' }} onClick={() => setUpdateId(null)}>✕</button>
+                                                    </div>
+                                                ) : (
+                                                    <button onClick={() => { setUpdateId(goal.id); setUpdateVal(String(cur)); }} style={{ background: 'none', border: `1px solid ${clr}33`, borderRadius: 6, color: clr, cursor: 'pointer', fontSize: 11, padding: '4px 10px', width: '100%', transition: 'background .12s' }} onMouseEnter={e => e.currentTarget.style.background = clr + '15'} onMouseLeave={e => e.currentTarget.style.background = 'none'}>Atualizar progresso</button>
+                                                )}
+                                                {goal.notes && <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)', marginTop: 8, fontStyle: 'italic' }}>{goal.notes}</div>}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ═══ TAB: KPIs POR SETOR ═══ */}
+                    {tab === 'kpis' && (
+                        <div>
+                            {/* COMERCIAL */}
+                            <div style={secHead}>Comercial</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10, marginBottom: 20 }}>
+                                {[
+                                    { label: 'Taxa de Conversão', val: convRate + '%', sub: `${wonLeads.length} de ${leads.length} leads`, clr: '#4090ff' },
+                                    { label: 'Leads Este Mês', val: leadsThisMon.length, sub: 'novos leads', clr: '#00bcd4' },
+                                    { label: 'MRR Vendido', val: fmtR(mrrVendido), sub: 'de leads ganhos', clr: '#00c853' },
+                                    { label: 'Leads Em Aberto', val: leads.filter(l => !['Fechado Ganho', 'Perdido'].includes(l.status)).length, sub: 'no pipeline', clr: '#ff9800' },
+                                    { label: 'Leads Perdidos', val: leads.filter(l => l.status === 'Perdido').length, sub: 'total', clr: '#ff4060' },
+                                    { label: 'Ticket Médio Leads', val: wonLeads.length > 0 ? fmtR(wonLeads.reduce((s, l) => s + (parseFloat(l.value) || 0), 0) / wonLeads.length) : '—', sub: 'de leads ganhos', clr: '#a060ff' },
+                                ].map(k => (
+                                    <div key={k.label} style={kpiCard(k.clr)}>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.38)', marginBottom: 4 }}>{k.label}</div>
+                                        <div style={{ fontSize: 20, fontWeight: 800, color: k.clr, lineHeight: 1.1, marginBottom: 2 }}>{k.val}</div>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)' }}>{k.sub}</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* OPERAÇÃO */}
+                            <div style={secHead}>Operação</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10, marginBottom: 20 }}>
+                                {[
+                                    { label: 'SLA Cumprido', val: sla + '%', sub: `${done.length} de ${tasks.length} tarefas`, clr: parseFloat(sla) >= 80 ? '#00c853' : '#ff4060' },
+                                    { label: 'Tarefas Concluídas', val: done.length, sub: 'total', clr: '#00c853' },
+                                    { label: 'Tarefas Atrasadas', val: overdue.length, sub: 'em atraso agora', clr: overdue.length > 0 ? '#ff4060' : '#00c853' },
+                                    { label: 'Tarefas Abertas', val: tasks.filter(t => t.status === 'A Fazer').length, sub: 'a iniciar', clr: '#ff9800' },
+                                    { label: 'Em Andamento', val: tasks.filter(t => t.status === 'Em Andamento').length, sub: 'tarefas', clr: '#4090ff' },
+                                    { label: 'Total de Tarefas', val: tasks.length, sub: 'cadastradas', clr: '#888' },
+                                ].map(k => (
+                                    <div key={k.label} style={kpiCard(k.clr)}>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.38)', marginBottom: 4 }}>{k.label}</div>
+                                        <div style={{ fontSize: 20, fontWeight: 800, color: k.clr, lineHeight: 1.1, marginBottom: 2 }}>{k.val}</div>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)' }}>{k.sub}</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* CLIENTES */}
+                            <div style={secHead}>Clientes</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10, marginBottom: 20 }}>
+                                {[
+                                    { label: 'Clientes Ativos', val: ativos.length, sub: 'ativos agora', clr: '#00c853' },
+                                    { label: 'MRR', val: fmtR(mrr), sub: 'receita mensal recorrente', clr: '#4090ff' },
+                                    { label: 'Ticket Médio', val: fmtR(ticket), sub: 'por cliente', clr: '#a060ff' },
+                                    { label: 'Taxa de Retenção', val: retRate + '%', sub: 'clientes retidos', clr: parseFloat(retRate) >= 85 ? '#00c853' : '#ff9800' },
+                                    { label: 'Churn Rate', val: churnRate + '%', sub: `${churnCt} clientes inativos`, clr: parseFloat(churnRate) > 10 ? '#ff4060' : '#888' },
+                                    { label: 'Total de Clientes', val: clients.length, sub: 'cadastrados', clr: '#888' },
+                                ].map(k => (
+                                    <div key={k.label} style={kpiCard(k.clr)}>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.38)', marginBottom: 4 }}>{k.label}</div>
+                                        <div style={{ fontSize: 20, fontWeight: 800, color: k.clr, lineHeight: 1.1, marginBottom: 2 }}>{k.val}</div>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)' }}>{k.sub}</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* FINANCEIRO */}
+                            <div style={secHead}>Financeiro</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10, marginBottom: 20 }}>
+                                {[
+                                    { label: 'Receita Este Mês', val: fmtR(recMes), sub: 'pagamentos recebidos', clr: '#00c853' },
+                                    { label: 'Mês Anterior', val: fmtR(recUlt), sub: 'comparativo', clr: '#4090ff' },
+                                    { label: 'Crescimento', val: recGrowth !== null ? deltaSign(recGrowth) + recGrowth + '%' : '—', sub: 'vs mês anterior', clr: recGrowth !== null ? deltaClr(recGrowth) : '#888' },
+                                    { label: 'Projeção do Mês', val: fmtR(projReceita), sub: 'mantendo ritmo atual', clr: '#ff9800' },
+                                    { label: 'Receita Pendente', val: fmtR(financials.filter(f => f.status === 'Pendente').reduce((s, f) => s + (parseFloat(f.amount) || 0), 0)), sub: 'a receber', clr: '#ff6b35' },
+                                    { label: 'Total de Lançamentos', val: financials.length, sub: 'registros', clr: '#888' },
+                                ].map(k => (
+                                    <div key={k.label} style={kpiCard(k.clr)}>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.38)', marginBottom: 4 }}>{k.label}</div>
+                                        <div style={{ fontSize: 20, fontWeight: 800, color: k.clr, lineHeight: 1.1, marginBottom: 2 }}>{k.val}</div>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)' }}>{k.sub}</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* TRÁFEGO */}
+                            <div style={secHead}>Tráfego Pago</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+                                {[
+                                    { label: 'Campanhas Ativas', val: trafficData.length, sub: 'registradas', clr: '#00bcd4' },
+                                    { label: 'Investimento Total', val: fmtR(totalBudget), sub: 'total alocado', clr: '#4090ff' },
+                                    { label: 'ROAS Médio', val: avgROAS > 0 ? avgROAS + 'x' : '—', sub: 'retorno sobre investimento', clr: '#00c853' },
+                                    { label: 'CPL Médio', val: avgCPL > 0 ? fmtR(avgCPL) : '—', sub: 'custo por lead', clr: '#ff9800' },
+                                    { label: 'Receita Estimada', val: fmtR(totalRevEst), sub: 'das campanhas', clr: '#a060ff' },
+                                    { label: 'Clientes c/ Tráfego', val: [...new Set(trafficData.map(t => t.clientId).filter(Boolean))].length, sub: 'clientes atendidos', clr: '#ff6b35' },
+                                ].map(k => (
+                                    <div key={k.label} style={kpiCard(k.clr)}>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.38)', marginBottom: 4 }}>{k.label}</div>
+                                        <div style={{ fontSize: 20, fontWeight: 800, color: k.clr, lineHeight: 1.1, marginBottom: 2 }}>{k.val}</div>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)' }}>{k.sub}</div>
                                     </div>
                                 ))}
                             </div>
                         </div>
                     )}
 
-                    {/* Manual goals */}
-                    <div>
-                        {!filterCat && <div style={{ fontSize:11, fontWeight:700, color:'rgba(255,255,255,.35)', textTransform:'uppercase', letterSpacing:.6, marginBottom:12 }}>Metas Cadastradas</div>}
-                        {manualGoals.length === 0 ? (
-                            <div className="glass" style={{ padding:'48px 24px', textAlign:'center', color:'rgba(255,255,255,.28)' }}>
-                                <div style={{ fontSize:36, marginBottom:12 }}>🎯</div>
-                                <div style={{ fontSize:14, marginBottom:6 }}>Nenhuma meta cadastrada{filterCat ? ' nesta categoria' : ''}.</div>
-                                <div style={{ fontSize:12 }}>Clique em "+ Nova Meta" para começar.</div>
+                    {/* ═══ TAB: RANKINGS & ALERTAS ═══ */}
+                    {tab === 'rankings' && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+                            {/* RANKINGS */}
+                            <div>
+                                <div style={secHead}>Ranking da Equipe</div>
+                                {rankings.length === 0 ? (
+                                    <div className="glass" style={{ padding: 24, textAlign: 'center', color: 'rgba(255,255,255,.3)', fontSize: 12 }}>Atribua responsáveis em leads e tarefas para ver o ranking</div>
+                                ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                        {rankings.map((r, i) => {
+                                            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`;
+                                            const barW = rankings[0].score > 0 ? (r.score / rankings[0].score * 100) : 0;
+                                            return (
+                                                <div key={r.name} className="glass" style={{ padding: '12px 14px', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 12, borderColor: i === 0 ? '#ffd70033' : 'rgba(255,255,255,.06)' }}>
+                                                    <div style={{ fontSize: i < 3 ? 18 : 13, width: 26, textAlign: 'center', flexShrink: 0, color: 'rgba(255,255,255,.4)', fontWeight: 700 }}>{medal}</div>
+                                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                                        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>{r.name}</div>
+                                                        <div style={{ height: 4, borderRadius: 2, background: 'rgba(255,255,255,.07)', marginBottom: 5 }}>
+                                                            <div style={{ height: '100%', width: `${barW}%`, background: i === 0 ? '#ffd700' : i === 1 ? '#c0c0c0' : i === 2 ? '#cd7f32' : '#4090ff', borderRadius: 2 }} />
+                                                        </div>
+                                                        <div style={{ display: 'flex', gap: 12, fontSize: 10, color: 'rgba(255,255,255,.38)' }}>
+                                                            <span>{r.leads} leads</span>
+                                                            <span style={{ color: '#00c853' }}>{r.won} ganhos</span>
+                                                            <span>Conv: {r.conv}%</span>
+                                                            <span>{r.tasksDone}/{r.tasks} tarefas</span>
+                                                        </div>
+                                                    </div>
+                                                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                                                        <div style={{ fontSize: 16, fontWeight: 800, color: i === 0 ? '#ffd700' : 'rgba(255,255,255,.7)' }}>{r.score}</div>
+                                                        <div style={{ fontSize: 9, color: 'rgba(255,255,255,.3)' }}>pts</div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+
+                                {/* GAMIFICATION LEGEND */}
+                                <div style={{ ...cardStyle('#888'), marginTop: 14 }}>
+                                    <div style={{ fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,.3)', textTransform: 'uppercase', marginBottom: 8, letterSpacing: .5 }}>Sistema de Pontuação</div>
+                                    <div style={{ display: 'flex', gap: 16, fontSize: 11, color: 'rgba(255,255,255,.45)' }}>
+                                        <span>🏆 Lead ganho = 10pts</span>
+                                        <span>✅ Tarefa concluída = 2pts</span>
+                                        <span>📋 Lead = 1pt</span>
+                                    </div>
+                                </div>
                             </div>
-                        ) : (
-                            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))', gap:14 }}>
-                                {manualGoals.map(goal=>{
-                                    const clr = goal.color || GOAL_CAT_CLR[goal.category] || '#4090ff';
-                                    const tgt = parseFloat(goal.target) || 0;
-                                    const cur = parseFloat(goal.current) || 0;
-                                    const pct = tgt > 0 ? Math.min((cur/tgt)*100, 100) : 0;
-                                    const isOver = cur >= tgt && tgt > 0;
-                                    const daysLeft = goal.deadline ? Math.ceil((new Date(goal.deadline+'T12:00') - now) / (1000*60*60*24)) : null;
-                                    const isUpdating = updateId === goal.id;
-                                    return (
-                                        <div key={goal.id} className="glass" style={{ padding:'16px 18px', borderRadius:12, borderColor:clr+'33', position:'relative' }}>
-                                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:6 }}>
-                                                <div style={{ flex:1, marginRight:8 }}>
-                                                    <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:3 }}>
-                                                        <div style={{ width:8, height:8, borderRadius:'50%', background:clr, flexShrink:0 }} />
-                                                        <span style={{ fontSize:10.5, color:'rgba(255,255,255,.38)' }}>{goal.category}</span>
+
+                            {/* ALERTS */}
+                            <div>
+                                <div style={secHead}>Alertas Estratégicos</div>
+                                {alerts.length === 0 ? (
+                                    <div className="glass" style={{ padding: 24, textAlign: 'center', color: '#00c853', fontSize: 12, borderColor: '#00c85333' }}>
+                                        <div style={{ fontSize: 28, marginBottom: 8 }}>✅</div>
+                                        Todos os indicadores estão dentro do esperado!
+                                    </div>
+                                ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                        {alerts.map((a, i) => {
+                                            const clr = alertPriClr[a.p] || '#888';
+                                            return (
+                                                <div key={i} style={{ background: clr + '0d', border: `1px solid ${clr}33`, borderLeft: `3px solid ${clr}`, borderRadius: 8, padding: '12px 14px' }}>
+                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
+                                                        <div style={{ fontSize: 12, fontWeight: 700, color: '#fff', flex: 1, marginRight: 8 }}>{a.msg}</div>
+                                                        <span style={{ fontSize: 9.5, background: clr + '22', color: clr, borderRadius: 10, padding: '1px 7px', fontWeight: 700, flexShrink: 0 }}>{a.p}</span>
                                                     </div>
-                                                    <div style={{ fontSize:13.5, fontWeight:700, lineHeight:1.35 }}>{goal.name}</div>
+                                                    <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.4)' }}>Categoria: {a.cat}</div>
+                                                    <div style={{ fontSize: 10.5, color: clr, marginTop: 4, fontWeight: 600 }}>→ {a.action}</div>
                                                 </div>
-                                                <div style={{ display:'flex', gap:4, flexShrink:0 }}>
-                                                    <button onClick={()=>setEditing(goal)} style={{ background:'none', border:'none', color:'rgba(255,255,255,.35)', cursor:'pointer', padding:'2px 4px' }}><Ic n="edit" s={12} /></button>
-                                                    <button onClick={()=>{ if(confirm('Excluir esta meta?')) deleteGoal(goal.id); }} style={{ background:'none', border:'none', color:'rgba(255,0,64,.45)', cursor:'pointer', padding:'2px 4px' }}><Ic n="trash" s={12} /></button>
-                                                </div>
-                                            </div>
-                                            <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:10 }}>
-                                                <div style={{ fontSize:28, fontWeight:800, color: isOver ? '#00c853' : clr, lineHeight:1 }}>{fmtNum(cur, goal.unit)}</div>
-                                                <div style={{ fontSize:12, color:'rgba(255,255,255,.35)' }}>/ {fmtNum(tgt, goal.unit)}</div>
-                                                <div style={{ marginLeft:'auto', fontSize:14, fontWeight:700, color: isOver ? '#00c853' : pct > 70 ? '#ffcc00' : clr }}>{pct.toFixed(0)}%</div>
-                                            </div>
-                                            <div style={{ height:8, borderRadius:4, background:'rgba(255,255,255,.06)', marginBottom:10, overflow:'hidden' }}>
-                                                <div style={{ height:'100%', width:pct+'%', borderRadius:4, background: isOver ? '#00c853' : pct > 70 ? '#ffcc00' : clr, transition:'width .5s' }} />
-                                            </div>
-                                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:6 }}>
-                                                <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-                                                    {goal.period && <span style={{ fontSize:10, color:'rgba(255,255,255,.35)' }}>{goal.period}</span>}
-                                                    {goal.responsible && <span style={{ fontSize:10, color:'rgba(255,255,255,.35)' }}>→ {goal.responsible}</span>}
-                                                    {daysLeft !== null && <span style={{ fontSize:10, color: daysLeft < 0 ? '#ff4060' : daysLeft < 7 ? '#ffcc00' : 'rgba(255,255,255,.35)' }}>{daysLeft < 0 ? 'Vencida' : daysLeft === 0 ? 'Hoje' : daysLeft + 'd'}</span>}
-                                                </div>
-                                                {isUpdating ? (
-                                                    <div style={{ display:'flex', gap:5, alignItems:'center' }}>
-                                                        <input style={{ width:70, padding:'3px 7px', borderRadius:5, border:'1px solid rgba(255,255,255,.2)', background:'rgba(255,255,255,.07)', color:'#fff', fontSize:12 }} type="number" value={updateVal} onChange={e=>setUpdateVal(e.target.value)} autoFocus placeholder={String(cur)} />
-                                                        <button className="btn-primary" style={{ padding:'3px 8px', fontSize:11 }} onClick={()=>{ editGoal(goal.id,{current:parseFloat(updateVal)||0}); setUpdateId(null); setUpdateVal(''); }}>OK</button>
-                                                        <button className="btn-secondary" style={{ padding:'3px 6px', fontSize:11 }} onClick={()=>setUpdateId(null)}>×</button>
-                                                    </div>
-                                                ) : (
-                                                    <button className="btn-secondary" onClick={()=>{ setUpdateId(goal.id); setUpdateVal(String(cur)); }} style={{ fontSize:11, padding:'3px 9px' }}>Atualizar</button>
-                                                )}
-                                            </div>
-                                            {isOver && <div style={{ position:'absolute', top:12, right:12, fontSize:16 }}>🏆</div>}
-                                            {goal.notes && <div style={{ fontSize:10.5, color:'rgba(255,255,255,.3)', marginTop:8, lineHeight:1.5, borderTop:'1px solid rgba(255,255,255,.05)', paddingTop:8 }}>{goal.notes}</div>}
+                                            );
+                                        })}
+                                    </div>
+                                )}
+
+                                {/* PREVISÃO RESUMIDA */}
+                                <div style={{ ...cardStyle('#4090ff'), marginTop: 20 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: '#4090ff', marginBottom: 10, textTransform: 'uppercase', letterSpacing: .5 }}>Previsão Analítica</div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                        <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,.6)', lineHeight: 1.5 }}>
+                                            {monthProg > 0.05
+                                                ? `📈 Mantendo o ritmo atual, a agência fechará ${MESES[now.getMonth()]} com aprox. ${fmtR(projReceita)} de receita e ${projLeads.toFixed(0)} novos leads.`
+                                                : '📊 Dados ainda insuficientes para projeção do mês.'}
                                         </div>
-                                    );
-                                })}
+                                        {parseFloat(avgPct) < 50 && goalsTotal > 0 && <div style={{ fontSize: 11.5, color: '#ffcc00', lineHeight: 1.5 }}>⚠️ Média das metas em {avgPct}% — abaixo do ponto de atenção.</div>}
+                                        {overdue.length > 0 && <div style={{ fontSize: 11.5, color: '#ff9800', lineHeight: 1.5 }}>⏰ {overdue.length} {overdue.length === 1 ? 'tarefa atrasada compromete' : 'tarefas atrasadas comprometem'} o SLA operacional.</div>}
+                                        {parseFloat(churnRate) > 5 && <div style={{ fontSize: 11.5, color: '#ff4060', lineHeight: 1.5 }}>🚨 Churn em {churnRate}% — risco de queda no MRR nos próximos meses.</div>}
+                                        {parseFloat(convRate) < 15 && leads.length > 3 && <div style={{ fontSize: 11.5, color: '#a060ff', lineHeight: 1.5 }}>📉 Conversão de {convRate}% indica oportunidade de melhoria no processo comercial.</div>}
+                                    </div>
+                                </div>
                             </div>
-                        )}
-                    </div>
-                    {showAdd && <GoalModal onClose={()=>setShowAdd(false)} />}
-                    {editing && <GoalModal goal={editing} onClose={()=>setEditing(null)} />}
+                        </div>
+                    )}
+
+                    {showAdd && <GoalModal onClose={() => setShowAdd(false)} />}
+                    {editing && <GoalModal goal={editing} onClose={() => setEditing(null)} />}
                 </div>
             );
         }
@@ -4962,7 +5339,7 @@
             const { view, userRole, onlineUsers, chatOpen, setChatOpen } = useApp();
             const [quickAdd, setQuickAdd] = useState(false);
             const isEmployee = userRole !== 'admin';
-            const ViewMap = { dashboard: Dashboard, leads: LeadsPage, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarPage };
+            const ViewMap = { dashboard: Dashboard, leads: LeadsPage, goals: GoalsPage, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarPage };
             const V = (isEmployee && EMPLOYEE_BLOCKED.includes(view)) ? LockedView : (ViewMap[view] || Dashboard);
             const visible = onlineUsers.filter(c => c.view === view);
             return (
