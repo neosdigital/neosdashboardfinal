@@ -13,6 +13,12 @@
     <script src="https://unpkg.com/dexie@3.2.7/dist/dexie.min.js"></script>
     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script>
+        window.fbAsyncInit = function() {
+            if (window._fbAppId) FB.init({ appId: window._fbAppId, cookie: true, xfbml: false, version: 'v19.0' });
+        };
+    </script>
+    <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         * {
@@ -571,6 +577,7 @@
         function AppProvider({ children, authed }) {
             const userRole = authed?.role || 'employee';
             const [store, setStore] = useState(EMPTY_STORE);
+            const [metaConns, setMetaConns] = useState([]);
             const [dbReady, setDbReady] = useState(false);
             const [view, setView] = useState(userRole === 'admin' ? 'dashboard' : 'kanban');
             const [toast, setToast] = useState(null);
@@ -884,6 +891,20 @@
             const deleteClientImage = id => { upd(p => ({ clientImages: (p.clientImages || []).filter(i => i.id !== id) })); supaDelete('clientImages', id); };
 
             /* ── LEADS ── */
+            /* ── META ADS ── */
+            const loadMetaConns = async () => {
+                try { const { data } = await supabase.from('meta_connections').select('*'); setMetaConns(data || []); } catch(e) { console.warn('meta_connections table missing'); }
+            };
+            useEffect(() => { loadMetaConns(); }, []);
+            const saveMetaConn = async conn => {
+                const existing = metaConns.find(c => c.clientId === conn.clientId);
+                const row = { ...conn, updatedAt: new Date().toISOString() };
+                if (existing) { row.id = existing.id; setMetaConns(p => p.map(c => c.id === existing.id ? row : c)); await supabase.from('meta_connections').upsert([row]); }
+                else { row.id = genId(); row.createdAt = new Date().toISOString(); setMetaConns(p => [...p, row]); await supabase.from('meta_connections').insert([row]); }
+                notify('Conta Meta conectada ✓');
+            };
+            const deleteMetaConn = async id => { setMetaConns(p => p.filter(c => c.id !== id)); await supabase.from('meta_connections').delete().eq('id', id); notify('Conta Meta desconectada', 'warn'); };
+
             const sanitizeLead = d => ({ ...d, score: parseFloat(d.score) || 0, value: d.value !== '' && d.value != null ? d.value : null });
             const syncLeads = async () => {
                 const all = (store.leads || []);
@@ -998,7 +1019,7 @@
             );
 
             return (
-                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage, addLead, editLead, deleteLead, moveLead, syncLeads, addLeadInteraction, deleteLeadInteraction, addGoal, editGoal, deleteGoal }}>
+                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage, metaConns, saveMetaConn, deleteMetaConn, loadMetaConns, addLead, editLead, deleteLead, moveLead, syncLeads, addLeadInteraction, deleteLeadInteraction, addGoal, editGoal, deleteGoal }}>
                     {children}
                 </Ctx.Provider>
             );
@@ -2477,9 +2498,278 @@
             doc.save('performance-' + (client.name || 'cliente').replace(/[^a-z0-9]/gi, '-') + '-' + (rec.platform || 'social').replace(/[^a-z0-9]/gi, '-') + '-' + period.replace('/', '-') + '.pdf');
         }
 
+        /* ── META ADS COMPONENTS ─────────────────────────────── */
+        function MetaConnectModal({ onClose, clients }) {
+            const { saveMetaConn, notify } = useApp();
+            const [appId, setAppId] = useState(localStorage.getItem('meta_app_id') || '');
+            const [appSecret, setAppSecret] = useState(localStorage.getItem('meta_app_secret') || '');
+            const [clientId, setClientId] = useState('');
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const connect = async () => {
+                if (!appId.trim()) { setError('App ID é obrigatório'); return; }
+                setLoading(true); setError('');
+                try {
+                    localStorage.setItem('meta_app_id', appId);
+                    if (appSecret) localStorage.setItem('meta_app_secret', appSecret);
+                    const auth = await metaLogin(appId.trim(), 'ads_read,ads_management,business_management,pages_read_engagement');
+                    let token = auth.accessToken;
+                    let expiresAt = new Date(Date.now() + auth.expiresIn * 1000).toISOString();
+                    if (appSecret.trim()) {
+                        try {
+                            const lt = await metaGraph('oauth/access_token', '', { grant_type: 'fb_exchange_token', client_id: appId, client_secret: appSecret, fb_exchange_token: token });
+                            if (lt.access_token) { token = lt.access_token; expiresAt = new Date(Date.now() + (lt.expires_in || 5184000) * 1000).toISOString(); }
+                        } catch(e) { console.warn('Long-lived token exchange failed, using short token'); }
+                    }
+                    const me = await metaGraph('me', token, { fields: 'id,name' });
+                    const accs = await metaGraph('me/adaccounts', token, { fields: 'name,account_id,currency,account_status,business', limit: 50 });
+                    await saveMetaConn({ clientId: clientId || null, metaUserId: me.id, metaUserName: me.name, accessToken: token, expiresAt, adAccounts: JSON.stringify(accs.data || []) });
+                    onClose();
+                } catch(e) { setError(e.message || 'Erro ao conectar'); }
+                setLoading(false);
+            };
+            return (
+                <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.8)', zIndex:2000, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+                    <div className="glass" style={{ width:500, borderRadius:16, padding:'24px 28px' }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                                <div style={{ width:32, height:32, borderRadius:8, background:'linear-gradient(135deg,#1877f2,#42b3f4)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, fontWeight:900, color:'#fff' }}>f</div>
+                                <h2 style={{ fontSize:16, fontWeight:700 }}>Conectar Meta Ads</h2>
+                            </div>
+                            <button onClick={onClose} style={{ background:'none', border:'none', color:'rgba(255,255,255,.45)', cursor:'pointer', fontSize:22 }}>×</button>
+                        </div>
+                        <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+                            <FRow label="Cliente (opcional)">
+                                <select className="input-field" style={{ fontSize:13 }} value={clientId} onChange={e=>setClientId(e.target.value)}>
+                                    <option value="">Conta da agência</option>
+                                    {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                                </select>
+                            </FRow>
+                            <FRow label="Meta App ID *">
+                                <input className="input-field" style={{ fontSize:13 }} value={appId} onChange={e=>setAppId(e.target.value)} placeholder="Seu App ID do Meta Developers" />
+                            </FRow>
+                            <FRow label="App Secret (opcional — para token de 60 dias)">
+                                <input className="input-field" style={{ fontSize:13 }} type="password" value={appSecret} onChange={e=>setAppSecret(e.target.value)} placeholder="Recomendado para uso em produção" />
+                            </FRow>
+                            <div style={{ background:'rgba(24,119,242,.08)', border:'1px solid rgba(24,119,242,.2)', borderRadius:8, padding:'10px 12px', fontSize:11, color:'rgba(255,255,255,.55)', lineHeight:1.7 }}>
+                                <strong style={{ color:'#42b3f4' }}>Como obter:</strong> developers.facebook.com → Seu App → Marketing API → Configurações Básicas<br/>
+                                Permissões: <code style={{ color:'#42b3f4' }}>ads_read, ads_management, business_management</code>
+                            </div>
+                            {error && <div style={{ background:'rgba(255,0,64,.08)', border:'1px solid rgba(255,0,64,.2)', borderRadius:7, padding:'8px 12px', fontSize:12, color:'#ff6080' }}>{error}</div>}
+                        </div>
+                        <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:20 }}>
+                            <button className="btn-secondary" onClick={onClose}>Cancelar</button>
+                            <button onClick={connect} disabled={loading} style={{ display:'flex', alignItems:'center', gap:7, padding:'8px 18px', borderRadius:8, border:'none', background: loading ? 'rgba(24,119,242,.4)' : '#1877f2', color:'#fff', fontWeight:700, fontSize:13, cursor: loading ? 'wait' : 'pointer', transition:'background .12s' }}>
+                                {loading ? <><span style={{ width:12, height:12, border:'2px solid rgba(255,255,255,.3)', borderTopColor:'#fff', borderRadius:'50%', display:'inline-block', animation:'spin .7s linear infinite' }} />Conectando...</> : <>Entrar com Facebook</>}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function MetaAdsSection({ conn }) {
+            const [datePreset, setDatePreset] = useState('last_7_days');
+            const [selAccount, setSelAccount] = useState('');
+            const [campaigns, setCampaigns] = useState([]);
+            const [overview, setOverview] = useState(null);
+            const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [expanded, setExpanded] = useState(null);
+            const [adsets, setAdsets] = useState({});
+            const [loadingAdsets, setLoadingAdsets] = useState(null);
+            const chartRef = useRef(null);
+            const chartInst = useRef(null);
+            const adAccounts = (() => { try { return JSON.parse(conn.adAccounts || '[]'); } catch { return []; } })();
+            const token = conn.accessToken;
+            const tokenExpired = conn.expiresAt && new Date(conn.expiresAt) < new Date();
+
+            const fetchInsights = async (accountId, preset) => {
+                setLoading(true); setError('');
+                try {
+                    const insightFields = 'spend,reach,impressions,clicks,ctr,cpm,cpc,actions,action_values';
+                    const campFields = `name,status,objective,insights.date_preset(${preset}){${insightFields}}`;
+                    const data = await metaGraph(`act_${accountId}/campaigns`, token, { fields: campFields, limit: 100 });
+                    const camps = (data.data || []).map(c => {
+                        const ins = c.insights?.data?.[0] || {};
+                        const leads = getMetaInsightVal(ins, 'lead') || getMetaInsightVal(ins, 'onsite_conversion.messaging_first_reply');
+                        const spend = parseFloat(ins.spend) || 0;
+                        return { ...c, spend, reach: parseInt(ins.reach)||0, impressions: parseInt(ins.impressions)||0, clicks: parseInt(ins.clicks)||0, ctr: parseFloat(ins.ctr)||0, cpm: parseFloat(ins.cpm)||0, cpc: parseFloat(ins.cpc)||0, leads, cpl: leads>0&&spend>0 ? spend/leads : 0 };
+                    });
+                    setCampaigns(camps);
+                    const totSpend = camps.reduce((s,c)=>s+c.spend,0);
+                    const totImpr = camps.reduce((s,c)=>s+c.impressions,0);
+                    const totClicks = camps.reduce((s,c)=>s+c.clicks,0);
+                    const totLeads = camps.reduce((s,c)=>s+c.leads,0);
+                    setOverview({ spend:totSpend, impressions:totImpr, clicks:totClicks, leads:totLeads, ctr: totImpr>0?totClicks/totImpr*100:0, cpm: totImpr>0?totSpend/totImpr*1000:0, cpc: totClicks>0?totSpend/totClicks:0, cpl: totLeads>0?totSpend/totLeads:0 });
+                    renderChart(camps);
+                } catch(e) { setError(e.message); }
+                setLoading(false);
+            };
+
+            const renderChart = camps => {
+                if (!chartRef.current) return;
+                const top = [...camps].sort((a,b)=>b.spend-a.spend).slice(0,8);
+                const ctx = chartRef.current.getContext('2d');
+                if (chartInst.current) chartInst.current.destroy();
+                chartInst.current = new Chart(ctx, {
+                    type: 'bar',
+                    data: { labels: top.map(c=>c.name.length>20?c.name.slice(0,20)+'…':c.name), datasets: [{ label: 'Gasto (R$)', data: top.map(c=>c.spend.toFixed(2)), backgroundColor: 'rgba(24,119,242,.7)', borderColor: '#1877f2', borderWidth: 2, borderRadius: 6 }, { label: 'Leads', data: top.map(c=>c.leads), backgroundColor: 'rgba(0,200,100,.5)', borderColor: '#00c864', borderWidth: 2, borderRadius: 6, yAxisID: 'y2' }] },
+                    options: { animation: false, responsive: true, maintainAspectRatio: false, plugins: { legend: { labels: { color: 'rgba(255,255,255,.6)', font: { size: 11 } } } }, scales: { x: { ticks: { color: 'rgba(255,255,255,.5)', font: { size: 10 } }, grid: { color: 'rgba(255,255,255,.05)' } }, y: { ticks: { color: 'rgba(255,255,255,.5)', callback: v => 'R$'+v }, grid: { color: 'rgba(255,255,255,.06)' } }, y2: { position: 'right', ticks: { color: 'rgba(0,200,100,.7)' }, grid: { display: false } } } }
+                });
+            };
+
+            const loadAdsets = async campId => {
+                if (adsets[campId]) { setExpanded(expanded === campId ? null : campId); return; }
+                setLoadingAdsets(campId);
+                try {
+                    const f = 'name,status,daily_budget,lifetime_budget,insights{spend,reach,impressions,clicks,ctr,actions}';
+                    const data = await metaGraph(`${campId}/adsets`, token, { fields: f, limit: 50 });
+                    const sets = (data.data||[]).map(s => { const ins = s.insights?.data?.[0]||{}; return { ...s, spend:parseFloat(ins.spend)||0, impressions:parseInt(ins.impressions)||0, clicks:parseInt(ins.clicks)||0, ctr:parseFloat(ins.ctr)||0, leads: getMetaInsightVal(ins,'lead') }; });
+                    setAdsets(p=>({...p,[campId]:sets}));
+                    setExpanded(campId);
+                } catch(e) { /* ignore */ }
+                setLoadingAdsets(null);
+            };
+
+            useEffect(() => {
+                if (selAccount) fetchInsights(selAccount.replace('act_',''), datePreset);
+            }, [selAccount, datePreset]);
+
+            useEffect(() => {
+                if (adAccounts.length > 0 && !selAccount) setSelAccount(adAccounts[0].account_id);
+            }, []);
+
+            useEffect(() => {
+                const t = setInterval(() => { if (selAccount) fetchInsights(selAccount.replace('act_',''), datePreset); }, 15*60*1000);
+                return () => clearInterval(t);
+            }, [selAccount, datePreset]);
+
+            if (tokenExpired) return (
+                <div style={{ background:'rgba(255,150,0,.08)', border:'1px solid rgba(255,150,0,.25)', borderRadius:10, padding:'16px 20px', color:'#ffaa40', fontSize:13 }}>
+                    ⚠️ Token da Meta expirado. Clique em "Gerenciar Conexões" e reconecte sua conta.
+                </div>
+            );
+
+            const kpiCards = [
+                { label:'Gasto Total', val: fmtMeta(overview?.spend,'currency'), clr:'#1877f2' },
+                { label:'Impressões', val: fmtMeta(overview?.impressions,'int'), clr:'#a060ff' },
+                { label:'Cliques', val: fmtMeta(overview?.clicks,'int'), clr:'#00bcd4' },
+                { label:'CTR', val: fmtMeta(overview?.ctr,'pct'), clr:'#ff9800' },
+                { label:'CPM', val: fmtMeta(overview?.cpm,'currency'), clr:'#e91e63' },
+                { label:'CPC', val: fmtMeta(overview?.cpc,'currency'), clr:'#ff6b35' },
+                { label:'Leads', val: fmtMeta(overview?.leads,'int'), clr:'#00c853' },
+                { label:'CPL', val: fmtMeta(overview?.cpl,'currency'), clr:'#4caf50' },
+            ];
+
+            return (
+                <div style={{ marginTop:20 }}>
+                    {/* Controls */}
+                    <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap', alignItems:'center' }}>
+                        <select className="input-field" style={{ fontSize:12, padding:'6px 10px' }} value={selAccount} onChange={e=>setSelAccount(e.target.value)}>
+                            {adAccounts.map(a=><option key={a.account_id} value={a.account_id}>{a.name} ({a.account_id})</option>)}
+                        </select>
+                        <select className="input-field" style={{ fontSize:12, padding:'6px 10px' }} value={datePreset} onChange={e=>setDatePreset(e.target.value)}>
+                            {DATE_PRESETS.map(d=><option key={d.id} value={d.id}>{d.label}</option>)}
+                        </select>
+                        <button className="btn-secondary" style={{ fontSize:12, gap:5 }} onClick={()=>selAccount&&fetchInsights(selAccount.replace('act_',''),datePreset)} disabled={loading}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+                            {loading ? 'Carregando...' : 'Atualizar'}
+                        </button>
+                        {conn.metaUserName && <div style={{ fontSize:11, color:'rgba(255,255,255,.4)', marginLeft:'auto' }}>Conta: <strong style={{ color:'#42b3f4' }}>{conn.metaUserName}</strong></div>}
+                    </div>
+
+                    {error && <div style={{ background:'rgba(255,0,64,.08)', border:'1px solid rgba(255,0,64,.2)', borderRadius:8, padding:'10px 14px', color:'#ff6080', fontSize:12, marginBottom:12 }}>Erro: {error}</div>}
+
+                    {loading && !overview && (
+                        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:10, marginBottom:16 }}>
+                            {Array(8).fill(0).map((_,i)=><div key={i} style={{ height:72, borderRadius:10, background:'rgba(255,255,255,.04)', animation:'pulse 1.5s ease-in-out infinite' }} />)}
+                        </div>
+                    )}
+
+                    {/* KPI Cards */}
+                    {overview && (
+                        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(160px,1fr))', gap:10, marginBottom:16 }}>
+                            {kpiCards.map(k=>(
+                                <div key={k.label} style={{ background:`${k.clr}0d`, border:`1px solid ${k.clr}33`, borderRadius:10, padding:'12px 14px' }}>
+                                    <div style={{ fontSize:10, color:'rgba(255,255,255,.4)', marginBottom:4, textTransform:'uppercase', letterSpacing:.5, fontWeight:600 }}>{k.label}</div>
+                                    <div style={{ fontSize:20, fontWeight:800, color:k.clr, lineHeight:1.1 }}>{k.val}</div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Chart */}
+                    {campaigns.length > 0 && (
+                        <div className="glass" style={{ padding:16, marginBottom:16, borderRadius:12 }}>
+                            <div style={{ fontSize:12, fontWeight:700, color:'rgba(255,255,255,.5)', marginBottom:10, textTransform:'uppercase', letterSpacing:.5 }}>Gasto & Leads por Campanha</div>
+                            <div style={{ height:200 }}><canvas ref={chartRef} /></div>
+                        </div>
+                    )}
+
+                    {/* Campaigns Table */}
+                    {campaigns.length > 0 && (
+                        <div className="glass" style={{ borderRadius:12, overflow:'hidden', marginBottom:16 }}>
+                            <div style={{ padding:'12px 16px', borderBottom:'1px solid rgba(255,255,255,.05)', fontSize:13, fontWeight:600, color:'rgba(255,255,255,.7)', display:'flex', justifyContent:'space-between' }}>
+                                <span>Campanhas ({campaigns.length})</span>
+                                <span style={{ fontSize:10, color:'rgba(255,255,255,.3)', fontWeight:400 }}>Clique para expandir conjuntos de anúncios</span>
+                            </div>
+                            <table style={{ width:'100%', borderCollapse:'collapse' }} className="tbl">
+                                <thead><tr>{['Campanha','Status','Gasto','Impressões','Cliques','CTR','CPM','Leads','CPL'].map(h=><th key={h} style={{ fontSize:10.5 }}>{h}</th>)}</tr></thead>
+                                <tbody>
+                                    {campaigns.map(c=>{
+                                        const stClr = CAMP_STATUS_CLR[c.status]||'#888';
+                                        const isExp = expanded === c.id;
+                                        return (
+                                            <React.Fragment key={c.id}>
+                                                <tr onClick={()=>loadAdsets(c.id)} style={{ cursor:'pointer', background: isExp ? 'rgba(24,119,242,.06)' : 'transparent' }}>
+                                                    <td style={{ fontWeight:600, maxWidth:200 }}><div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{c.name}</div></td>
+                                                    <td><span style={{ background:stClr+'22', color:stClr, borderRadius:10, padding:'2px 8px', fontSize:10, fontWeight:700 }}>{CAMP_STATUS_LABEL[c.status]||c.status}</span></td>
+                                                    <td style={{ color:'#1877f2', fontWeight:700 }}>{fmtMeta(c.spend,'currency')}</td>
+                                                    <td style={{ color:'rgba(255,255,255,.6)' }}>{fmtMeta(c.impressions,'int')}</td>
+                                                    <td style={{ color:'rgba(255,255,255,.6)' }}>{fmtMeta(c.clicks,'int')}</td>
+                                                    <td style={{ color: c.ctr>=2 ? '#00c853' : c.ctr>=1 ? '#ff9800' : '#ff4060' }}>{fmtMeta(c.ctr,'pct')}</td>
+                                                    <td style={{ color:'rgba(255,255,255,.55)' }}>{fmtMeta(c.cpm,'currency')}</td>
+                                                    <td style={{ color:'#00c853', fontWeight:700 }}>{fmtMeta(c.leads,'int')}</td>
+                                                    <td style={{ color:'rgba(255,255,255,.55)' }}>{c.leads>0 ? fmtMeta(c.cpl,'currency') : '—'}</td>
+                                                </tr>
+                                                {isExp && adsets[c.id] && adsets[c.id].map(s=>(
+                                                    <tr key={s.id} style={{ background:'rgba(255,255,255,.02)', borderLeft:'3px solid #1877f222' }}>
+                                                        <td style={{ paddingLeft:24, color:'rgba(255,255,255,.55)', fontSize:11 }}>↳ {s.name}</td>
+                                                        <td><span style={{ background:(CAMP_STATUS_CLR[s.status]||'#888')+'22', color:CAMP_STATUS_CLR[s.status]||'#888', borderRadius:10, padding:'1px 6px', fontSize:9.5, fontWeight:700 }}>{CAMP_STATUS_LABEL[s.status]||s.status}</span></td>
+                                                        <td style={{ color:'rgba(24,119,242,.8)', fontSize:11 }}>{fmtMeta(s.spend,'currency')}</td>
+                                                        <td style={{ color:'rgba(255,255,255,.45)', fontSize:11 }}>{fmtMeta(s.impressions,'int')}</td>
+                                                        <td style={{ color:'rgba(255,255,255,.45)', fontSize:11 }}>{fmtMeta(s.clicks,'int')}</td>
+                                                        <td style={{ color:'rgba(255,255,255,.45)', fontSize:11 }}>{fmtMeta(s.ctr,'pct')}</td>
+                                                        <td>—</td>
+                                                        <td style={{ color:'rgba(0,200,100,.7)', fontSize:11 }}>{fmtMeta(s.leads,'int')}</td>
+                                                        <td>—</td>
+                                                    </tr>
+                                                ))}
+                                                {loadingAdsets === c.id && <tr><td colSpan={9} style={{ textAlign:'center', padding:'8px', color:'rgba(255,255,255,.3)', fontSize:11 }}>Carregando conjuntos...</td></tr>}
+                                            </React.Fragment>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+
+                    {!loading && campaigns.length === 0 && selAccount && (
+                        <div style={{ textAlign:'center', padding:'40px 0', color:'rgba(255,255,255,.3)', fontSize:13 }}>
+                            Nenhuma campanha encontrada para este período.
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
         /* ── TRAFFIC ────────────────────────────────────────── */
         function Traffic() {
-            const { store, addCampaign, editCampaign, deleteCampaign } = useApp();
+            const { store, addCampaign, editCampaign, deleteCampaign, metaConns, deleteMetaConn } = useApp();
+            const [trafficTab, setTrafficTab] = useState('manual');
+            const [showMetaConnect, setShowMetaConnect] = useState(false);
+            const [metaClientFilter, setMetaClientFilter] = useState('');
             const [sel, setSel] = useState('');
             const [showAdd, setShowAdd] = useState(false);
             const [editCamp, setEditCamp] = useState(null);
@@ -2496,7 +2786,19 @@
 
             return (
                 <div className="fade-in">
-                    <div style={{ marginBottom: 20 }}><h1 style={{ fontSize: 21, fontWeight: 700 }}>Gestão de Tráfego</h1><p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>Acompanhe os KPIs de tráfego pago por cliente</p></div>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16, flexWrap:'wrap', gap:10 }}>
+                        <div><h1 style={{ fontSize: 21, fontWeight: 700 }}>Gestão de Tráfego</h1><p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>Acompanhe os KPIs de tráfego pago por cliente</p></div>
+                        <button onClick={()=>setShowMetaConnect(true)} style={{ display:'flex', alignItems:'center', gap:8, padding:'8px 14px', borderRadius:8, border:'1px solid rgba(24,119,242,.4)', background:'rgba(24,119,242,.1)', color:'#42b3f4', fontSize:12, fontWeight:700, cursor:'pointer', transition:'all .12s' }} onMouseEnter={e=>{e.currentTarget.style.background='rgba(24,119,242,.2)'}} onMouseLeave={e=>{e.currentTarget.style.background='rgba(24,119,242,.1)'}}>
+                            <div style={{ width:18, height:18, borderRadius:4, background:'#1877f2', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:900, color:'#fff' }}>f</div>
+                            {metaConns.length > 0 ? `${metaConns.length} conta${metaConns.length>1?'s':''} Meta conectada${metaConns.length>1?'s':''}` : 'Conectar Meta Ads'}
+                        </button>
+                    </div>
+                    <div style={{ display:'flex', gap:4, marginBottom:20, borderBottom:'1px solid rgba(255,255,255,.07)', paddingBottom:0 }}>
+                        {[{id:'manual',label:'Campanhas Manuais'},{id:'meta',label:'Meta Ads (API)'}].map(t=>(
+                            <button key={t.id} onClick={()=>setTrafficTab(t.id)} style={{ padding:'8px 16px', background:'none', border:'none', borderBottom: trafficTab===t.id ? '2px solid #1877f2' : '2px solid transparent', color: trafficTab===t.id ? '#fff' : 'rgba(255,255,255,.4)', cursor:'pointer', fontSize:12.5, fontWeight: trafficTab===t.id ? 700 : 400, transition:'all .12s', marginBottom:-1 }}>{t.label}</button>
+                        ))}
+                    </div>
+                    {trafficTab === 'manual' && (<>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginBottom: 18 }}>
                         {[{ l: 'Investimento Total', v: fmt(totalBudget), c: '#4090ff' }, { l: 'Total de Leads', v: totalLeads.toLocaleString(), c: '#a060ff' }, { l: 'Campanhas Ativas', v: allCampaigns.length.toString(), c: '#ff8030' }].map(({ l, v, c }) => (
                             <div key={l} className="glass" style={{ padding: '14px 18px' }}><div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.4)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: .4, marginBottom: 5 }}>{l}</div><div style={{ fontSize: 22, fontWeight: 700, color: c }}>{v}</div></div>
@@ -2589,10 +2891,50 @@
                             <button className="btn-secondary" onClick={() => setShowCompar(true)}><Ic n="trend" s={13} />Abrir Comparativo</button>
                         </div>
                     </div>
+                    </>)}
+                    {trafficTab === 'meta' && (
+                        <div>
+                            {metaConns.length === 0 ? (
+                                <div style={{ textAlign:'center', padding:'60px 20px' }}>
+                                    <div style={{ width:56, height:56, borderRadius:14, background:'linear-gradient(135deg,#1877f2,#42b3f4)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:32, fontWeight:900, color:'#fff', margin:'0 auto 16px' }}>f</div>
+                                    <div style={{ fontSize:16, fontWeight:700, marginBottom:8 }}>Nenhuma conta Meta conectada</div>
+                                    <div style={{ fontSize:13, color:'rgba(255,255,255,.4)', marginBottom:20 }}>Conecte uma conta da Meta Ads para visualizar campanhas em tempo real</div>
+                                    <button onClick={()=>setShowMetaConnect(true)} style={{ padding:'10px 24px', borderRadius:8, border:'none', background:'#1877f2', color:'#fff', fontWeight:700, fontSize:13, cursor:'pointer' }}>Conectar Meta Ads</button>
+                                </div>
+                            ) : (
+                                <div>
+                                    <div style={{ display:'flex', gap:8, marginBottom:16, flexWrap:'wrap', alignItems:'center' }}>
+                                        <select className="input-field" style={{ fontSize:12, padding:'6px 10px', width:'auto' }} value={metaClientFilter} onChange={e=>setMetaClientFilter(e.target.value)}>
+                                            <option value="">Todas as contas</option>
+                                            {metaConns.map(c=><option key={c.id} value={c.id}>{c.metaUserName || 'Sem nome'}{c.clientId ? ` — ${store.clients.find(cl=>cl.id===c.clientId)?.name||''}` : ' (Agência)'}</option>)}
+                                        </select>
+                                        <button onClick={()=>setShowMetaConnect(true)} style={{ fontSize:12, display:'flex', alignItems:'center', gap:5, padding:'6px 12px', borderRadius:6, border:'1px solid rgba(24,119,242,.3)', background:'rgba(24,119,242,.08)', color:'#42b3f4', cursor:'pointer', fontWeight:600 }}>+ Adicionar conta</button>
+                                    </div>
+                                    {metaConns.filter(c=>!metaClientFilter||c.id===metaClientFilter).map(conn=>(
+                                        <div key={conn.id} style={{ marginBottom:24 }}>
+                                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+                                                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                                                    <div style={{ width:24, height:24, borderRadius:6, background:'#1877f2', display:'flex', alignItems:'center', justifyContent:'center', fontSize:14, fontWeight:900, color:'#fff' }}>f</div>
+                                                    <div>
+                                                        <span style={{ fontWeight:700, fontSize:13 }}>{conn.metaUserName || 'Conta Meta'}</span>
+                                                        {conn.clientId && <span style={{ fontSize:11, color:'rgba(255,255,255,.4)', marginLeft:8 }}>→ {store.clients.find(c=>c.id===conn.clientId)?.name||''}</span>}
+                                                        {!conn.clientId && <span style={{ fontSize:11, color:'rgba(24,119,242,.7)', marginLeft:8 }}>Agência</span>}
+                                                    </div>
+                                                </div>
+                                                <button onClick={()=>{ if(confirm('Desconectar esta conta Meta?')) deleteMetaConn(conn.id); }} style={{ background:'none', border:'1px solid rgba(255,0,64,.25)', borderRadius:6, color:'rgba(255,100,100,.7)', fontSize:11, padding:'4px 8px', cursor:'pointer' }}>Desconectar</button>
+                                            </div>
+                                            <MetaAdsSection conn={conn} />
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
                     {showAdd && sel && <CampaignModal clientId={sel} clientName={selClient?.name || '—'} onClose={() => setShowAdd(false)} />}
                     {editCamp && <CampaignModal campaign={editCamp} clientId={editCamp.clientId} clientName={selClient?.name || '—'} onClose={() => setEditCamp(null)} />}
                     {delCamp && <Confirm msg={`Excluir campanha "${delCamp.campaignName || 'Campanha Principal'}"?`} onOk={() => deleteCampaign(delCamp.id)} onClose={() => setDelCamp(null)} />}
                     {showCompar && <CampaignComparisonModal onClose={() => setShowCompar(false)} />}
+                    {showMetaConnect && <MetaConnectModal clients={store.clients} onClose={()=>setShowMetaConnect(false)} />}
                 </div>
             );
         }
@@ -4438,6 +4780,54 @@
         }
 
         /* ── LEADS CRM ──────────────────────────────────────── */
+        /* ── META ADS HELPERS ── */
+        const META_V = 'v19.0';
+        const metaGraph = async (path, token, params = {}) => {
+            const qs = new URLSearchParams({ access_token: token, ...params }).toString();
+            const r = await fetch(`https://graph.facebook.com/${META_V}/${path}?${qs}`);
+            const d = await r.json();
+            if (d.error) throw new Error(d.error.user_message || d.error.message);
+            return d;
+        };
+        const initFB = appId => new Promise(resolve => {
+            window._fbAppId = appId;
+            if (window.FB) { FB.init({ appId, cookie: true, xfbml: false, version: META_V }); resolve(FB); return; }
+            const orig = window.fbAsyncInit;
+            window.fbAsyncInit = () => { FB.init({ appId, cookie: true, xfbml: false, version: META_V }); if (orig) orig(); resolve(FB); };
+            if (document.querySelector('script[src*="connect.facebook.net"]')) { setTimeout(() => window.FB && resolve(window.FB), 1000); }
+        });
+        const metaLogin = (appId, scope) => new Promise((resolve, reject) => {
+            initFB(appId).then(fb => {
+                fb.login(resp => {
+                    if (resp.authResponse) resolve(resp.authResponse);
+                    else reject(new Error('Login cancelado'));
+                }, { scope, auth_type: 'rerequest' });
+            }).catch(reject);
+        });
+        const DATE_PRESETS = [
+            { id: 'today', label: 'Hoje' },
+            { id: 'yesterday', label: 'Ontem' },
+            { id: 'last_7_days', label: 'Últimos 7 dias' },
+            { id: 'last_30_days', label: 'Últimos 30 dias' },
+            { id: 'this_month', label: 'Este mês' },
+            { id: 'last_month', label: 'Mês anterior' },
+        ];
+        const CAMP_STATUS_CLR = { ACTIVE: '#00c853', PAUSED: '#ff9800', DELETED: '#555', ARCHIVED: '#555', COMPLETED: '#4090ff' };
+        const CAMP_STATUS_LABEL = { ACTIVE: 'Ativa', PAUSED: 'Pausada', DELETED: 'Excluída', ARCHIVED: 'Arquivada', COMPLETED: 'Concluída' };
+        const fmtMeta = (v, type) => {
+            if (v == null || v === '') return '—';
+            const n = parseFloat(v);
+            if (type === 'currency') return 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            if (type === 'pct') return n.toFixed(2) + '%';
+            if (type === 'int') return Math.round(n).toLocaleString('pt-BR');
+            return n.toFixed(2);
+        };
+        const getMetaInsightVal = (insights, action_type) => {
+            const actions = insights?.actions || [];
+            const a = actions.find(x => x.action_type === action_type);
+            return a ? parseFloat(a.value) || 0 : 0;
+        };
+
         const LEAD_COLS = ['Novos Leads','Contato Inicial','Qualificação','Proposta Enviada','Follow-up','Em Negociação','Fechado Ganho','Perdido'];
         const LEAD_CLR = { 'Novos Leads':'#4090ff','Contato Inicial':'#a060ff','Qualificação':'#ff8c00','Proposta Enviada':'#00bcd4','Follow-up':'#ff9800','Em Negociação':'#e91e63','Fechado Ganho':'#00c853','Perdido':'#555' };
         const LEAD_ORIGINS = ['Manual','Site','Indicação','Meta Ads','Google Ads','WhatsApp','E-mail','Instagram','LinkedIn','Outro'];
