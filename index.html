@@ -884,16 +884,18 @@
             const deleteClientImage = id => { upd(p => ({ clientImages: (p.clientImages || []).filter(i => i.id !== id) })); supaDelete('clientImages', id); };
 
             /* ── LEADS ── */
+            const sanitizeLead = d => ({ ...d, score: parseFloat(d.score) || 0, value: d.value !== '' && d.value != null ? d.value : null });
             const addLead = data => {
-                const l = { id: genId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastInteraction: new Date().toISOString(), status: 'Novos Leads', priority: 'Média', score: 0, origin: 'Manual', ...getModUser(), ...data };
+                const l = { id: genId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastInteraction: new Date().toISOString(), status: 'Novos Leads', priority: 'Média', score: 0, origin: 'Manual', ...getModUser(), ...sanitizeLead(data) };
                 upd(p => ({ leads: [...(p.leads || []), l] }));
                 supaSave('leads', l);
                 notify('Lead criado ✓');
             };
             const editLead = (id, data) => {
                 const m = getModUser();
-                upd(p => ({ leads: (p.leads || []).map(l => l.id === id ? { ...l, ...data, ...m, updatedAt: new Date().toISOString() } : l) }));
-                supaUpdate('leads', id, { ...data, ...m, updatedAt: new Date().toISOString() });
+                const clean = sanitizeLead(data);
+                upd(p => ({ leads: (p.leads || []).map(l => l.id === id ? { ...l, ...clean, ...m, updatedAt: new Date().toISOString() } : l) }));
+                supaUpdate('leads', id, { ...clean, ...m, updatedAt: new Date().toISOString() });
                 notify('Lead atualizado ✓');
             };
             const deleteLead = id => {
