@@ -885,6 +885,13 @@
 
             /* ── LEADS ── */
             const sanitizeLead = d => ({ ...d, score: parseFloat(d.score) || 0, value: d.value !== '' && d.value != null ? d.value : null });
+            const syncLeads = async () => {
+                const all = (store.leads || []);
+                if (!all.length) { notify('Nenhum lead local para sincronizar', 'warn'); return; }
+                notify('Sincronizando leads...');
+                for (const l of all) await supaSave('leads', sanitizeLead(l));
+                notify(`${all.length} lead${all.length > 1 ? 's' : ''} sincronizado${all.length > 1 ? 's' : ''} ✓`);
+            };
             const addLead = data => {
                 const l = { id: genId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastInteraction: new Date().toISOString(), status: 'Novos Leads', priority: 'Média', score: 0, origin: 'Manual', ...getModUser(), ...sanitizeLead(data) };
                 upd(p => ({ leads: [...(p.leads || []), l] }));
@@ -991,7 +998,7 @@
             );
 
             return (
-                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage, addLead, editLead, deleteLead, moveLead, addLeadInteraction, deleteLeadInteraction, addGoal, editGoal, deleteGoal }}>
+                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage, addLead, editLead, deleteLead, moveLead, syncLeads, addLeadInteraction, deleteLeadInteraction, addGoal, editGoal, deleteGoal }}>
                     {children}
                 </Ctx.Provider>
             );
@@ -4672,7 +4679,7 @@
         };
 
         function LeadsPage() {
-            const { store, addLead, deleteLead, moveLead, notify } = useApp();
+            const { store, addLead, deleteLead, moveLead, syncLeads, notify } = useApp();
             const leads = store.leads || [];
             const interactions = store.leadInteractions || [];
             const [showAdd, setShowAdd] = useState(false);
@@ -4721,6 +4728,10 @@
                         <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
                             <input className="input-field" placeholder="Buscar nome, tel, e-mail..." value={filt.search} onChange={e=>setF('search',e.target.value)} style={{ fontSize:12, padding:'6px 12px', width:210 }} />
                             <button className="btn-secondary" onClick={()=>setShowFilters(v=>!v)} style={{ fontSize:12, gap:5 }}><Ic n="filter" s={12} />Filtros</button>
+                            <button className="btn-secondary" onClick={syncLeads} style={{ fontSize:12, gap:5 }} title="Re-envia todos os leads locais ao Supabase">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
+                                Sincronizar
+                            </button>
                             <button className="btn-secondary" onClick={()=>{ setTextLeadInput(''); setTextLeadPreview([]); setShowTextLead(true); }} style={{ fontSize:12, gap:5 }}>
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
                                 Texto → Leads
