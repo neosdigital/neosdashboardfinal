@@ -903,18 +903,24 @@
             };
             const moveLead = (id, status) => {
                 const lead = (store.leads || []).find(l => l.id === id);
+                if (!lead) return;
                 const now = new Date().toISOString();
                 upd(p => ({ leads: (p.leads || []).map(l => l.id === id ? { ...l, status, lastInteraction: now, updatedAt: now } : l) }));
                 supaUpdate('leads', id, { status, lastInteraction: now, updatedAt: now });
+                if (lead.status === status) { notify(`Lead → ${status} ✓`); return; }
                 const addDays = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
                 const mkTask = (title, days) => {
-                    const t = { id: genId(), createdAt: now, title, desc: `Lead: ${lead?.name || ''}`, status: 'A Fazer', dueDate: addDays(days), clientId: '', clientName: lead?.responsible || '', priority: 'Alta', assignee: '', category: 'lead', fromCalendar: false };
+                    const t = { id: genId(), createdAt: now, title, desc: `Lead: ${lead.name || ''}`, status: 'A Fazer', dueDate: addDays(days), clientId: '', clientName: lead.responsible || '', priority: 'Alta', assignee: '', category: 'lead', fromCalendar: false };
                     upd(p => ({ tasks: [...p.tasks, t] }));
                     supaSave('tasks', t);
                 };
-                if (status === 'Contato Inicial') mkTask(`Fazer novo contato: ${lead?.name || ''}`, 2);
-                else if (status === 'Proposta Enviada') mkTask(`Validar retorno da proposta: ${lead?.name || ''}`, 3);
-                else if (status === 'Follow-up') mkTask(`Follow-up: ${lead?.name || ''}`, 2);
+                if (status === 'Contato Inicial') mkTask(`Fazer novo contato: ${lead.name || ''}`, 2);
+                else if (status === 'Proposta Enviada') mkTask(`Validar retorno da proposta: ${lead.name || ''}`, 3);
+                else if (status === 'Follow-up') {
+                    mkTask(`WhatsApp follow-up: ${lead.name || ''}`, 2);
+                    mkTask(`Ligação follow-up: ${lead.name || ''}`, 5);
+                    mkTask(`Última tentativa: ${lead.name || ''}`, 7);
+                }
                 notify(`Lead → ${status} ✓`);
             };
             const addLeadInteraction = (leadId, data) => {
