@@ -439,7 +439,8 @@
         });
         db.version(3).stores({ calEvents: 'id, date, type, source, googleEventId, createdAt', costs: 'id, type, category, date, createdAt' });
         db.version(4).stores({ clientImages: 'id, clientId, type, createdAt' });
-        const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [] };
+        db.version(5).stores({ leads: 'id, status, responsible, origin, createdAt', leadInteractions: 'id, leadId, type, createdAt' });
+        const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [] };
 
         /* ── SUPABASE HELPERS ───────────────────────────────── */
         const _stripCol = (err, obj) => {
@@ -484,7 +485,8 @@
                 const [
                     { data: clients }, { data: tasks }, { data: financials },
                     { data: trafficData }, { data: designReqs }, { data: performance },
-                    { data: calEvents }, { data: costs }, { data: clientImages }
+                    { data: calEvents }, { data: costs }, { data: clientImages },
+                    { data: leads }, { data: leadInteractions }
                 ] = await Promise.all([
                     supabase.from('clients').select('*'),
                     supabase.from('tasks').select('*'),
@@ -495,12 +497,14 @@
                     supabase.from('calEvents').select('*'),
                     supabase.from('costs').select('*'),
                     supabase.from('clientImages').select('*'),
+                    supabase.from('leads').select('*'),
+                    supabase.from('leadInteractions').select('*'),
                 ]);
                 const store = {
                     clients: clients || [], tasks: tasks || [], financials: financials || [],
                     trafficData: trafficData || [], designReqs: designReqs || [],
                     performance: performance || [], calEvents: calEvents || [], costs: costs || [],
-                    clientImages: clientImages || []
+                    clientImages: clientImages || [], leads: leads || [], leadInteractions: leadInteractions || []
                 };
                 const hasData = Object.values(store).some(arr => arr.length > 0);
                 if (!hasData) {
@@ -516,17 +520,17 @@
 
         async function loadFromIndexedDB() {
             try {
-                const [clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages] = await Promise.all([
+                const [clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages, leads, leadInteractions] = await Promise.all([
                     db.clients.toArray(), db.tasks.toArray(), db.financials.toArray(),
                     db.trafficData.toArray(), db.designReqs.toArray(),
                     db.performance.toArray(), db.calEvents.toArray(), db.costs.toArray(),
-                    db.clientImages.toArray()
+                    db.clientImages.toArray(), db.leads.toArray(), db.leadInteractions.toArray()
                 ]);
-                return { clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages };
+                return { clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages, leads, leadInteractions };
             } catch (e) { return null; }
         }
         async function saveToDB(store) {
-            await db.transaction('rw', db.clients, db.tasks, db.financials, db.trafficData, db.designReqs, db.performance, db.calEvents, db.costs, db.clientImages, async () => {
+            await db.transaction('rw', db.clients, db.tasks, db.financials, db.trafficData, db.designReqs, db.performance, db.calEvents, db.costs, db.clientImages, db.leads, db.leadInteractions, async () => {
                 await db.clients.clear(); await db.clients.bulkPut(store.clients);
                 await db.tasks.clear(); await db.tasks.bulkPut(store.tasks);
                 await db.financials.clear(); await db.financials.bulkPut(store.financials);
@@ -536,6 +540,8 @@
                 await db.calEvents.clear(); await db.calEvents.bulkPut(store.calEvents || []);
                 await db.costs.clear(); await db.costs.bulkPut(store.costs || []);
                 await db.clientImages.clear(); await db.clientImages.bulkPut(store.clientImages || []);
+                await db.leads.clear(); await db.leads.bulkPut(store.leads || []);
+                await db.leadInteractions.clear(); await db.leadInteractions.bulkPut(store.leadInteractions || []);
             });
         }
         async function migrateFromLocalStorage() {
@@ -600,7 +606,7 @@
 
             /* ── SUPABASE REALTIME ── */
             useEffect(() => {
-                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages'];
+                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions'];
                 const channel = supabase.channel('neos-db-changes');
                 TABLES.forEach(tbl => {
                     channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, ({ eventType, new: n, old: o }) => {
@@ -872,6 +878,55 @@
             const addClientImage = (clientId, imgData) => { const img = { id: genId(), clientId, ...imgData, createdAt: new Date().toISOString() }; upd(p => ({ clientImages: [...(p.clientImages || []), img] })); supaSave('clientImages', img); };
             const deleteClientImage = id => { upd(p => ({ clientImages: (p.clientImages || []).filter(i => i.id !== id) })); supaDelete('clientImages', id); };
 
+            /* ── LEADS ── */
+            const addLead = data => {
+                const l = { id: genId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastInteraction: new Date().toISOString(), status: 'Novos Leads', priority: 'Média', score: 0, origin: 'Manual', ...getModUser(), ...data };
+                upd(p => ({ leads: [...(p.leads || []), l] }));
+                supaSave('leads', l);
+                notify('Lead criado ✓');
+            };
+            const editLead = (id, data) => {
+                const m = getModUser();
+                upd(p => ({ leads: (p.leads || []).map(l => l.id === id ? { ...l, ...data, ...m, updatedAt: new Date().toISOString() } : l) }));
+                supaUpdate('leads', id, { ...data, ...m, updatedAt: new Date().toISOString() });
+                notify('Lead atualizado ✓');
+            };
+            const deleteLead = id => {
+                upd(p => ({ leads: (p.leads || []).filter(l => l.id !== id), leadInteractions: (p.leadInteractions || []).filter(i => i.leadId !== id) }));
+                supaDelete('leads', id);
+                notify('Lead excluído', 'warn');
+            };
+            const moveLead = (id, status) => {
+                const lead = (store.leads || []).find(l => l.id === id);
+                const now = new Date().toISOString();
+                upd(p => ({ leads: (p.leads || []).map(l => l.id === id ? { ...l, status, lastInteraction: now, updatedAt: now } : l) }));
+                supaUpdate('leads', id, { status, lastInteraction: now, updatedAt: now });
+                const addDays = n => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+                const mkTask = (title, days) => {
+                    const t = { id: genId(), createdAt: now, title, desc: `Lead: ${lead?.name || ''}`, status: 'A Fazer', dueDate: addDays(days), clientId: '', clientName: lead?.responsible || '', priority: 'Alta', assignee: '', category: 'lead', fromCalendar: false };
+                    upd(p => ({ tasks: [...p.tasks, t] }));
+                    supaSave('tasks', t);
+                };
+                if (status === 'Contato Inicial') mkTask(`Fazer novo contato: ${lead?.name || ''}`, 2);
+                else if (status === 'Proposta Enviada') mkTask(`Validar retorno da proposta: ${lead?.name || ''}`, 3);
+                else if (status === 'Follow-up') {
+                    mkTask(`WhatsApp follow-up: ${lead?.name || ''}`, 2);
+                    mkTask(`Ligação follow-up: ${lead?.name || ''}`, 5);
+                    mkTask(`Última tentativa: ${lead?.name || ''}`, 7);
+                }
+                notify(`Lead → ${status} ✓`);
+            };
+            const addLeadInteraction = (leadId, data) => {
+                const i = { id: genId(), leadId, createdAt: new Date().toISOString(), ...getModUser(), ...data };
+                upd(p => ({ leadInteractions: [...(p.leadInteractions || []), i], leads: (p.leads || []).map(l => l.id === leadId ? { ...l, lastInteraction: new Date().toISOString() } : l) }));
+                supaSave('leadInteractions', i);
+                supaUpdate('leads', leadId, { lastInteraction: new Date().toISOString() });
+            };
+            const deleteLeadInteraction = id => {
+                upd(p => ({ leadInteractions: (p.leadInteractions || []).filter(i => i.id !== id) }));
+                supaDelete('leadInteractions', id);
+            };
+
             /* ── COSTS ── */
             const addCost = data => { const c = { id: genId(), createdAt: new Date().toISOString(), ...getModUser(), ...data }; upd(p => ({ costs: [...(p.costs || []), c] })); supaSave('costs', c); notify('Custo adicionado ✓'); };
             const editCost = (id, data) => { const m = getModUser(); upd(p => ({ costs: (p.costs || []).map(c => c.id === id ? { ...c, ...data, ...m } : c) })); supaUpdate('costs', id, { ...data, ...m }); notify('Custo atualizado ✓'); };
@@ -922,7 +977,7 @@
             );
 
             return (
-                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage }}>
+                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage, addLead, editLead, deleteLead, moveLead, addLeadInteraction, deleteLeadInteraction }}>
                     {children}
                 </Ctx.Provider>
             );
@@ -953,6 +1008,12 @@
             perf: <><rect x="2" y="9" width="4" height="12" rx="1" /><rect x="9" y="5" width="4" height="16" rx="1" /><rect x="16" y="1" width="4" height="20" rx="1" /></>,
             cal: <><rect x="3" y="4" width="18" height="18" rx="2" ry="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></>,
             coin: <><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="16" /><line x1="8" y1="12" x2="16" y2="12" /></>,
+            leads: <><path d="M22 12h-4l-3 9L9 3l-3 9H2" /><circle cx="12" cy="12" r="2" /></>,
+            filter: <><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" /></>,
+            whatsapp: <><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></>,
+            phone: <><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.6 19.79 19.79 0 0 1 1.6 5.06 2 2 0 0 1 3.57 2.94h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 10.2a16 16 0 0 0 6 6l.91-1.36a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></>,
+            mail: <><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></>,
+            funnel: <><path d="M4 6h16M7 12h10M10 18h4" /></>,
         };
         function Ic({ n, s = 16, c = '' }) {
             return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={c}>{icPaths[n] || null}</svg>;
@@ -1371,7 +1432,7 @@
             const [backupOpen, setBackupOpen] = useState(false);
             const [refreshing, setRefreshing] = useState(false);
             const isEmployee = userRole !== 'admin';
-            const items = [{ id: 'dashboard', label: 'Dashboard', icon: 'dashboard' }, { id: 'clients', label: 'Clientes', icon: 'clients' }, { id: 'kanban', label: 'Kanban', icon: 'kanban' }, { id: 'financial', label: 'Financeiro', icon: 'finance' }, { id: 'traffic', label: 'Tráfego', icon: 'traffic' }, { id: 'design', label: 'Design', icon: 'design' }, { id: 'performance', label: 'Performance', icon: 'perf' }, { id: 'calendar', label: 'Calendário', icon: 'cal' }];
+            const items = [{ id: 'dashboard', label: 'Dashboard', icon: 'dashboard' }, { id: 'leads', label: 'Leads', icon: 'leads' }, { id: 'clients', label: 'Clientes', icon: 'clients' }, { id: 'kanban', label: 'Kanban', icon: 'kanban' }, { id: 'financial', label: 'Financeiro', icon: 'finance' }, { id: 'traffic', label: 'Tráfego', icon: 'traffic' }, { id: 'design', label: 'Design', icon: 'design' }, { id: 'performance', label: 'Performance', icon: 'perf' }, { id: 'calendar', label: 'Calendário', icon: 'cal' }];
             return (
                 <div className="sidebar">
                     <div style={{ padding: '2px 6px 26px' }}>
@@ -1659,6 +1720,55 @@
                             </div>
                         </div>
                     )}
+                    {(() => {
+                        const leads = store.leads || [];
+                        if (leads.length === 0) return null;
+                        const COLS = ['Novos Leads','Contato Inicial','Qualificação','Proposta Enviada','Follow-up','Em Negociação','Fechado Ganho','Perdido'];
+                        const CLRS = ['#4090ff','#a060ff','#ff8c00','#00bcd4','#ff9800','#e91e63','#00c853','#666'];
+                        const counts = COLS.map(c => leads.filter(l => l.status === c).length);
+                        const vals = COLS.map(c => leads.filter(l => l.status === c).reduce((s,l) => s+(parseFloat(l.value)||0),0));
+                        const maxCount = Math.max(...counts, 1);
+                        const won = leads.filter(l => l.status === 'Fechado Ganho').length;
+                        const convRate = leads.length > 0 ? ((won / leads.length) * 100).toFixed(1) : 0;
+                        const fmtV = v => v >= 1000 ? 'R$'+(v/1000).toFixed(1)+'k' : 'R$'+v;
+                        return (
+                            <div className="glass" style={{ padding: 20 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                        <Ic n="leads" s={16} />
+                                        <span style={{ fontWeight: 700, fontSize: 14 }}>Funil de Leads</span>
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 14 }}>
+                                        <div style={{ textAlign: 'center' }}><div style={{ fontSize: 18, fontWeight: 700, color: '#4090ff' }}>{leads.length}</div><div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.38)' }}>Total</div></div>
+                                        <div style={{ textAlign: 'center' }}><div style={{ fontSize: 18, fontWeight: 700, color: '#00c853' }}>{won}</div><div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.38)' }}>Ganhos</div></div>
+                                        <div style={{ textAlign: 'center' }}><div style={{ fontSize: 18, fontWeight: 700, color: '#ff0040' }}>{convRate}%</div><div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.38)' }}>Conversão</div></div>
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                                    {COLS.map((col, ci) => {
+                                        const count = counts[ci];
+                                        const val = vals[ci];
+                                        const pct = Math.round((count / maxCount) * 100);
+                                        const prev = ci > 0 ? counts[ci-1] : count;
+                                        const convPrev = prev > 0 ? ((count/prev)*100).toFixed(0) : '—';
+                                        return (
+                                            <div key={col} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                                <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.5)', width: 130, flexShrink: 0, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{col}</div>
+                                                <div style={{ flex: 1, height: 22, background: 'rgba(255,255,255,.04)', borderRadius: 4, overflow: 'hidden' }}>
+                                                    <div style={{ height: '100%', width: pct + '%', background: CLRS[ci] + '55', borderRadius: 4, display: 'flex', alignItems: 'center', paddingLeft: 6, minWidth: count > 0 ? 28 : 0, transition: 'width .4s' }}>
+                                                        {count > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: CLRS[ci] }}>{count}</span>}
+                                                    </div>
+                                                </div>
+                                                <div style={{ fontSize: 10, color: CLRS[ci], width: 55, textAlign: 'right', flexShrink: 0 }}>{val > 0 ? fmtV(val) : '—'}</div>
+                                                {ci > 0 && <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.25)', width: 36, textAlign: 'right', flexShrink: 0 }}>{convPrev}%</div>}
+                                                {ci === 0 && <div style={{ width: 36 }} />}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        );
+                    })()}
                 </div>
             );
         }
@@ -4295,12 +4405,338 @@
             );
         }
 
+        /* ── LEADS CRM ──────────────────────────────────────── */
+        const LEAD_COLS = ['Novos Leads','Contato Inicial','Qualificação','Proposta Enviada','Follow-up','Em Negociação','Fechado Ganho','Perdido'];
+        const LEAD_CLR = { 'Novos Leads':'#4090ff','Contato Inicial':'#a060ff','Qualificação':'#ff8c00','Proposta Enviada':'#00bcd4','Follow-up':'#ff9800','Em Negociação':'#e91e63','Fechado Ganho':'#00c853','Perdido':'#555' };
+        const LEAD_ORIGINS = ['Manual','Site','Indicação','Meta Ads','Google Ads','WhatsApp','E-mail','Instagram','LinkedIn','Outro'];
+        const LEAD_PRIORITIES = ['Alta','Média','Baixa'];
+        const LEAD_PCOL = { Alta:'#ff4060', Média:'#ffcc00', Baixa:'#60d060' };
+        const INT_TYPES = ['Nota','Ligação','WhatsApp','E-mail','Reunião','Proposta','Follow-up'];
+        const INT_CLR = { Ligação:'#4090ff', WhatsApp:'#25d366', 'E-mail':'#ff9800', Reunião:'#a060ff', Nota:'rgba(255,255,255,.5)', Proposta:'#00bcd4', 'Follow-up':'#ff0040' };
+
+        function LeadModal({ lead, onClose }) {
+            const { addLead, editLead } = useApp();
+            const blank = { name:'', company:'', phone:'', email:'', origin:'Manual', responsible:'', status:'Novos Leads', priority:'Média', score:0, value:'', tags:'', notes:'', nextAction:'', nextActionDate:'' };
+            const [f, setF] = useState(lead ? { ...blank, ...lead } : blank);
+            const set = (k,v) => setF(p => ({ ...p, [k]:v }));
+            const save = () => { if (!f.name.trim()) return; lead ? editLead(lead.id, f) : addLead(f); onClose(); };
+            const Row = ({ label, children }) => <div><label style={{ fontSize: 10.5, color:'rgba(255,255,255,.38)', display:'block', marginBottom:3 }}>{label}</label>{children}</div>;
+            return (
+                <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.75)', zIndex:2000, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+                    <div className="glass" style={{ width:540, maxHeight:'88vh', overflowY:'auto', borderRadius:16, padding:'24px 28px' }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+                            <h2 style={{ fontSize:17, fontWeight:700 }}>{lead ? 'Editar Lead' : 'Novo Lead'}</h2>
+                            <button onClick={onClose} style={{ background:'none', border:'none', color:'rgba(255,255,255,.45)', cursor:'pointer', fontSize:22, lineHeight:1 }}>×</button>
+                        </div>
+                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                            <Row label="Nome *"><input className="input-field" style={{ fontSize:13 }} value={f.name} onChange={e=>set('name',e.target.value)} placeholder="Nome do lead" /></Row>
+                            <Row label="Empresa"><input className="input-field" style={{ fontSize:13 }} value={f.company} onChange={e=>set('company',e.target.value)} placeholder="Empresa" /></Row>
+                            <Row label="Telefone"><input className="input-field" style={{ fontSize:13 }} value={f.phone} onChange={e=>set('phone',e.target.value)} placeholder="(11) 99999-9999" /></Row>
+                            <Row label="E-mail"><input className="input-field" style={{ fontSize:13 }} value={f.email} onChange={e=>set('email',e.target.value)} placeholder="email@empresa.com" /></Row>
+                            <Row label="Origem"><select className="input-field" style={{ fontSize:13 }} value={f.origin} onChange={e=>set('origin',e.target.value)}>{LEAD_ORIGINS.map(o=><option key={o}>{o}</option>)}</select></Row>
+                            <Row label="Responsável"><input className="input-field" style={{ fontSize:13 }} value={f.responsible} onChange={e=>set('responsible',e.target.value)} placeholder="Responsável" /></Row>
+                            <Row label="Status"><select className="input-field" style={{ fontSize:13 }} value={f.status} onChange={e=>set('status',e.target.value)}>{LEAD_COLS.map(c=><option key={c}>{c}</option>)}</select></Row>
+                            <Row label="Prioridade"><select className="input-field" style={{ fontSize:13 }} value={f.priority} onChange={e=>set('priority',e.target.value)}>{LEAD_PRIORITIES.map(p=><option key={p}>{p}</option>)}</select></Row>
+                            <Row label="Valor Potencial (R$)"><input className="input-field" style={{ fontSize:13 }} type="number" value={f.value} onChange={e=>set('value',e.target.value)} placeholder="0" /></Row>
+                            <Row label="Score (0–100)"><input className="input-field" style={{ fontSize:13 }} type="number" min="0" max="100" value={f.score} onChange={e=>set('score',e.target.value)} /></Row>
+                        </div>
+                        <div style={{ display:'flex', flexDirection:'column', gap:12, marginTop:12 }}>
+                            <Row label="Próxima Ação"><input className="input-field" style={{ fontSize:13 }} value={f.nextAction} onChange={e=>set('nextAction',e.target.value)} placeholder="Descreva a próxima ação" /></Row>
+                            <Row label="Data da Próxima Ação"><input className="input-field" style={{ fontSize:13 }} type="date" value={f.nextActionDate} onChange={e=>set('nextActionDate',e.target.value)} /></Row>
+                            <Row label="Tags (separadas por vírgula)"><input className="input-field" style={{ fontSize:13 }} value={f.tags} onChange={e=>set('tags',e.target.value)} placeholder="ex: quente, site, 2024" /></Row>
+                            <Row label="Observações"><textarea className="input-field" style={{ fontSize:13, minHeight:68, resize:'vertical' }} value={f.notes} onChange={e=>set('notes',e.target.value)} placeholder="Observações internas..." /></Row>
+                        </div>
+                        <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:20 }}>
+                            <button className="btn-secondary" onClick={onClose}>Cancelar</button>
+                            <button className="btn-primary" onClick={save}>{lead ? 'Salvar' : 'Criar Lead'}</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function LeadCard({ lead, clr, onDragStart, onClick, lastInt }) {
+            const fmtV = v => v >= 1000 ? 'R$'+(v/1000).toFixed(1)+'k' : v > 0 ? 'R$'+v : null;
+            const score5 = Math.round((lead.score||0)/20);
+            return (
+                <div draggable onDragStart={e=>onDragStart(e,lead)} onClick={onClick}
+                    style={{ background:'rgba(255,255,255,.04)', border:`1px solid ${clr}22`, borderLeft:`3px solid ${clr}`, borderRadius:8, padding:'10px 12px', cursor:'pointer', transition:'background .12s' }}
+                    onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.08)'}
+                    onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,.04)'}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:4 }}>
+                        <div style={{ fontSize:12.5, fontWeight:600, lineHeight:1.3, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginRight:6 }}>{lead.name}</div>
+                        {lead.priority && <div style={{ width:7, height:7, borderRadius:'50%', background:LEAD_PCOL[lead.priority]||'#666', flexShrink:0, marginTop:3 }} title={lead.priority} />}
+                    </div>
+                    {lead.company && <div style={{ fontSize:10.5, color:'rgba(255,255,255,.42)', marginBottom:4, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{lead.company}</div>}
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom: lead.score > 0 ? 5 : 0 }}>
+                        {fmtV(parseFloat(lead.value)||0) ? <span style={{ fontSize:11, color:clr, fontWeight:700 }}>{fmtV(parseFloat(lead.value)||0)}</span> : <span />}
+                        {lead.origin && <span style={{ fontSize:9, background:'rgba(255,255,255,.05)', borderRadius:4, padding:'1px 5px', color:'rgba(255,255,255,.35)' }}>{lead.origin}</span>}
+                    </div>
+                    {lead.score > 0 && <div style={{ display:'flex', gap:2, marginBottom:5 }}>{[1,2,3,4,5].map(s=><div key={s} style={{ height:3, flex:1, borderRadius:2, background: s<=score5 ? clr : 'rgba(255,255,255,.1)' }} />)}</div>}
+                    {lastInt && <div style={{ fontSize:9, color:'rgba(255,255,255,.26)', marginTop:3 }}>Últ: {lastInt.type} · {lastInt.date ? new Date(lastInt.date+'T12:00').toLocaleDateString('pt-BR') : ''}</div>}
+                    {lead.responsible && <div style={{ fontSize:9.5, color:'rgba(255,255,255,.28)', marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>→ {lead.responsible}</div>}
+                </div>
+            );
+        }
+
+        function LeadDetailPanel({ lead, interactions, onClose }) {
+            const { editLead, deleteLead, moveLead, addLeadInteraction, addCalEvent, notify } = useApp();
+            const [editing, setEditing] = useState(false);
+            const [tab, setTab] = useState('info');
+            const [intF, setIntF] = useState({ type:'Nota', content:'', date: new Date().toISOString().slice(0,10) });
+            const clr = LEAD_CLR[lead.status] || '#4090ff';
+            const fmtV = v => 'R$ '+(parseFloat(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:0});
+            const addInt = () => { if (!intF.content.trim()) return; addLeadInteraction(lead.id, intF); setIntF(p=>({...p, content:''})); };
+            const addDays = n => { const d=new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
+            const sortedInts = [...interactions].sort((a,b)=>new Date(b.createdAt||b.date)-new Date(a.createdAt||a.date));
+            return (
+                <div style={{ position:'fixed', inset:0, zIndex:1500, display:'flex' }} onClick={onClose}>
+                    <div style={{ flex:1, background:'rgba(0,0,0,.6)' }} />
+                    <div className="glass" onClick={e=>e.stopPropagation()}
+                        style={{ width:540, maxWidth:'96vw', height:'100vh', overflowY:'auto', borderRadius:'14px 0 0 14px', padding:'22px 24px', display:'flex', flexDirection:'column', gap:14, boxShadow:'-10px 0 40px rgba(0,0,0,.5)' }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
+                            <div style={{ flex:1, minWidth:0, marginRight:8 }}>
+                                <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:3 }}>
+                                    <div style={{ width:10, height:10, borderRadius:'50%', background:clr, flexShrink:0 }} />
+                                    <h2 style={{ fontSize:17, fontWeight:700, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{lead.name}</h2>
+                                </div>
+                                {lead.company && <div style={{ fontSize:12, color:'rgba(255,255,255,.45)', marginLeft:18 }}>{lead.company}</div>}
+                            </div>
+                            <div style={{ display:'flex', gap:6, flexShrink:0 }}>
+                                <button className="btn-secondary" onClick={()=>setEditing(true)} style={{ padding:'5px 9px' }}><Ic n="edit" s={12} /></button>
+                                <button onClick={onClose} style={{ background:'none', border:'none', color:'rgba(255,255,255,.45)', cursor:'pointer', fontSize:22, lineHeight:1, padding:'2px 4px' }}>×</button>
+                            </div>
+                        </div>
+                        <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
+                            {LEAD_COLS.map(col=>(
+                                <button key={col} onClick={()=>moveLead(lead.id,col)}
+                                    style={{ fontSize:9.5, padding:'4px 8px', borderRadius:6, background: lead.status===col ? LEAD_CLR[col]+'33' : 'rgba(255,255,255,.04)', border:`1px solid ${lead.status===col ? LEAD_CLR[col]+'66' : 'rgba(255,255,255,.07)'}`, color: lead.status===col ? LEAD_CLR[col] : 'rgba(255,255,255,.38)', cursor:'pointer', fontWeight: lead.status===col ? 700 : 400, transition:'all .12s' }}>
+                                    {col}
+                                </button>
+                            ))}
+                        </div>
+                        <div style={{ display:'flex', background:'rgba(255,255,255,.04)', borderRadius:8, overflow:'hidden' }}>
+                            {[['info','Dados'],['history','Histórico'],['actions','Ações']].map(([id,label])=>(
+                                <button key={id} onClick={()=>setTab(id)}
+                                    style={{ flex:1, padding:'8px 4px', fontSize:12, background: tab===id ? 'rgba(255,0,64,.18)' : 'transparent', color: tab===id ? '#ff4060' : 'rgba(255,255,255,.42)', border:'none', cursor:'pointer', fontWeight: tab===id ? 600 : 400 }}>
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+                        {tab==='info' && (
+                            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                                    {[['Telefone',lead.phone],['E-mail',lead.email],['Origem',lead.origin],['Responsável',lead.responsible],['Prioridade',lead.priority],['Valor',lead.value?fmtV(lead.value):null],['Score',lead.score?(lead.score+'/100'):null],['Entrada',lead.createdAt?new Date(lead.createdAt).toLocaleDateString('pt-BR'):null]].map(([label,val])=>(
+                                        <div key={label} className="glass" style={{ padding:'8px 12px', borderRadius:8 }}>
+                                            <div style={{ fontSize:9.5, color:'rgba(255,255,255,.32)', marginBottom:2 }}>{label}</div>
+                                            <div style={{ fontSize:12, fontWeight:500, color: val ? 'rgba(255,255,255,.85)' : 'rgba(255,255,255,.2)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{val||'—'}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                                {lead.score > 0 && <div className="glass" style={{ padding:'10px 12px', borderRadius:8 }}>
+                                    <div style={{ fontSize:9.5, color:'rgba(255,255,255,.32)', marginBottom:6 }}>Score</div>
+                                    <div style={{ height:6, borderRadius:3, background:'rgba(255,255,255,.07)', overflow:'hidden' }}><div style={{ height:'100%', width:`${Math.min(lead.score,100)}%`, borderRadius:3, background:clr, transition:'width .4s' }} /></div>
+                                    <div style={{ fontSize:10, color:clr, marginTop:4 }}>{lead.score}/100</div>
+                                </div>}
+                                {lead.nextAction && <div className="glass" style={{ padding:'10px 12px', borderRadius:8, borderColor:'#ffcc0033' }}>
+                                    <div style={{ fontSize:9.5, color:'rgba(255,255,255,.32)', marginBottom:4 }}>Próxima Ação</div>
+                                    <div style={{ fontSize:12 }}>{lead.nextAction}</div>
+                                    {lead.nextActionDate && <div style={{ fontSize:10.5, color:'#ffcc00', marginTop:3 }}>{new Date(lead.nextActionDate+'T12:00').toLocaleDateString('pt-BR')}</div>}
+                                </div>}
+                                {lead.tags && <div style={{ display:'flex', flexWrap:'wrap', gap:5 }}>
+                                    {lead.tags.split(',').map(t=>t.trim()).filter(Boolean).map(t=>(
+                                        <span key={t} style={{ fontSize:10, padding:'2px 8px', borderRadius:12, background:clr+'22', color:clr, border:`1px solid ${clr}44` }}>{t}</span>
+                                    ))}
+                                </div>}
+                                {lead.notes && <div className="glass" style={{ padding:'10px 12px', borderRadius:8 }}>
+                                    <div style={{ fontSize:9.5, color:'rgba(255,255,255,.32)', marginBottom:4 }}>Observações</div>
+                                    <div style={{ fontSize:12, lineHeight:1.65, color:'rgba(255,255,255,.7)', whiteSpace:'pre-wrap' }}>{lead.notes}</div>
+                                </div>}
+                            </div>
+                        )}
+                        {tab==='history' && (
+                            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                                <div className="glass" style={{ padding:'12px', borderRadius:10 }}>
+                                    <div style={{ display:'flex', gap:8, marginBottom:8 }}>
+                                        <select className="input-field" style={{ fontSize:12, flex:'0 0 auto' }} value={intF.type} onChange={e=>setIntF(p=>({...p,type:e.target.value}))}>{INT_TYPES.map(t=><option key={t}>{t}</option>)}</select>
+                                        <input className="input-field" style={{ fontSize:12 }} type="date" value={intF.date} onChange={e=>setIntF(p=>({...p,date:e.target.value}))} />
+                                    </div>
+                                    <textarea className="input-field" style={{ fontSize:12, minHeight:60, resize:'vertical', marginBottom:8, width:'100%' }} placeholder="Descreva a interação..." value={intF.content} onChange={e=>setIntF(p=>({...p,content:e.target.value}))} />
+                                    <button className="btn-primary" onClick={addInt} style={{ fontSize:12 }}><Ic n="plus" s={12} />Registrar</button>
+                                </div>
+                                <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                                    {sortedInts.map((int,i)=>{
+                                        const ic = INT_CLR[int.type]||'rgba(255,255,255,.4)';
+                                        return (
+                                            <div key={int.id} style={{ display:'flex', gap:10 }}>
+                                                <div style={{ display:'flex', flexDirection:'column', alignItems:'center' }}>
+                                                    <div style={{ width:28, height:28, borderRadius:'50%', background:ic+'22', border:`1.5px solid ${ic}66`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:8.5, color:ic, fontWeight:700, flexShrink:0 }}>{int.type.slice(0,2)}</div>
+                                                    {i<sortedInts.length-1 && <div style={{ width:1, flex:1, minHeight:8, background:'rgba(255,255,255,.06)' }} />}
+                                                </div>
+                                                <div style={{ flex:1, paddingBottom:8 }}>
+                                                    <div style={{ display:'flex', justifyContent:'space-between', marginBottom:2 }}>
+                                                        <span style={{ fontSize:11, fontWeight:600, color:ic }}>{int.type}</span>
+                                                        <span style={{ fontSize:9.5, color:'rgba(255,255,255,.28)' }}>{int.date ? new Date(int.date+'T12:00').toLocaleDateString('pt-BR') : ''}</span>
+                                                    </div>
+                                                    <div style={{ fontSize:11.5, color:'rgba(255,255,255,.68)', lineHeight:1.55, whiteSpace:'pre-wrap' }}>{int.content}</div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                    {sortedInts.length===0 && <div style={{ textAlign:'center', color:'rgba(255,255,255,.2)', fontSize:12, padding:'20px 0', fontStyle:'italic' }}>Nenhuma interação registrada.</div>}
+                                </div>
+                            </div>
+                        )}
+                        {tab==='actions' && (
+                            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                                <div style={{ fontSize:11.5, fontWeight:600, color:'rgba(255,255,255,.55)', marginBottom:4 }}>Criar lembrete automático no Calendário:</div>
+                                {[
+                                    { label:'Contato em 1 dia', days:1, title:`Contato: ${lead.name}`, type:'Lembrete' },
+                                    { label:'Follow-up em 3 dias', days:3, title:`Follow-up: ${lead.name}`, type:'Follow-up' },
+                                    { label:'Validar proposta (5 dias)', days:5, title:`Validar proposta: ${lead.name}`, type:'Reunião' },
+                                    { label:'Última tentativa (7 dias)', days:7, title:`Última tentativa: ${lead.name}`, type:'Lembrete' },
+                                ].map(action=>(
+                                    <button key={action.label} className="btn-secondary" onClick={()=>{
+                                        addCalEvent({ title:action.title, date:addDays(action.days), type:action.type, desc:`Lead: ${lead.name}${lead.company?' — '+lead.company:''}`, clientName:lead.responsible||'' });
+                                        notify('Lembrete criado no Calendário ✓');
+                                    }} style={{ fontSize:12, justifyContent:'flex-start', gap:8 }}>
+                                        <Ic n="cal" s={12} />{action.label}
+                                    </button>
+                                ))}
+                                <div style={{ marginTop:8, paddingTop:12, borderTop:'1px solid rgba(255,255,255,.06)' }}>
+                                    <button className="btn-danger" onClick={()=>{ if(confirm(`Excluir lead "${lead.name}"?`)){deleteLead(lead.id);onClose();} }} style={{ fontSize:12 }}>
+                                        <Ic n="trash" s={12} />Excluir Lead
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                        {editing && <LeadModal lead={lead} onClose={()=>setEditing(false)} />}
+                    </div>
+                </div>
+            );
+        }
+
+        function LeadsPage() {
+            const { store, addLead, moveLead, notify } = useApp();
+            const leads = store.leads || [];
+            const interactions = store.leadInteractions || [];
+            const [showAdd, setShowAdd] = useState(false);
+            const [selected, setSelected] = useState(null);
+            const [dragging, setDragging] = useState(null);
+            const [dragOver, setDragOver] = useState(null);
+            const [showFilters, setShowFilters] = useState(false);
+            const [filt, setFilt] = useState({ search:'', status:'', origin:'', responsible:'', priority:'' });
+            const setF = (k,v) => setFilt(p=>({...p,[k]:v}));
+            const filtered = leads.filter(l => {
+                if (filt.search) { const q=filt.search.toLowerCase(); if (!((l.name||'').toLowerCase().includes(q)||(l.phone||'').includes(q)||(l.email||'').toLowerCase().includes(q)||(l.company||'').toLowerCase().includes(q))) return false; }
+                if (filt.status && l.status!==filt.status) return false;
+                if (filt.origin && l.origin!==filt.origin) return false;
+                if (filt.priority && l.priority!==filt.priority) return false;
+                return true;
+            });
+            const fmt = v => 'R$ '+v.toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:0});
+            const total=leads.length, won=leads.filter(l=>l.status==='Fechado Ganho').length, lost=leads.filter(l=>l.status==='Perdido').length;
+            const totalVal=leads.filter(l=>l.status!=='Perdido').reduce((s,l)=>s+(parseFloat(l.value)||0),0);
+            const METRICS = [
+                {label:'Total',value:total,clr:'#4090ff'},
+                {label:'Novos',value:leads.filter(l=>l.status==='Novos Leads').length,clr:'#4090ff'},
+                {label:'Em Contato',value:leads.filter(l=>l.status==='Contato Inicial').length,clr:'#a060ff'},
+                {label:'Qualificados',value:leads.filter(l=>l.status==='Qualificação').length,clr:'#ff8c00'},
+                {label:'Follow-up',value:leads.filter(l=>l.status==='Follow-up').length,clr:'#ff9800'},
+                {label:'Negociação',value:leads.filter(l=>l.status==='Em Negociação').length,clr:'#e91e63'},
+                {label:'Ganhos',value:won,clr:'#00c853',sub:won>0?fmt(leads.filter(l=>l.status==='Fechado Ganho').reduce((s,l)=>s+(parseFloat(l.value)||0),0)):null},
+                {label:'Perdidos',value:lost,clr:'#555'},
+            ];
+            const onDragStart=(e,lead)=>{setDragging(lead);e.dataTransfer.effectAllowed='move';};
+            const onDrop=(e,col)=>{e.preventDefault();if(dragging&&dragging.status!==col)moveLead(dragging.id,col);setDragging(null);setDragOver(null);};
+            return (
+                <div className="fade-in" style={{ display:'flex', flexDirection:'column', height:'calc(100vh - 52px)' }}>
+                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14, flexWrap:'wrap', gap:8 }}>
+                        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                            <Ic n="leads" s={20} />
+                            <div>
+                                <h1 style={{ fontSize:20, fontWeight:700 }}>Leads & CRM</h1>
+                                <p style={{ fontSize:11, color:'rgba(255,255,255,.35)', marginTop:1 }}>{total} leads · {won} convertidos · {fmt(totalVal)} em aberto</p>
+                            </div>
+                        </div>
+                        <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                            <input className="input-field" placeholder="Buscar nome, tel, e-mail..." value={filt.search} onChange={e=>setF('search',e.target.value)} style={{ fontSize:12, padding:'6px 12px', width:210 }} />
+                            <button className="btn-secondary" onClick={()=>setShowFilters(v=>!v)} style={{ fontSize:12, gap:5 }}><Ic n="filter" s={12} />Filtros</button>
+                            <button className="btn-primary" onClick={()=>setShowAdd(true)} style={{ fontSize:12 }}><Ic n="plus" s={13} />Criar Lead</button>
+                        </div>
+                    </div>
+                    {showFilters && (
+                        <div className="glass fade-in" style={{ padding:'10px 14px', marginBottom:12, display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
+                            <select className="input-field" style={{ fontSize:12, padding:'5px 10px' }} value={filt.status} onChange={e=>setF('status',e.target.value)}>
+                                <option value="">Todos status</option>{LEAD_COLS.map(c=><option key={c}>{c}</option>)}
+                            </select>
+                            <select className="input-field" style={{ fontSize:12, padding:'5px 10px' }} value={filt.origin} onChange={e=>setF('origin',e.target.value)}>
+                                <option value="">Todas origens</option>{LEAD_ORIGINS.map(o=><option key={o}>{o}</option>)}
+                            </select>
+                            <select className="input-field" style={{ fontSize:12, padding:'5px 10px' }} value={filt.priority} onChange={e=>setF('priority',e.target.value)}>
+                                <option value="">Todas prioridades</option>{LEAD_PRIORITIES.map(p=><option key={p}>{p}</option>)}
+                            </select>
+                            <button className="btn-secondary" onClick={()=>setFilt({search:'',status:'',origin:'',responsible:'',priority:''})} style={{ fontSize:12 }}>Limpar</button>
+                        </div>
+                    )}
+                    <div style={{ display:'flex', gap:7, marginBottom:14, overflowX:'auto', paddingBottom:4, flexShrink:0 }}>
+                        {METRICS.map(m=>(
+                            <div key={m.label} className="glass" style={{ flex:'0 0 auto', padding:'10px 14px', borderRadius:10, borderColor:m.clr+'33', minWidth:82, textAlign:'center' }}>
+                                <div style={{ fontSize:22, fontWeight:700, color:m.clr, lineHeight:1 }}>{m.value}</div>
+                                <div style={{ fontSize:10, color:'rgba(255,255,255,.38)', marginTop:3 }}>{m.label}</div>
+                                {m.sub && <div style={{ fontSize:9, color:m.clr, marginTop:2, opacity:.75 }}>{m.sub}</div>}
+                            </div>
+                        ))}
+                    </div>
+                    <div style={{ display:'flex', gap:10, flex:1, overflowX:'auto', overflowY:'hidden', paddingBottom:12 }}>
+                        {LEAD_COLS.map(col=>{
+                            const colLeads=filtered.filter(l=>l.status===col);
+                            const colVal=colLeads.reduce((s,l)=>s+(parseFloat(l.value)||0),0);
+                            const clr=LEAD_CLR[col]||'#666';
+                            const isDragOver=dragOver===col;
+                            return (
+                                <div key={col}
+                                    style={{ flex:'0 0 210px', display:'flex', flexDirection:'column', background: isDragOver ? clr+'0d' : 'rgba(255,255,255,.025)', borderRadius:12, border:`1px solid ${isDragOver ? clr+'55' : 'rgba(255,255,255,.06)'}`, transition:'all .12s' }}
+                                    onDragOver={e=>{e.preventDefault();setDragOver(col);}}
+                                    onDrop={e=>onDrop(e,col)}
+                                    onDragLeave={()=>setDragOver(null)}>
+                                    <div style={{ padding:'10px 12px 8px', borderBottom:'1px solid rgba(255,255,255,.05)', flexShrink:0 }}>
+                                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:3 }}>
+                                            <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                                                <div style={{ width:7, height:7, borderRadius:'50%', background:clr }} />
+                                                <span style={{ fontSize:10.5, fontWeight:700, color:'rgba(255,255,255,.72)' }}>{col}</span>
+                                            </div>
+                                            <div style={{ background:clr+'22', color:clr, borderRadius:10, padding:'1px 7px', fontSize:10, fontWeight:700 }}>{colLeads.length}</div>
+                                        </div>
+                                        {colVal>0 && <div style={{ fontSize:9.5, color:clr, opacity:.6 }}>R$ {colVal.toLocaleString('pt-BR',{minimumFractionDigits:0})}</div>}
+                                    </div>
+                                    <div style={{ flex:1, overflowY:'auto', padding:8, display:'flex', flexDirection:'column', gap:6 }}>
+                                        {colLeads.map(lead=>{
+                                            const lastInt=interactions.filter(i=>i.leadId===lead.id).sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0))[0];
+                                            return <LeadCard key={lead.id} lead={lead} clr={clr} onDragStart={onDragStart} onClick={()=>setSelected(lead)} lastInt={lastInt} />;
+                                        })}
+                                        <div onClick={()=>setShowAdd(true)} style={{ border:'1px dashed rgba(255,255,255,.1)', borderRadius:8, padding:'8px', textAlign:'center', cursor:'pointer', fontSize:11, color:'rgba(255,255,255,.22)', transition:'all .12s' }}
+                                            onMouseEnter={e=>{e.currentTarget.style.borderColor=clr+'66';e.currentTarget.style.color=clr;}}
+                                            onMouseLeave={e=>{e.currentTarget.style.borderColor='rgba(255,255,255,.1)';e.currentTarget.style.color='rgba(255,255,255,.22)';}}>
+                                            + Novo lead
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    {showAdd && <LeadModal onClose={()=>setShowAdd(false)} />}
+                    {selected && <LeadDetailPanel lead={selected} interactions={interactions.filter(i=>i.leadId===selected.id)} onClose={()=>setSelected(null)} />}
+                </div>
+            );
+        }
+
         /* ── APP ────────────────────────────────────────────── */
         function App() {
             const { view, userRole, onlineUsers, chatOpen, setChatOpen } = useApp();
             const [quickAdd, setQuickAdd] = useState(false);
             const isEmployee = userRole !== 'admin';
-            const ViewMap = { dashboard: Dashboard, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarPage };
+            const ViewMap = { dashboard: Dashboard, leads: LeadsPage, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarPage };
             const V = (isEmployee && EMPLOYEE_BLOCKED.includes(view)) ? LockedView : (ViewMap[view] || Dashboard);
             const visible = onlineUsers.filter(c => c.view === view);
             return (
