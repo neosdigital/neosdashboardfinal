@@ -2578,6 +2578,9 @@
             const [expanded, setExpanded] = useState(null);
             const [adsets, setAdsets] = useState({});
             const [loadingAdsets, setLoadingAdsets] = useState(null);
+            const [campStatusFilter, setCampStatusFilter] = useState('ACTIVE');
+            const [adsetAds, setAdsetAds] = useState({});
+            const [pdfLoadingCamp, setPdfLoadingCamp] = useState(null);
             const chartRef = useRef(null);
             const chartInst = useRef(null);
             const adAccounts = (() => { try { return JSON.parse(conn.adAccounts || '[]'); } catch { return []; } })();
@@ -2619,6 +2622,14 @@
                 });
             };
 
+            const loadAdsForAdset = async adsetId => {
+                try {
+                    const data = await metaGraph(`${adsetId}/ads`, token, { fields: 'name,status,creative{thumbnail_url,image_url,title}', limit: 20 });
+                    const ads = (data.data || []).map(ad => ({ id: ad.id, name: ad.name, status: ad.status, thumbnail: ad.creative?.thumbnail_url || ad.creative?.image_url || null }));
+                    setAdsetAds(p => ({ ...p, [adsetId]: ads }));
+                } catch {}
+            };
+
             const loadAdsets = async campId => {
                 if (adsets[campId]) { setExpanded(expanded === campId ? null : campId); return; }
                 setLoadingAdsets(campId);
@@ -2628,8 +2639,138 @@
                     const sets = (data.data||[]).map(s => { const ins = s.insights?.data?.[0]||{}; return { ...s, spend:parseFloat(ins.spend)||0, impressions:parseInt(ins.impressions)||0, clicks:parseInt(ins.clicks)||0, ctr:parseFloat(ins.ctr)||0, leads: getMetaInsightVal(ins,'lead') }; });
                     setAdsets(p=>({...p,[campId]:sets}));
                     setExpanded(campId);
+                    sets.forEach(s => loadAdsForAdset(s.id));
                 } catch(e) { /* ignore */ }
                 setLoadingAdsets(null);
+            };
+
+            const gerarPDFCampanha = async camp => {
+                if (typeof window.jspdf === 'undefined') { alert('jsPDF não carregado.'); return; }
+                const { jsPDF } = window.jspdf;
+                setPdfLoadingCamp(camp.id);
+                try {
+                    const W = 1280, H = 720, M = 48;
+                    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: [W, H] });
+                    const bg = (r,g,b) => doc.setFillColor(r,g,b);
+                    const tc = (r,g,b) => doc.setTextColor(r,g,b);
+                    const fnt = (s,sz) => { doc.setFont('helvetica',s); doc.setFontSize(sz); };
+
+                    // page 1
+                    bg(12,12,24); doc.rect(0,0,W,H,'F');
+                    bg(24,119,242); doc.rect(0,0,4,H,'F');
+                    bg(18,18,36); doc.rect(0,0,W,82,'F');
+                    fnt('bold',22); tc(255,255,255);
+                    doc.text(camp.name.length>60?camp.name.slice(0,60)+'…':camp.name, M, 48);
+                    fnt('normal',10); tc(150,150,180);
+                    doc.text((CAMP_STATUS_LABEL[camp.status]||camp.status)+(camp.objective?' · '+camp.objective:''), M, 66);
+                    const pLabel = DATE_PRESETS.find(d=>d.id===datePreset)?.label||datePreset;
+                    fnt('normal',10); tc(120,120,150);
+                    doc.text('Período: '+pLabel, W-M, 44, {align:'right'});
+                    doc.text('Conta: '+(conn.metaUserName||'—'), W-M, 60, {align:'right'});
+                    doc.text(new Date().toLocaleString('pt-BR'), W-M, 75, {align:'right'});
+
+                    // KPI cards
+                    const kpis = [
+                        {l:'Gasto Total',v:fmtMeta(camp.spend,'currency'),cr:[24,119,242]},
+                        {l:'Impressões',v:fmtMeta(camp.impressions,'int'),cr:[160,96,255]},
+                        {l:'Cliques',v:fmtMeta(camp.clicks,'int'),cr:[0,188,212]},
+                        {l:'CTR',v:fmtMeta(camp.ctr,'pct'),cr:[255,152,0]},
+                        {l:'CPM',v:fmtMeta(camp.cpm,'currency'),cr:[233,30,99]},
+                        {l:'CPC',v:fmtMeta(camp.cpc,'currency'),cr:[255,107,53]},
+                        {l:'Leads',v:fmtMeta(camp.leads,'int'),cr:[0,200,83]},
+                        {l:'CPL',v:camp.leads>0?fmtMeta(camp.cpl,'currency'):'—',cr:[76,175,80]},
+                    ];
+                    const cw = (W-M*2)/8, ch = 72, cy = 90;
+                    kpis.forEach((k,i) => {
+                        const cx = M+i*cw;
+                        const mx = Math.round(12+(k.cr[0]-12)*.15), my = Math.round(12+(k.cr[1]-12)*.15), mz = Math.round(24+(k.cr[2]-24)*.15);
+                        bg(mx,my,mz); doc.roundedRect(cx+2,cy,cw-4,ch,6,6,'F');
+                        bg(k.cr[0],k.cr[1],k.cr[2]); doc.roundedRect(cx+2,cy,cw-4,4,2,2,'F');
+                        fnt('normal',9); doc.setTextColor(k.cr[0],k.cr[1],k.cr[2]);
+                        doc.text(k.l, cx+cw/2, cy+22, {align:'center'});
+                        fnt('bold',17); doc.setTextColor(k.cr[0],k.cr[1],k.cr[2]);
+                        doc.text(k.v, cx+cw/2, cy+55, {align:'center'});
+                    });
+
+                    // adsets table
+                    const sets = adsets[camp.id]||[];
+                    let ty = cy+ch+20;
+                    fnt('bold',12); tc(200,200,220);
+                    doc.text('Conjuntos de Anúncios', M, ty); ty += 16;
+                    if (sets.length===0) {
+                        fnt('italic',10); tc(100,100,130);
+                        doc.text('Expanda a campanha na tela antes de gerar o PDF para incluir os conjuntos.', M, ty+14);
+                    } else {
+                        const hdrs = ['Conjunto de Anúncios','Status','Gasto','Impressões','Cliques','CTR','Leads'];
+                        const cws2 = [300,80,100,110,90,80,80];
+                        bg(22,22,44); doc.rect(M,ty,W-M*2,22,'F');
+                        fnt('bold',9); tc(100,120,180);
+                        let cx2=M+6; hdrs.forEach((h,i)=>{doc.text(h,cx2,ty+15);cx2+=cws2[i];}); ty+=22;
+                        for (let ri=0;ri<sets.length;ri++) {
+                            const s=sets[ri];
+                            if (ty>H-60) break;
+                            if (ri%2===0){bg(18,18,34);doc.rect(M,ty,W-M*2,22,'F');}
+                            cx2=M+6; fnt('normal',9); tc(200,200,220);
+                            doc.text(s.name.length>36?s.name.slice(0,36)+'…':s.name, cx2,ty+15); cx2+=cws2[0];
+                            const sc=s.status==='ACTIVE'?[0,200,83]:s.status==='PAUSED'?[255,152,0]:[136,136,136];
+                            fnt('normal',8.5); doc.setTextColor(...sc);
+                            doc.text(CAMP_STATUS_LABEL[s.status]||s.status, cx2,ty+15); cx2+=cws2[1];
+                            fnt('normal',9); tc(24,119,242);
+                            doc.text(fmtMeta(s.spend,'currency'),cx2,ty+15); cx2+=cws2[2];
+                            tc(180,180,200);
+                            doc.text(fmtMeta(s.impressions,'int'),cx2,ty+15); cx2+=cws2[3];
+                            doc.text(fmtMeta(s.clicks,'int'),cx2,ty+15); cx2+=cws2[4];
+                            doc.text(fmtMeta(s.ctr,'pct'),cx2,ty+15); cx2+=cws2[5];
+                            tc(0,200,83); doc.text(fmtMeta(s.leads,'int'),cx2,ty+15); ty+=22;
+                        }
+                    }
+
+                    // thumbnails page
+                    const adsWithThumbs = sets.flatMap(s=>(adsetAds[s.id]||[]).filter(a=>a.thumbnail).map(a=>({...a,adsetName:s.name})));
+                    if (adsWithThumbs.length>0) {
+                        doc.addPage([W,H],'landscape');
+                        bg(12,12,24); doc.rect(0,0,W,H,'F');
+                        bg(24,119,242); doc.rect(0,0,4,H,'F');
+                        bg(18,18,36); doc.rect(0,0,W,52,'F');
+                        fnt('bold',16); tc(255,255,255);
+                        doc.text('Anúncios — '+(camp.name.length>50?camp.name.slice(0,50)+'…':camp.name), M, 36);
+                        let tx=M, thumbY=66;
+                        const tw=140, thh=100, gx=14, gy=26;
+                        for (const ad of adsWithThumbs) {
+                            if (tx+tw>W-M){tx=M;thumbY+=thh+gy+20;}
+                            if (thumbY+thh>H-30) break;
+                            try {
+                                const resp=await fetch(ad.thumbnail);
+                                const blob=await resp.blob();
+                                const b64=await new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(blob);});
+                                bg(22,22,44); doc.roundedRect(tx,thumbY,tw,thh,6,6,'F');
+                                doc.addImage(b64,'JPEG',tx,thumbY,tw,thh);
+                            } catch {
+                                bg(30,30,50); doc.roundedRect(tx,thumbY,tw,thh,6,6,'F');
+                                fnt('normal',9); tc(100,100,130);
+                                doc.text('Sem prévia',tx+tw/2,thumbY+thh/2,{align:'center'});
+                            }
+                            fnt('normal',8); tc(160,160,180);
+                            const an=(ad.name||'').length>18?(ad.name||'').slice(0,18)+'…':(ad.name||'');
+                            doc.text(an,tx+tw/2,thumbY+thh+12,{align:'center'});
+                            fnt('normal',7); tc(100,100,130);
+                            const sn=(ad.adsetName||'').length>18?(ad.adsetName||'').slice(0,18)+'…':(ad.adsetName||'');
+                            doc.text(sn,tx+tw/2,thumbY+thh+22,{align:'center'});
+                            tx+=tw+gx;
+                        }
+                    }
+
+                    // footer on all pages
+                    const np=doc.internal.getNumberOfPages();
+                    for (let p=1;p<=np;p++){
+                        doc.setPage(p); fnt('normal',8); tc(60,60,80);
+                        doc.text('Neos Dashboard · '+new Date().toLocaleString('pt-BR'), M, H-12);
+                        doc.text('Pág. '+p+' de '+np, W-M, H-12, {align:'right'});
+                    }
+                    const sfn=camp.name.replace(/[^a-z0-9]/gi,'_').slice(0,40);
+                    doc.save(`meta_${sfn}.pdf`);
+                } catch(e) { console.error(e); alert('Erro ao gerar PDF: '+e.message); }
+                setPdfLoadingCamp(null);
             };
 
             useEffect(() => {
@@ -2650,6 +2791,8 @@
                     ⚠️ Token da Meta expirado. Clique em "Gerenciar Conexões" e reconecte sua conta.
                 </div>
             );
+
+            const filteredCamps = campStatusFilter === 'all' ? campaigns : campaigns.filter(c => c.status === campStatusFilter);
 
             const kpiCards = [
                 { label:'Gasto Total', val: fmtMeta(overview?.spend,'currency'), clr:'#1877f2' },
@@ -2710,16 +2853,27 @@
                     {/* Campaigns Table */}
                     {campaigns.length > 0 && (
                         <div className="glass" style={{ borderRadius:12, overflow:'hidden', marginBottom:16 }}>
-                            <div style={{ padding:'12px 16px', borderBottom:'1px solid rgba(255,255,255,.05)', fontSize:13, fontWeight:600, color:'rgba(255,255,255,.7)', display:'flex', justifyContent:'space-between' }}>
-                                <span>Campanhas ({campaigns.length})</span>
-                                <span style={{ fontSize:10, color:'rgba(255,255,255,.3)', fontWeight:400 }}>Clique para expandir conjuntos de anúncios</span>
+                            <div style={{ padding:'12px 16px', borderBottom:'1px solid rgba(255,255,255,.05)', display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:8 }}>
+                                <span style={{ fontSize:13, fontWeight:600, color:'rgba(255,255,255,.7)' }}>Campanhas ({filteredCamps.length}{filteredCamps.length!==campaigns.length?` de ${campaigns.length} total`:''})</span>
+                                <div style={{ display:'flex', gap:4, alignItems:'center', flexWrap:'wrap' }}>
+                                    {[{v:'ACTIVE',l:'Ativas'},{v:'PAUSED',l:'Pausadas'},{v:'ARCHIVED',l:'Arquivadas'},{v:'all',l:'Todas'}].map(f=>(
+                                        <button key={f.v} onClick={()=>setCampStatusFilter(f.v)} style={{ padding:'3px 10px', borderRadius:20, border:'1px solid', fontSize:10.5, fontWeight:700, cursor:'pointer', transition:'all .12s',
+                                            borderColor: campStatusFilter===f.v ? (CAMP_STATUS_CLR[f.v]||'#4090ff') : 'rgba(255,255,255,.12)',
+                                            background: campStatusFilter===f.v ? (CAMP_STATUS_CLR[f.v]||'#4090ff')+'22' : 'transparent',
+                                            color: campStatusFilter===f.v ? (CAMP_STATUS_CLR[f.v]||'#4090ff') : 'rgba(255,255,255,.38)' }}>
+                                            {f.l}
+                                        </button>
+                                    ))}
+                                    <span style={{ fontSize:10, color:'rgba(255,255,255,.25)', marginLeft:4 }}>Clique para expandir conjuntos</span>
+                                </div>
                             </div>
                             <table style={{ width:'100%', borderCollapse:'collapse' }} className="tbl">
-                                <thead><tr>{['Campanha','Status','Gasto','Impressões','Cliques','CTR','CPM','Leads','CPL'].map(h=><th key={h} style={{ fontSize:10.5 }}>{h}</th>)}</tr></thead>
+                                <thead><tr>{['Campanha','Status','Gasto','Impressões','Cliques','CTR','CPM','Leads','CPL',''].map(h=><th key={h} style={{ fontSize:10.5 }}>{h}</th>)}</tr></thead>
                                 <tbody>
-                                    {campaigns.map(c=>{
+                                    {filteredCamps.map(c=>{
                                         const stClr = CAMP_STATUS_CLR[c.status]||'#888';
                                         const isExp = expanded === c.id;
+                                        const isPdfLoad = pdfLoadingCamp === c.id;
                                         return (
                                             <React.Fragment key={c.id}>
                                                 <tr onClick={()=>loadAdsets(c.id)} style={{ cursor:'pointer', background: isExp ? 'rgba(24,119,242,.06)' : 'transparent' }}>
@@ -2732,21 +2886,52 @@
                                                     <td style={{ color:'rgba(255,255,255,.55)' }}>{fmtMeta(c.cpm,'currency')}</td>
                                                     <td style={{ color:'#00c853', fontWeight:700 }}>{fmtMeta(c.leads,'int')}</td>
                                                     <td style={{ color:'rgba(255,255,255,.55)' }}>{c.leads>0 ? fmtMeta(c.cpl,'currency') : '—'}</td>
+                                                    <td onClick={e=>e.stopPropagation()} style={{ whiteSpace:'nowrap' }}>
+                                                        <button onClick={()=>gerarPDFCampanha(c)} disabled={isPdfLoad} style={{ display:'inline-flex', alignItems:'center', gap:4, padding:'3px 9px', borderRadius:6, border:'1px solid rgba(24,119,242,.35)', background:'rgba(24,119,242,.1)', color:'#42b3f4', fontSize:10, fontWeight:700, cursor:'pointer', transition:'all .12s', opacity:isPdfLoad?.6:1 }}
+                                                            onMouseEnter={e=>{if(!isPdfLoad)e.currentTarget.style.background='rgba(24,119,242,.22)'}}
+                                                            onMouseLeave={e=>e.currentTarget.style.background='rgba(24,119,242,.1)'}>
+                                                            {isPdfLoad ? '⏳' : '⬇'} {isPdfLoad ? 'Gerando…' : 'PDF'}
+                                                        </button>
+                                                    </td>
                                                 </tr>
-                                                {isExp && adsets[c.id] && adsets[c.id].map(s=>(
-                                                    <tr key={s.id} style={{ background:'rgba(255,255,255,.02)', borderLeft:'3px solid #1877f222' }}>
-                                                        <td style={{ paddingLeft:24, color:'rgba(255,255,255,.55)', fontSize:11 }}>↳ {s.name}</td>
-                                                        <td><span style={{ background:(CAMP_STATUS_CLR[s.status]||'#888')+'22', color:CAMP_STATUS_CLR[s.status]||'#888', borderRadius:10, padding:'1px 6px', fontSize:9.5, fontWeight:700 }}>{CAMP_STATUS_LABEL[s.status]||s.status}</span></td>
-                                                        <td style={{ color:'rgba(24,119,242,.8)', fontSize:11 }}>{fmtMeta(s.spend,'currency')}</td>
-                                                        <td style={{ color:'rgba(255,255,255,.45)', fontSize:11 }}>{fmtMeta(s.impressions,'int')}</td>
-                                                        <td style={{ color:'rgba(255,255,255,.45)', fontSize:11 }}>{fmtMeta(s.clicks,'int')}</td>
-                                                        <td style={{ color:'rgba(255,255,255,.45)', fontSize:11 }}>{fmtMeta(s.ctr,'pct')}</td>
-                                                        <td>—</td>
-                                                        <td style={{ color:'rgba(0,200,100,.7)', fontSize:11 }}>{fmtMeta(s.leads,'int')}</td>
-                                                        <td>—</td>
-                                                    </tr>
-                                                ))}
-                                                {loadingAdsets === c.id && <tr><td colSpan={9} style={{ textAlign:'center', padding:'8px', color:'rgba(255,255,255,.3)', fontSize:11 }}>Carregando conjuntos...</td></tr>}
+                                                {isExp && adsets[c.id] && adsets[c.id].map(s=>{
+                                                    const sAds = adsetAds[s.id] || [];
+                                                    return (
+                                                        <React.Fragment key={s.id}>
+                                                            <tr style={{ background:'rgba(255,255,255,.02)', borderLeft:'3px solid #1877f222' }}>
+                                                                <td style={{ paddingLeft:24, color:'rgba(255,255,255,.55)', fontSize:11 }}>↳ {s.name}</td>
+                                                                <td><span style={{ background:(CAMP_STATUS_CLR[s.status]||'#888')+'22', color:CAMP_STATUS_CLR[s.status]||'#888', borderRadius:10, padding:'1px 6px', fontSize:9.5, fontWeight:700 }}>{CAMP_STATUS_LABEL[s.status]||s.status}</span></td>
+                                                                <td style={{ color:'rgba(24,119,242,.8)', fontSize:11 }}>{fmtMeta(s.spend,'currency')}</td>
+                                                                <td style={{ color:'rgba(255,255,255,.45)', fontSize:11 }}>{fmtMeta(s.impressions,'int')}</td>
+                                                                <td style={{ color:'rgba(255,255,255,.45)', fontSize:11 }}>{fmtMeta(s.clicks,'int')}</td>
+                                                                <td style={{ color:'rgba(255,255,255,.45)', fontSize:11 }}>{fmtMeta(s.ctr,'pct')}</td>
+                                                                <td>—</td>
+                                                                <td style={{ color:'rgba(0,200,100,.7)', fontSize:11 }}>{fmtMeta(s.leads,'int')}</td>
+                                                                <td>—</td>
+                                                                <td></td>
+                                                            </tr>
+                                                            {sAds.length > 0 && (
+                                                                <tr style={{ background:'rgba(255,255,255,.015)' }}>
+                                                                    <td colSpan={10} style={{ paddingLeft:36, paddingBottom:10, paddingTop:6 }}>
+                                                                        <div style={{ fontSize:9.5, color:'rgba(255,255,255,.3)', marginBottom:6, fontWeight:600, textTransform:'uppercase', letterSpacing:.4 }}>Anúncios ({sAds.length})</div>
+                                                                        <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+                                                                            {sAds.map(ad=>(
+                                                                                <div key={ad.id} style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:4, width:80 }}>
+                                                                                    {ad.thumbnail
+                                                                                        ? <img src={ad.thumbnail} alt={ad.name} style={{ width:80, height:56, objectFit:'cover', borderRadius:6, border:'1px solid rgba(255,255,255,.1)' }} onError={e=>{e.currentTarget.style.display='none';}} />
+                                                                                        : <div style={{ width:80, height:56, borderRadius:6, background:'rgba(255,255,255,.06)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:10, color:'rgba(255,255,255,.25)' }}>Sem prévia</div>}
+                                                                                    <div style={{ fontSize:9, color:'rgba(255,255,255,.4)', textAlign:'center', lineHeight:1.2, maxWidth:80, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{ad.name}</div>
+                                                                                    <span style={{ fontSize:8.5, padding:'1px 5px', borderRadius:8, background:(CAMP_STATUS_CLR[ad.status]||'#888')+'22', color:CAMP_STATUS_CLR[ad.status]||'#888', fontWeight:700 }}>{CAMP_STATUS_LABEL[ad.status]||ad.status}</span>
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+                                                            )}
+                                                        </React.Fragment>
+                                                    );
+                                                })}
+                                                {loadingAdsets === c.id && <tr><td colSpan={10} style={{ textAlign:'center', padding:'8px', color:'rgba(255,255,255,.3)', fontSize:11 }}>Carregando conjuntos...</td></tr>}
                                             </React.Fragment>
                                         );
                                     })}
@@ -2767,7 +2952,7 @@
         /* ── TRAFFIC ────────────────────────────────────────── */
         function Traffic() {
             const { store, addCampaign, editCampaign, deleteCampaign, metaConns, deleteMetaConn } = useApp();
-            const [trafficTab, setTrafficTab] = useState('manual');
+            const [trafficTab, setTrafficTab] = useState('meta');
             const [showMetaConnect, setShowMetaConnect] = useState(false);
             const [metaClientFilter, setMetaClientFilter] = useState('');
             const [sel, setSel] = useState('');
@@ -2794,7 +2979,7 @@
                         </button>
                     </div>
                     <div style={{ display:'flex', gap:4, marginBottom:20, borderBottom:'1px solid rgba(255,255,255,.07)', paddingBottom:0 }}>
-                        {[{id:'manual',label:'Campanhas Manuais'},{id:'meta',label:'Meta Ads (API)'}].map(t=>(
+                        {[{id:'meta',label:'Meta Ads (API)'},{id:'manual',label:'Campanhas Manuais'}].map(t=>(
                             <button key={t.id} onClick={()=>setTrafficTab(t.id)} style={{ padding:'8px 16px', background:'none', border:'none', borderBottom: trafficTab===t.id ? '2px solid #1877f2' : '2px solid transparent', color: trafficTab===t.id ? '#fff' : 'rgba(255,255,255,.4)', cursor:'pointer', fontSize:12.5, fontWeight: trafficTab===t.id ? 700 : 400, transition:'all .12s', marginBottom:-1 }}>{t.label}</button>
                         ))}
                     </div>
@@ -4805,12 +4990,15 @@
             }).catch(reject);
         });
         const DATE_PRESETS = [
+            { id: 'maximum', label: 'Tudo' },
             { id: 'today', label: 'Hoje' },
             { id: 'yesterday', label: 'Ontem' },
             { id: 'last_7_days', label: 'Últimos 7 dias' },
+            { id: 'last_14_days', label: 'Últimos 14 dias' },
             { id: 'last_30_days', label: 'Últimos 30 dias' },
             { id: 'this_month', label: 'Este mês' },
             { id: 'last_month', label: 'Mês anterior' },
+            { id: 'last_quarter', label: 'Último trimestre' },
         ];
         const CAMP_STATUS_CLR = { ACTIVE: '#00c853', PAUSED: '#ff9800', DELETED: '#555', ARCHIVED: '#555', COMPLETED: '#4090ff' };
         const CAMP_STATUS_LABEL = { ACTIVE: 'Ativa', PAUSED: 'Pausada', DELETED: 'Excluída', ARCHIVED: 'Arquivada', COMPLETED: 'Concluída' };
