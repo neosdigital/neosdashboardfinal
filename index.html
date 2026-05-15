@@ -914,11 +914,7 @@
                 };
                 if (status === 'Contato Inicial') mkTask(`Fazer novo contato: ${lead?.name || ''}`, 2);
                 else if (status === 'Proposta Enviada') mkTask(`Validar retorno da proposta: ${lead?.name || ''}`, 3);
-                else if (status === 'Follow-up') {
-                    mkTask(`WhatsApp follow-up: ${lead?.name || ''}`, 2);
-                    mkTask(`Ligação follow-up: ${lead?.name || ''}`, 5);
-                    mkTask(`Última tentativa: ${lead?.name || ''}`, 7);
-                }
+                else if (status === 'Follow-up') mkTask(`Follow-up: ${lead?.name || ''}`, 2);
                 notify(`Lead → ${status} ✓`);
             };
             const addLeadInteraction = (leadId, data) => {
