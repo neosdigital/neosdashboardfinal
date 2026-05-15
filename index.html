@@ -2649,127 +2649,308 @@
                 const { jsPDF } = window.jspdf;
                 setPdfLoadingCamp(camp.id);
                 try {
-                    const W = 1280, H = 720, M = 48;
-                    const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: [W, H] });
-                    const bg = (r,g,b) => doc.setFillColor(r,g,b);
-                    const tc = (r,g,b) => doc.setTextColor(r,g,b);
-                    const fnt = (s,sz) => { doc.setFont('helvetica',s); doc.setFontSize(sz); };
+                    const W=1280, H=720, M=42;
+                    const doc = new jsPDF({ orientation:'landscape', unit:'pt', format:[W,H] });
+                    const fill=(r,g,b)=>doc.setFillColor(r,g,b);
+                    const clr=(r,g,b)=>doc.setTextColor(r,g,b);
+                    const fnt=(s,sz)=>{doc.setFont('helvetica',s);doc.setFontSize(sz);};
+                    const BAR_CLRS=[[24,119,242],[160,96,255],[0,188,212],[255,152,0],[233,30,99],[0,200,83],[255,107,53],[76,175,80]];
 
-                    // page 1
-                    bg(12,12,24); doc.rect(0,0,W,H,'F');
-                    bg(24,119,242); doc.rect(0,0,4,H,'F');
-                    bg(18,18,36); doc.rect(0,0,W,82,'F');
-                    fnt('bold',22); tc(255,255,255);
-                    doc.text(camp.name.length>60?camp.name.slice(0,60)+'…':camp.name, M, 48);
-                    fnt('normal',10); tc(150,150,180);
-                    doc.text((CAMP_STATUS_LABEL[camp.status]||camp.status)+(camp.objective?' · '+camp.objective:''), M, 66);
-                    const pLabel = DATE_PRESETS.find(d=>d.id===datePreset)?.label||datePreset;
-                    fnt('normal',10); tc(120,120,150);
-                    doc.text('Período: '+pLabel, W-M, 44, {align:'right'});
-                    doc.text('Conta: '+(conn.metaUserName||'—'), W-M, 60, {align:'right'});
-                    doc.text(new Date().toLocaleString('pt-BR'), W-M, 75, {align:'right'});
+                    // ── helpers ──
+                    const fetchImgData = async url => {
+                        try {
+                            const resp=await fetch(url,{mode:'cors'});
+                            const blob=await resp.blob();
+                            const b64=await new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(blob);});
+                            const dims=await new Promise(res=>{const im=new Image();im.onload=()=>res({w:im.naturalWidth,h:im.naturalHeight});im.onerror=()=>res({w:1,h:1});im.src=b64;});
+                            return {b64,...dims};
+                        } catch {return null;}
+                    };
+                    const containFit=(iw,ih,bw,bh)=>{const sc=Math.min(bw/iw,bh/ih);return{fw:iw*sc,fh:ih*sc,ox:(bw-iw*sc)/2,oy:(bh-ih*sc)/2};};
+                    const tryImg=(data,x,y,bw,bh)=>{
+                        if(!data||!data.b64||!data.w||data.w<=0)return false;
+                        const {fw,fh,ox,oy}=containFit(data.w,data.h,bw,bh);
+                        const fmt=data.b64.includes('image/png')?'PNG':'JPEG';
+                        try{doc.addImage(data.b64,fmt,x+ox,y+oy,fw,fh);}catch{}
+                        return true;
+                    };
 
-                    // KPI cards
-                    const kpis = [
-                        {l:'Gasto Total',v:fmtMeta(camp.spend,'currency'),cr:[24,119,242]},
-                        {l:'Impressões',v:fmtMeta(camp.impressions,'int'),cr:[160,96,255]},
-                        {l:'Cliques',v:fmtMeta(camp.clicks,'int'),cr:[0,188,212]},
-                        {l:'CTR',v:fmtMeta(camp.ctr,'pct'),cr:[255,152,0]},
-                        {l:'CPM',v:fmtMeta(camp.cpm,'currency'),cr:[233,30,99]},
-                        {l:'CPC',v:fmtMeta(camp.cpc,'currency'),cr:[255,107,53]},
-                        {l:'Leads',v:fmtMeta(camp.leads,'int'),cr:[0,200,83]},
-                        {l:'CPL',v:camp.leads>0?fmtMeta(camp.cpl,'currency'):'—',cr:[76,175,80]},
+                    // ── load Neos logo ──
+                    let neosImg=null;
+                    try {
+                        const ni=new Image(); ni.src='images/LOGOTIPO 2 copiar 2.png';
+                        await new Promise(r=>{ni.onload=r;ni.onerror=r;setTimeout(r,1500);});
+                        if(ni.naturalWidth>0){
+                            const cv=document.createElement('canvas');
+                            cv.width=ni.naturalWidth; cv.height=ni.naturalHeight;
+                            cv.getContext('2d').drawImage(ni,0,0);
+                            neosImg={b64:cv.toDataURL('image/png'),w:ni.naturalWidth,h:ni.naturalHeight};
+                        }
+                    } catch {}
+
+                    // ── load creative thumbnails ──
+                    const sets=adsets[camp.id]||[];
+                    const adsFlat=sets.flatMap(s=>(adsetAds[s.id]||[]).filter(a=>a.thumbnail).map(a=>({...a,adsetName:s.name,adsetMet:s})));
+                    const creativeImgs=[];
+                    for(const ad of adsFlat){
+                        const img=await fetchImgData(ad.thumbnail);
+                        creativeImgs.push({...ad,img});
+                    }
+
+                    // ── page base renderer ──
+                    const drawBase=()=>{
+                        fill(9,9,20); doc.rect(0,0,W,H,'F');
+                        // dot grid
+                        fill(22,22,44);
+                        for(let gx=M;gx<W-M;gx+=38)for(let gy=92;gy<H-28;gy+=38)doc.ellipse(gx,gy,0.55,0.55,'F');
+                        // header bar
+                        fill(13,13,28); doc.rect(0,0,W,90,'F');
+                        // blue left accent
+                        fill(24,119,242); doc.rect(0,0,5,H,'F');
+                        // header bottom line
+                        fill(24,119,242); doc.rect(5,89,W-5,1.5,'F');
+                        // Neos logo
+                        let lrx=M+10;
+                        if(neosImg&&neosImg.w>0){
+                            const lh=56,lw=(neosImg.w/neosImg.h)*lh;
+                            doc.addImage(neosImg.b64,'PNG',M+10,17,lw,lh);
+                            lrx=M+10+lw+16;
+                        }
+                        // Meta Ads badge
+                        const mbx=W-M-96, mby=20;
+                        fill(6,104,225); doc.roundedRect(mbx,mby,94,42,7,7,'F');
+                        // left lighter strip (faux gradient)
+                        fill(50,130,255); doc.rect(mbx,mby,28,42,'F');
+                        fill(6,104,225); doc.rect(mbx+20,mby,74,42,'F');
+                        // Meta "M" stylized: two white arcs
+                        fill(255,255,255);
+                        doc.ellipse(mbx+62,mby+14,4,7,'F');
+                        doc.ellipse(mbx+74,mby+14,4,7,'F');
+                        fill(6,104,225); doc.ellipse(mbx+68,mby+14,2.5,5,'F');
+                        // lower merge arc
+                        fill(255,255,255); doc.ellipse(mbx+68,mby+24,5,4,'F');
+                        // text
+                        fnt('bold',14); clr(255,255,255);
+                        doc.text('Meta', mbx+8, mby+27);
+                        fnt('normal',7.5); clr(190,220,255);
+                        doc.text('Ads', mbx+8, mby+36);
+                        return lrx;
+                    };
+
+                    // ════════════════════════════
+                    // PAGE 1
+                    // ════════════════════════════
+                    const lrx=drawBase();
+                    // Campaign title
+                    const campTxt=camp.name.length>52?camp.name.slice(0,52)+'…':camp.name;
+                    fnt('bold',20); clr(255,255,255);
+                    doc.text(campTxt, lrx, 42);
+                    // Status badge
+                    const stC=camp.status==='ACTIVE'?[0,200,83]:camp.status==='PAUSED'?[255,152,0]:[136,136,136];
+                    const stLbl=CAMP_STATUS_LABEL[camp.status]||camp.status;
+                    const stBW=stLbl.length*5.2+14;
+                    doc.setFillColor(Math.round(stC[0]*.18),Math.round(stC[1]*.18),Math.round(stC[2]*.18));
+                    doc.roundedRect(lrx,52,stBW,15,3,3,'F');
+                    fnt('bold',8.5); doc.setTextColor(...stC);
+                    doc.text(stLbl, lrx+7, 62);
+                    if(camp.objective){fnt('normal',8.5);clr(100,108,150);doc.text('·  '+camp.objective, lrx+stBW+6, 62);}
+                    // Period + account
+                    const pLabel=DATE_PRESETS.find(d=>d.id===datePreset)?.label||datePreset;
+                    fnt('normal',9); clr(140,148,190);
+                    doc.text(pLabel, W-M-100, 38,{align:'right'});
+                    clr(90,96,135);
+                    doc.text(conn.metaUserName||'', W-M-100, 52,{align:'right'});
+                    doc.text(new Date().toLocaleDateString('pt-BR'), W-M-100, 64,{align:'right'});
+
+                    // ── KPI ROW ──
+                    const kpiDefs=[
+                        {l:'Gasto Total',v:fmtMeta(camp.spend,'currency'),c:[24,119,242]},
+                        {l:'Impressões',v:fmtMeta(camp.impressions,'int'),c:[160,96,255]},
+                        {l:'Cliques',v:fmtMeta(camp.clicks,'int'),c:[0,188,212]},
+                        {l:'CTR',v:fmtMeta(camp.ctr,'pct'),c:[255,152,0]},
+                        {l:'CPM',v:fmtMeta(camp.cpm,'currency'),c:[233,30,99]},
+                        {l:'CPC',v:fmtMeta(camp.cpc,'currency'),c:[255,107,53]},
+                        {l:'Leads',v:fmtMeta(camp.leads,'int'),c:[0,200,83]},
+                        {l:'CPL',v:camp.leads>0?fmtMeta(camp.cpl,'currency'):'—',c:[76,175,80]},
                     ];
-                    const cw = (W-M*2)/8, ch = 72, cy = 90;
-                    kpis.forEach((k,i) => {
-                        const cx = M+i*cw;
-                        const mx = Math.round(12+(k.cr[0]-12)*.15), my = Math.round(12+(k.cr[1]-12)*.15), mz = Math.round(24+(k.cr[2]-24)*.15);
-                        bg(mx,my,mz); doc.roundedRect(cx+2,cy,cw-4,ch,6,6,'F');
-                        bg(k.cr[0],k.cr[1],k.cr[2]); doc.roundedRect(cx+2,cy,cw-4,4,2,2,'F');
-                        fnt('normal',9); doc.setTextColor(k.cr[0],k.cr[1],k.cr[2]);
-                        doc.text(k.l, cx+cw/2, cy+22, {align:'center'});
-                        fnt('bold',17); doc.setTextColor(k.cr[0],k.cr[1],k.cr[2]);
-                        doc.text(k.v, cx+cw/2, cy+55, {align:'center'});
+                    const kpiY=91,kpiH=92,kpiCW=W/8;
+                    kpiDefs.forEach((k,i)=>{
+                        const kx=i*kpiCW;
+                        fill(Math.round(9+(k.c[0]-9)*.19),Math.round(9+(k.c[1]-9)*.19),Math.round(20+(k.c[2]-20)*.19));
+                        doc.rect(kx,kpiY,kpiCW,kpiH,'F');
+                        fill(k.c[0],k.c[1],k.c[2]); doc.rect(kx,kpiY,kpiCW,5,'F');
+                        if(i<7){fill(9,9,20);doc.rect(kx+kpiCW,kpiY,1,kpiH,'F');}
+                        fnt('normal',8.5); doc.setTextColor(k.c[0],k.c[1],k.c[2]);
+                        doc.text(k.l.toUpperCase(),kx+kpiCW/2,kpiY+24,{align:'center'});
+                        fnt('bold',22); doc.setTextColor(k.c[0],k.c[1],k.c[2]);
+                        doc.text(k.v,kx+kpiCW/2,kpiY+68,{align:'center'});
                     });
 
-                    // adsets table
-                    const sets = adsets[camp.id]||[];
-                    let ty = cy+ch+20;
-                    fnt('bold',12); tc(200,200,220);
-                    doc.text('Conjuntos de Anúncios', M, ty); ty += 16;
-                    if (sets.length===0) {
-                        fnt('italic',10); tc(100,100,130);
-                        doc.text('Expanda a campanha na tela antes de gerar o PDF para incluir os conjuntos.', M, ty+14);
-                    } else {
-                        const hdrs = ['Conjunto de Anúncios','Status','Gasto','Impressões','Cliques','CTR','Leads'];
-                        const cws2 = [300,80,100,110,90,80,80];
-                        bg(22,22,44); doc.rect(M,ty,W-M*2,22,'F');
-                        fnt('bold',9); tc(100,120,180);
-                        let cx2=M+6; hdrs.forEach((h,i)=>{doc.text(h,cx2,ty+15);cx2+=cws2[i];}); ty+=22;
-                        for (let ri=0;ri<sets.length;ri++) {
-                            const s=sets[ri];
-                            if (ty>H-60) break;
-                            if (ri%2===0){bg(18,18,34);doc.rect(M,ty,W-M*2,22,'F');}
-                            cx2=M+6; fnt('normal',9); tc(200,200,220);
-                            doc.text(s.name.length>36?s.name.slice(0,36)+'…':s.name, cx2,ty+15); cx2+=cws2[0];
-                            const sc=s.status==='ACTIVE'?[0,200,83]:s.status==='PAUSED'?[255,152,0]:[136,136,136];
-                            fnt('normal',8.5); doc.setTextColor(...sc);
-                            doc.text(CAMP_STATUS_LABEL[s.status]||s.status, cx2,ty+15); cx2+=cws2[1];
-                            fnt('normal',9); tc(24,119,242);
-                            doc.text(fmtMeta(s.spend,'currency'),cx2,ty+15); cx2+=cws2[2];
-                            tc(180,180,200);
-                            doc.text(fmtMeta(s.impressions,'int'),cx2,ty+15); cx2+=cws2[3];
-                            doc.text(fmtMeta(s.clicks,'int'),cx2,ty+15); cx2+=cws2[4];
-                            doc.text(fmtMeta(s.ctr,'pct'),cx2,ty+15); cx2+=cws2[5];
-                            tc(0,200,83); doc.text(fmtMeta(s.leads,'int'),cx2,ty+15); ty+=22;
-                        }
-                    }
+                    // ── CONTENT (y=185 to y=688) ──
+                    const cY=kpiY+kpiH+2,cH=H-28-cY; // ~631 start, 491 height
+                    const splitX=Math.round(W*0.52); // 665
 
-                    // thumbnails page
-                    const adsWithThumbs = sets.flatMap(s=>(adsetAds[s.id]||[]).filter(a=>a.thumbnail).map(a=>({...a,adsetName:s.name})));
-                    if (adsWithThumbs.length>0) {
-                        doc.addPage([W,H],'landscape');
-                        bg(12,12,24); doc.rect(0,0,W,H,'F');
-                        bg(24,119,242); doc.rect(0,0,4,H,'F');
-                        bg(18,18,36); doc.rect(0,0,W,52,'F');
-                        fnt('bold',16); tc(255,255,255);
-                        doc.text('Anúncios — '+(camp.name.length>50?camp.name.slice(0,50)+'…':camp.name), M, 36);
-                        let tx=M, thumbY=66;
-                        const tw=140, thh=100, gx=14, gy=26;
-                        for (const ad of adsWithThumbs) {
-                            if (tx+tw>W-M){tx=M;thumbY+=thh+gy+20;}
-                            if (thumbY+thh>H-30) break;
-                            try {
-                                const resp=await fetch(ad.thumbnail);
-                                const blob=await resp.blob();
-                                const b64=await new Promise(res=>{const fr=new FileReader();fr.onload=()=>res(fr.result);fr.readAsDataURL(blob);});
-                                bg(22,22,44); doc.roundedRect(tx,thumbY,tw,thh,6,6,'F');
-                                doc.addImage(b64,'JPEG',tx,thumbY,tw,thh);
-                            } catch {
-                                bg(30,30,50); doc.roundedRect(tx,thumbY,tw,thh,6,6,'F');
-                                fnt('normal',9); tc(100,100,130);
-                                doc.text('Sem prévia',tx+tw/2,thumbY+thh/2,{align:'center'});
+                    // ── LEFT: Horizontal Bar Chart ──
+                    const chX=M+4,chW=splitX-M-4-10;
+                    fnt('bold',10); clr(155,165,210);
+                    doc.text('GASTO POR CONJUNTO DE ANÚNCIOS',chX,cY+17);
+                    fill(24,119,242); doc.rect(chX,cY+20,222,1.5,'F');
+
+                    const barSets=[...sets].sort((a,b)=>b.spend-a.spend).slice(0,7);
+                    const maxSp=Math.max(...barSets.map(s=>s.spend),1);
+                    const bY=cY+29,bH=Math.min(52,Math.floor((cH-38)/Math.max(barSets.length,1))),bGap=5;
+                    const nmW=170,bRx=chX+nmW+8,bMaxW=chW-nmW-8-68;
+
+                    barSets.forEach((s,i)=>{
+                        const by=bY+i*(bH+bGap),bc=BAR_CLRS[i];
+                        if(i%2===0){fill(14,14,28);doc.rect(chX,by,chW,bH,'F');}
+                        // Name
+                        const nm=s.name.length>21?s.name.slice(0,21)+'…':s.name;
+                        fnt('normal',9); clr(145,155,200);
+                        doc.text(nm,chX+nmW,by+bH/2+3.5,{align:'right'});
+                        // Track
+                        fill(20,20,42); doc.roundedRect(bRx,by+9,bMaxW,bH-18,4,4,'F');
+                        // Gradient bar fill
+                        const fw=maxSp>0?(s.spend/maxSp)*bMaxW:0;
+                        if(fw>5){
+                            for(let sl=0;sl<6;sl++){
+                                const sx=bRx+sl*(fw/6),sw=fw/6+1,t=sl/5;
+                                fill(Math.min(255,Math.round(bc[0]*(1-t*.35)+255*t*.25)),
+                                     Math.min(255,Math.round(bc[1]*(1-t*.25)+200*t*.2)),
+                                     Math.min(255,Math.round(bc[2]*(1-t*.15)+255*t*.2)));
+                                doc.roundedRect(sx,by+9,sw,bH-18,4,4,'F');
                             }
-                            fnt('normal',8); tc(160,160,180);
-                            const an=(ad.name||'').length>18?(ad.name||'').slice(0,18)+'…':(ad.name||'');
-                            doc.text(an,tx+tw/2,thumbY+thh+12,{align:'center'});
-                            fnt('normal',7); tc(100,100,130);
-                            const sn=(ad.adsetName||'').length>18?(ad.adsetName||'').slice(0,18)+'…':(ad.adsetName||'');
-                            doc.text(sn,tx+tw/2,thumbY+thh+22,{align:'center'});
-                            tx+=tw+gx;
+                            // glow dot at end
+                            fill(Math.min(255,bc[0]+90),Math.min(255,bc[1]+70),Math.min(255,bc[2]+70));
+                            doc.ellipse(bRx+fw,by+bH/2,5,5,'F');
                         }
+                        // Spend value
+                        fnt('bold',9); doc.setTextColor(bc[0],bc[1],bc[2]);
+                        doc.text(fmtMeta(s.spend,'currency'),bRx+bMaxW+6,by+bH/2+3.5);
+                        // Secondary metrics (if bar tall enough)
+                        if(bH>=44){
+                            fnt('normal',7.5); clr(80,88,125);
+                            doc.text(fmtMeta(s.impressions,'int')+' impr · '+fmtMeta(s.clicks,'int')+' cliq · '+fmtMeta(s.leads,'int')+' leads',bRx,by+bH-6);
+                        }
+                    });
+                    if(!barSets.length){fnt('italic',10);clr(70,70,100);doc.text('Expanda a campanha para ver o gráfico.',chX,cY+60);}
+
+                    // ── RIGHT: Creatives + metrics ──
+                    const rX=splitX+10,rW=W-M-rX;
+                    fnt('bold',10); clr(155,165,210);
+                    doc.text('CRIATIVOS',rX,cY+17);
+                    fill(233,30,99); doc.rect(rX,cY+20,72,1.5,'F');
+
+                    const tbW=112,tbH=82,metX=rX+tbW+10,metW=rW-tbW-10,rowH=tbH+8;
+                    const maxRows=Math.floor((cH-30)/rowH);
+                    creativeImgs.slice(0,Math.min(maxRows,5)).forEach((ad,i)=>{
+                        const ry=cY+28+i*rowH;
+                        if(ry+tbH>H-30)return;
+                        // thumb box
+                        fill(16,16,34); doc.roundedRect(rX,ry,tbW,tbH,5,5,'F');
+                        const shown=tryImg(ad.img,rX,ry,tbW,tbH);
+                        if(!shown){fnt('normal',7.5);clr(50,50,80);doc.text('Sem prévia',rX+tbW/2,ry+tbH/2,{align:'center'});}
+                        // color top strip per creative
+                        const cc=BAR_CLRS[i%BAR_CLRS.length];
+                        fill(...cc); doc.rect(rX,ry,tbW,3,'F');
+                        // ad name
+                        fnt('bold',9); clr(210,215,245);
+                        doc.text((ad.name||'').length>28?(ad.name||'').slice(0,28)+'…':(ad.name||''), metX, ry+13);
+                        // adset
+                        fnt('normal',7.5); clr(85,92,128);
+                        doc.text('↳ '+((ad.adsetName||'').length>32?(ad.adsetName||'').slice(0,32)+'…':(ad.adsetName||'')), metX, ry+24);
+                        // metric pills row 1
+                        const met=ad.adsetMet||{};
+                        const p1=[{l:'Gasto',v:fmtMeta(met.spend,'currency'),c:[24,119,242]},{l:'Impressões',v:fmtMeta(met.impressions,'int'),c:[160,96,255]},{l:'Cliques',v:fmtMeta(met.clicks,'int'),c:[0,188,212]}];
+                        let px=metX;
+                        p1.forEach(p=>{
+                            const pw=Math.min(58,(metW-8)/3);
+                            doc.setFillColor(Math.round(p.c[0]*.14),Math.round(p.c[1]*.14),Math.round(p.c[2]*.14));
+                            doc.roundedRect(px,ry+30,pw,18,3,3,'F');
+                            fnt('normal',6.5); doc.setTextColor(p.c[0],p.c[1],p.c[2]);
+                            doc.text(p.l,px+pw/2,ry+38,{align:'center'});
+                            fnt('bold',8); doc.setTextColor(p.c[0],p.c[1],p.c[2]);
+                            doc.text(p.v,px+pw/2,ry+46,{align:'center'});
+                            px+=pw+4;
+                        });
+                        // metric pills row 2
+                        const cpl2=met.leads>0&&met.spend>0?fmtMeta(met.spend/met.leads,'currency'):'—';
+                        const p2=[{l:'CTR',v:fmtMeta(met.ctr,'pct'),c:[255,152,0]},{l:'Leads',v:fmtMeta(met.leads,'int'),c:[0,200,83]},{l:'CPL',v:cpl2,c:[76,175,80]}];
+                        px=metX;
+                        p2.forEach(p=>{
+                            const pw=Math.min(58,(metW-8)/3);
+                            doc.setFillColor(Math.round(p.c[0]*.14),Math.round(p.c[1]*.14),Math.round(p.c[2]*.14));
+                            doc.roundedRect(px,ry+52,pw,18,3,3,'F');
+                            fnt('normal',6.5); doc.setTextColor(p.c[0],p.c[1],p.c[2]);
+                            doc.text(p.l,px+pw/2,ry+60,{align:'center'});
+                            fnt('bold',8); doc.setTextColor(p.c[0],p.c[1],p.c[2]);
+                            doc.text(p.v,px+pw/2,ry+68,{align:'center'});
+                            px+=pw+4;
+                        });
+                        // status dot
+                        const adSc=ad.status==='ACTIVE'?[0,200,83]:ad.status==='PAUSED'?[255,152,0]:[136,136,136];
+                        fnt('bold',7.5); doc.setTextColor(...adSc);
+                        doc.text('● '+(CAMP_STATUS_LABEL[ad.status]||ad.status||''), metX, ry+tbH-2);
+                        // separator
+                        fill(18,18,38); doc.rect(rX,ry+tbH+3,rW,1,'F');
+                    });
+                    if(!creativeImgs.length){fnt('italic',9);clr(70,70,100);doc.text('Expanda a campanha para',rX,cY+60);doc.text('carregar os criativos.',rX,cY+75);}
+
+                    // ════════════════════════════
+                    // PAGE 2: Full creative grid
+                    // ════════════════════════════
+                    if(creativeImgs.length>0){
+                        doc.addPage([W,H],'landscape');
+                        const lrx2=drawBase();
+                        fnt('bold',19); clr(255,255,255);
+                        doc.text('Todos os Criativos', lrx2, 42);
+                        fnt('normal',9); clr(90,96,135);
+                        doc.text(camp.name.length>50?camp.name.slice(0,50)+'…':camp.name, lrx2, 60);
+                        clr(100,108,150);
+                        doc.text(DATE_PRESETS.find(d=>d.id===datePreset)?.label||datePreset, W-M-100, 52,{align:'right'});
+
+                        const cols=4,gapX=10,gapY=12;
+                        const tcW=(W-M*2-(cols-1)*gapX)/cols; // ~289
+                        const tcH=116,tiH=48,cardH=tcH+tiH+gapY;
+                        creativeImgs.forEach((ad,i)=>{
+                            const col=i%cols,row=Math.floor(i/cols);
+                            const cx=M+col*(tcW+gapX),cy=96+row*cardH;
+                            if(cy+cardH>H-28)return;
+                            const cc2=BAR_CLRS[col%BAR_CLRS.length];
+                            fill(14,14,30); doc.roundedRect(cx,cy,tcW,tcH,6,6,'F');
+                            fill(...cc2); doc.rect(cx,cy,tcW,4,'F');
+                            const ok=tryImg(ad.img,cx,cy,tcW,tcH);
+                            if(!ok){fnt('normal',9);clr(55,55,85);doc.text('Sem prévia',cx+tcW/2,cy+tcH/2,{align:'center'});}
+                            const iy=cy+tcH+5;
+                            fnt('bold',9); clr(205,210,242);
+                            doc.text((ad.name||'').length>28?(ad.name||'').slice(0,28)+'…':(ad.name||''),cx+4,iy+11);
+                            fnt('normal',7.5); clr(88,94,130);
+                            doc.text((ad.adsetName||'').length>28?(ad.adsetName||'').slice(0,28)+'…':(ad.adsetName||''),cx+4,iy+22);
+                            const m2=ad.adsetMet||{};
+                            fnt('normal',8); doc.setTextColor(cc2[0],cc2[1],cc2[2]);
+                            doc.text(fmtMeta(m2.spend,'currency')+' · '+fmtMeta(m2.impressions,'int')+' impr · '+fmtMeta(m2.leads,'int')+' leads',cx+4,iy+33);
+                            const adSc5=ad.status==='ACTIVE'?[0,200,83]:ad.status==='PAUSED'?[255,152,0]:[136,136,136];
+                            fnt('bold',7); doc.setTextColor(...adSc5);
+                            doc.text('● '+(CAMP_STATUS_LABEL[ad.status]||ad.status||''),cx+4,iy+43);
+                        });
                     }
 
-                    // footer on all pages
+                    // ── Footer all pages ──
                     const np=doc.internal.getNumberOfPages();
-                    for (let p=1;p<=np;p++){
-                        doc.setPage(p); fnt('normal',8); tc(60,60,80);
-                        doc.text('Neos Dashboard · '+new Date().toLocaleString('pt-BR'), M, H-12);
-                        doc.text('Pág. '+p+' de '+np, W-M, H-12, {align:'right'});
+                    for(let p=1;p<=np;p++){
+                        doc.setPage(p);
+                        fill(10,10,22); doc.rect(0,H-28,W,28,'F');
+                        fill(24,119,242); doc.rect(5,H-28,W-5,1,'F');
+                        fnt('normal',7.5); clr(70,76,112);
+                        doc.text('Neos Dashboard · '+new Date().toLocaleDateString('pt-BR'),M+8,H-10);
+                        doc.text('Pág. '+p+' de '+np, W-M,H-10,{align:'right'});
+                        fnt('normal',7); clr(50,56,88);
+                        doc.text(camp.name.length>60?camp.name.slice(0,60)+'…':camp.name,W/2,H-10,{align:'center'});
                     }
+
                     const sfn=camp.name.replace(/[^a-z0-9]/gi,'_').slice(0,40);
-                    doc.save(`meta_${sfn}.pdf`);
-                } catch(e) { console.error(e); alert('Erro ao gerar PDF: '+e.message); }
+                    doc.save('meta_'+sfn+'.pdf');
+                } catch(e){ console.error(e); alert('Erro ao gerar PDF: '+e.message); }
                 setPdfLoadingCamp(null);
             };
 
