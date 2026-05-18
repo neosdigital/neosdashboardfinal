@@ -4142,15 +4142,58 @@
             const { store, addCalEvent, editCalEvent } = useApp();
             const EV_COLORS = ['#ff0040', '#a060ff', '#4090ff', '#00c864', '#ffcc00', '#E1306C', '#69C9D0', '#ff8030'];
             const [f, setF] = useState(ev ? { ...ev } : { title: '', date: defaultDate || new Date().toISOString().split('T')[0], startTime: '09:00', endTime: '10:00', allDay: false, type: 'event', color: '#ff0040', clientId: '', clientCustomName: '', desc: '', category: '' });
+            const [calImgs, setCalImgs] = useState(() => { try { return ev?.images ? JSON.parse(ev.images) : []; } catch { return []; } });
+            const [imgUploading, setImgUploading] = useState(false);
             const s = (k, v) => setF(p => ({ ...p, [k]: v }));
+
+            const compressCalImg = (file, maxDim = 1920, quality = 0.88) => new Promise(resolve => {
+                const r = new FileReader();
+                r.onload = e => {
+                    const img = new Image();
+                    img.onload = () => {
+                        let w = img.naturalWidth, h = img.naturalHeight;
+                        const scale = Math.min(maxDim / w, maxDim / h, 1);
+                        w = Math.round(w * scale); h = Math.round(h * scale);
+                        const c = document.createElement('canvas'); c.width = w; c.height = h;
+                        c.getContext('2d').drawImage(img, 0, 0, w, h);
+                        resolve(c.toDataURL('image/jpeg', quality));
+                    };
+                    img.src = e.target.result;
+                };
+                r.readAsDataURL(file);
+            });
+
+            const handleImgUpload = async e => {
+                const files = Array.from(e.target.files || []);
+                if (!files.length) return;
+                setImgUploading(true);
+                const newImgs = [];
+                for (const file of files) {
+                    const data = await compressCalImg(file);
+                    newImgs.push({ id: Date.now() + Math.random(), name: file.name, data, createdAt: new Date().toISOString() });
+                }
+                setCalImgs(p => [...p, ...newImgs]);
+                setImgUploading(false);
+                e.target.value = '';
+            };
+
+            const removeCalImg = id => setCalImgs(p => p.filter(i => i.id !== id));
+
+            const downloadCalImg = img => {
+                const a = document.createElement('a');
+                a.href = img.data;
+                a.download = img.name || 'imagem.jpg';
+                a.click();
+            };
+
             return (
                 <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-                    <div className="modal-box fade-in" style={{ maxWidth: 440 }}>
+                    <div className="modal-box fade-in" style={{ maxWidth: 480 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                             <h3 style={{ fontSize: 15, fontWeight: 700 }}>{ev ? 'Editar Evento' : 'Novo Evento'}</h3>
                             <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.5)', cursor: 'pointer' }}><Ic n="x" s={16} /></button>
                         </div>
-                        <form onSubmit={e => { e.preventDefault(); if (!f.title.trim()) return; ev ? editCalEvent(ev.id, f) : addCalEvent(f); onClose(); }} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+                        <form onSubmit={e => { e.preventDefault(); if (!f.title.trim()) return; const data = { ...f, images: JSON.stringify(calImgs) }; ev ? editCalEvent(ev.id, data) : addCalEvent(data); onClose(); }} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
                             <input className="input-field" placeholder="Título *" value={f.title} onChange={e => s('title', e.target.value)} required autoFocus />
                             <div style={{ display: 'flex', gap: 8 }}>
                                 <div style={{ flex: 1 }}><div style={{ fontSize: 11, color: 'rgba(255,255,255,.38)', marginBottom: 4 }}>Data</div><input className="input-field" type="date" value={f.date} onChange={e => s('date', e.target.value)} required /></div>
@@ -4189,6 +4232,37 @@
                                     </optgroup>
                                 </select>
                             </div>
+
+                            {/* ── Image Attachments ── */}
+                            <div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,.38)' }}>Imagens anexadas ({calImgs.length})</div>
+                                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 6, border: '1px solid rgba(255,0,64,.35)', background: 'rgba(255,0,64,.08)', color: '#ff6080', fontSize: 10.5, fontWeight: 700, cursor: 'pointer', transition: 'all .12s' }}
+                                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,0,64,.18)'}
+                                        onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,0,64,.08)'}>
+                                        {imgUploading ? '⏳ Processando…' : '+ Adicionar imagem'}
+                                        <input type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleImgUpload} disabled={imgUploading} />
+                                    </label>
+                                </div>
+                                {calImgs.length > 0 && (
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))', gap: 8 }}>
+                                        {calImgs.map(img => (
+                                            <div key={img.id} style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,.1)', background: 'rgba(255,255,255,.04)', aspectRatio: '4/3' }}>
+                                                <img src={img.data} alt={img.name} style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                                                <div style={{ position: 'absolute', top: 0, right: 0, left: 0, display: 'flex', justifyContent: 'space-between', padding: '4px 5px', background: 'linear-gradient(to bottom, rgba(0,0,0,.55), transparent)' }}>
+                                                    <button type="button" onClick={() => downloadCalImg(img)}
+                                                        title="Baixar imagem"
+                                                        style={{ background: 'rgba(0,0,0,.5)', border: '1px solid rgba(255,255,255,.25)', borderRadius: 5, color: '#fff', cursor: 'pointer', fontSize: 11, padding: '2px 6px', fontWeight: 700, lineHeight: 1 }}>⬇</button>
+                                                    <button type="button" onClick={() => removeCalImg(img.id)}
+                                                        style={{ background: 'rgba(255,0,64,.6)', border: 'none', borderRadius: 5, color: '#fff', cursor: 'pointer', fontSize: 10, padding: '2px 5px', lineHeight: 1 }}>✕</button>
+                                                </div>
+                                                <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '3px 5px', background: 'linear-gradient(to top, rgba(0,0,0,.6), transparent)', fontSize: 8.5, color: 'rgba(255,255,255,.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img.name}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
                             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
                                 <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
                                 <button type="submit" className="btn-primary">{ev ? 'Salvar' : '+ Criar Evento'}</button>
@@ -5014,7 +5088,7 @@
         }
 
         /* ── EMPLOYEE ACCESS CONTROL ────────────────────────── */
-        const EMPLOYEE_BLOCKED = ['dashboard', 'financial'];
+        const EMPLOYEE_BLOCKED = ['dashboard', 'financial', 'traffic'];
 
         function LockedView() {
             return (
