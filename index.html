@@ -4194,7 +4194,7 @@
                             <h3 style={{ fontSize: 15, fontWeight: 700 }}>{ev ? 'Editar Evento' : 'Novo Evento'}</h3>
                             <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.5)', cursor: 'pointer' }}><Ic n="x" s={16} /></button>
                         </div>
-                        <form onSubmit={e => { e.preventDefault(); if (!f.title.trim()) return; const data = { ...f, images: JSON.stringify(calImgs) }; ev ? editCalEvent(ev.id, data) : addCalEvent(data); onClose(); }} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+                        <form onSubmit={e => { e.preventDefault(); if (!f.title.trim()) return; const cl = f.clientId && f.clientId !== '__outro__' ? store.clients.find(c => c.id === f.clientId) : null; const derivedName = f.clientId === '__outro__' ? (f.clientCustomName || '') : (cl?.name || ''); const data = { ...f, clientName: derivedName, images: JSON.stringify(calImgs) }; ev ? editCalEvent(ev.id, data) : addCalEvent(data); onClose(); }} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
                             <input className="input-field" placeholder="Título *" value={f.title} onChange={e => s('title', e.target.value)} required autoFocus />
                             <div style={{ display: 'flex', gap: 8 }}>
                                 <div style={{ flex: 1 }}><div style={{ fontSize: 11, color: 'rgba(255,255,255,.38)', marginBottom: 4 }}>Data</div><input className="input-field" type="date" value={f.date} onChange={e => s('date', e.target.value)} required /></div>
@@ -4345,7 +4345,7 @@
 
         /* ── CALENDAR PAGE ───────────────────────────────────── */
         function CalendarPage() {
-            const { store, calFocusDate, setCalFocusDate, addCalEvent, editCalEvent, deleteCalEvent, deleteTask, notify, moveTask } = useApp();
+            const { store, calFocusDate, setCalFocusDate, addCalEvent, editCalEvent, deleteCalEvent, deleteTask, notify, moveTask, editTask } = useApp();
             const calEvs = store.calEvents || [];
             const kTasks = (store.tasks || []).filter(t => t.dueDate && !t.fromCalendar);
             const today = new Date();
@@ -4420,7 +4420,11 @@
                                 <div key={i} onClick={() => day && (setVMode('day'), setFocus(new Date(ds + 'T12:00')))}
                                     style={{ height: 90, overflow: 'hidden', padding: '5px 5px 3px', borderRight: (i + 1) % 7 === 0 ? 'none' : '1px solid rgba(255,255,255,.04)', borderBottom: '1px solid rgba(255,255,255,.04)', cursor: day ? 'pointer' : 'default', background: isT ? 'rgba(255,0,64,.04)' : 'transparent', transition: 'background .15s', boxSizing: 'border-box' }}
                                     onMouseEnter={e => { if (day) e.currentTarget.style.background = isT ? 'rgba(255,0,64,.08)' : 'rgba(255,255,255,.025)'; }}
-                                    onMouseLeave={e => { e.currentTarget.style.background = isT ? 'rgba(255,0,64,.04)' : 'transparent'; }}>
+                                    onMouseLeave={e => { e.currentTarget.style.background = isT ? 'rgba(255,0,64,.04)' : 'transparent'; }}
+                                    onDragOver={e => { if (day) e.preventDefault(); }}
+                                    onDragEnter={e => { if (day) { e.preventDefault(); e.currentTarget.style.outline = '2px solid rgba(255,200,80,.5)'; e.currentTarget.style.background = isT ? 'rgba(255,0,64,.12)' : 'rgba(255,255,255,.06)'; } }}
+                                    onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) { e.currentTarget.style.outline = 'none'; e.currentTarget.style.background = isT ? 'rgba(255,0,64,.04)' : 'transparent'; } }}
+                                    onDrop={e => { e.preventDefault(); e.currentTarget.style.outline = 'none'; e.currentTarget.style.background = isT ? 'rgba(255,0,64,.04)' : 'transparent'; if (!day || !ds) return; try { const d = JSON.parse(e.dataTransfer.getData('text/plain')); if (!d.id) return; if (d.type === 'task') editTask(d.id, { dueDate: ds }); else editCalEvent(d.id, { date: ds }); } catch {} }}>
                                     {day && <>
                                         <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: isT ? 700 : 400, color: isT ? '#ff0040' : 'rgba(255,255,255,.5)', background: isT ? 'rgba(255,0,64,.2)' : 'transparent', marginBottom: 3, flexShrink: 0 }}>{day}</div>
                                         <div onClick={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, maxHeight: 58, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,.12) transparent' }}>
@@ -4432,7 +4436,7 @@
                                                 const clientName = ev._task ? (ev.clientName || '') : (ev.clientName || linkedTask?.clientName || '');
                                                 const clr = done ? '#555' : (ev.color || '#ff0040');
                                                 return (
-                                                <div key={j} style={{ fontSize: 9.5, padding: '2px 4px', borderRadius: 3, background: clr + '2a', color: done ? '#555' : clr, border: `1px solid ${clr}44`, minWidth: 0, overflow: 'hidden', flexShrink: 0 }}>
+                                                <div key={j} draggable={true} onDragStart={e => { e.stopPropagation(); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', JSON.stringify({ id: ev.id, type: ev._task ? 'task' : 'event' })); }} style={{ fontSize: 9.5, padding: '2px 4px', borderRadius: 3, background: clr + '2a', color: done ? '#555' : clr, border: `1px solid ${clr}44`, minWidth: 0, overflow: 'hidden', flexShrink: 0, cursor: 'grab' }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
                                                         {hasCheck && <span onClick={e => { e.stopPropagation(); if (checkId) moveTask(checkId, done ? 'A Fazer' : 'Concluído'); }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 10, height: 10, borderRadius: 2, border: `1.5px solid ${done ? '#555' : clr}`, background: done ? '#555' : 'transparent', flexShrink: 0, cursor: 'pointer', fontSize: 7, color: '#fff', lineHeight: 1 }}>{done ? '✓' : ''}</span>}
                                                         <span onClick={e => { e.stopPropagation(); if (!ev._task) setEditEv(ev); }} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: !ev._task ? 'pointer' : 'default', textDecoration: done ? 'line-through' : 'none', opacity: done ? .5 : 1, minWidth: 0 }}>
