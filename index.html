@@ -448,7 +448,8 @@
         db.version(4).stores({ clientImages: 'id, clientId, type, createdAt' });
         db.version(5).stores({ leads: 'id, status, responsible, origin, createdAt', leadInteractions: 'id, leadId, type, createdAt' });
         db.version(6).stores({ goals: 'id, category, responsible, createdAt' });
-        const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [], goals: [] };
+        db.version(7).stores({ notifications: 'id, userId, read, createdAt', taskTimers: 'id, taskId, userId, startedAt, createdAt' });
+        const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [], goals: [], notifications: [], taskTimers: [] };
 
         /* ── SUPABASE HELPERS ───────────────────────────────── */
         const _stripCol = (err, obj) => {
@@ -494,7 +495,8 @@
                     { data: clients }, { data: tasks }, { data: financials },
                     { data: trafficData }, { data: designReqs }, { data: performance },
                     { data: calEvents }, { data: costs }, { data: clientImages },
-                    { data: leads }, { data: leadInteractions }, { data: goals }
+                    { data: leads }, { data: leadInteractions }, { data: goals },
+                    { data: notifications }, { data: taskTimers }
                 ] = await Promise.all([
                     supabase.from('clients').select('*'),
                     supabase.from('tasks').select('*'),
@@ -508,13 +510,15 @@
                     supabase.from('leads').select('*'),
                     supabase.from('leadInteractions').select('*'),
                     supabase.from('goals').select('*'),
+                    supabase.from('notifications').select('*'),
+                    supabase.from('taskTimers').select('*'),
                 ]);
                 const store = {
                     clients: clients || [], tasks: tasks || [], financials: financials || [],
                     trafficData: trafficData || [], designReqs: designReqs || [],
                     performance: performance || [], calEvents: calEvents || [], costs: costs || [],
                     clientImages: clientImages || [], leads: leads || [], leadInteractions: leadInteractions || [],
-                    goals: goals || []
+                    goals: goals || [], notifications: notifications || [], taskTimers: taskTimers || []
                 };
                 const hasData = Object.values(store).some(arr => arr.length > 0);
                 if (!hasData) {
@@ -530,18 +534,18 @@
 
         async function loadFromIndexedDB() {
             try {
-                const [clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages, leads, leadInteractions, goals] = await Promise.all([
+                const [clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages, leads, leadInteractions, goals, notifications, taskTimers] = await Promise.all([
                     db.clients.toArray(), db.tasks.toArray(), db.financials.toArray(),
                     db.trafficData.toArray(), db.designReqs.toArray(),
                     db.performance.toArray(), db.calEvents.toArray(), db.costs.toArray(),
                     db.clientImages.toArray(), db.leads.toArray(), db.leadInteractions.toArray(),
-                    db.goals.toArray()
+                    db.goals.toArray(), db.notifications.toArray(), db.taskTimers.toArray()
                 ]);
-                return { clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages, leads, leadInteractions, goals };
+                return { clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages, leads, leadInteractions, goals, notifications, taskTimers };
             } catch (e) { return null; }
         }
         async function saveToDB(store) {
-            await db.transaction('rw', db.clients, db.tasks, db.financials, db.trafficData, db.designReqs, db.performance, db.calEvents, db.costs, db.clientImages, db.leads, db.leadInteractions, db.goals, async () => {
+            await db.transaction('rw', db.clients, db.tasks, db.financials, db.trafficData, db.designReqs, db.performance, db.calEvents, db.costs, db.clientImages, db.leads, db.leadInteractions, db.goals, db.notifications, db.taskTimers, async () => {
                 await db.clients.clear(); await db.clients.bulkPut(store.clients);
                 await db.tasks.clear(); await db.tasks.bulkPut(store.tasks);
                 await db.financials.clear(); await db.financials.bulkPut(store.financials);
@@ -554,6 +558,8 @@
                 await db.leads.clear(); await db.leads.bulkPut(store.leads || []);
                 await db.leadInteractions.clear(); await db.leadInteractions.bulkPut(store.leadInteractions || []);
                 await db.goals.clear(); await db.goals.bulkPut(store.goals || []);
+                await db.notifications.clear(); await db.notifications.bulkPut(store.notifications || []);
+                await db.taskTimers.clear(); await db.taskTimers.bulkPut(store.taskTimers || []);
             });
         }
         async function migrateFromLocalStorage() {
@@ -619,7 +625,7 @@
 
             /* ── SUPABASE REALTIME ── */
             useEffect(() => {
-                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions', 'goals'];
+                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions', 'goals', 'notifications', 'taskTimers'];
                 const channel = supabase.channel('neos-db-changes');
                 TABLES.forEach(tbl => {
                     channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, ({ eventType, new: n, old: o }) => {
@@ -970,6 +976,15 @@
             const editGoal = (id, data) => { const m = getModUser(); upd(p => ({ goals: (p.goals || []).map(g => g.id === id ? { ...g, ...data, ...m, updatedAt: new Date().toISOString() } : g) })); supaUpdate('goals', id, { ...data, ...m, updatedAt: new Date().toISOString() }); notify('Meta atualizada ✓'); };
             const deleteGoal = id => { upd(p => ({ goals: (p.goals || []).filter(g => g.id !== id) })); supaDelete('goals', id); notify('Meta excluída', 'warn'); };
 
+            /* ── NOTIFICAÇÕES ── */
+            const addNotif = (toUser, type, title, body, relatedId, relatedType) => { if (!toUser) return; const notif = { id: genId(), userId: toUser, type: type || 'info', title: title || '', body: body || '', relatedId: relatedId || '', relatedType: relatedType || '', read: false, createdAt: new Date().toISOString() }; upd(p => ({ notifications: [...(p.notifications || []), notif] })); supaSave('notifications', notif); };
+            const markNotifRead = id => { upd(p => ({ notifications: (p.notifications || []).map(n => n.id === id ? { ...n, read: true } : n) })); supaUpdate('notifications', id, { read: true }); };
+            const markAllNotifsRead = userId => { upd(p => ({ notifications: (p.notifications || []).map(n => n.userId === userId ? { ...n, read: true } : n) })); };
+
+            /* ── TIMERS DE PRODUÇÃO ── */
+            const startTimer = data => { const t = { id: genId(), taskId: data.taskId || '', taskTitle: data.taskTitle || '', userId: data.userId || '', userName: data.userName || '', stage: data.stage || '', startedAt: new Date().toISOString(), endedAt: null, totalMs: 0, createdAt: new Date().toISOString() }; upd(p => ({ taskTimers: [...(p.taskTimers || []), t] })); supaSave('taskTimers', t); };
+            const stopTimer = (timerId, startedAt) => { const now = new Date().toISOString(); const ms = Math.round(new Date(now) - new Date(startedAt)); upd(p => ({ taskTimers: (p.taskTimers || []).map(t => t.id === timerId ? { ...t, endedAt: now, totalMs: ms } : t) })); supaUpdate('taskTimers', timerId, { endedAt: now, totalMs: ms }); };
+
             /* ── COSTS ── */
             const addCost = data => { const c = { id: genId(), createdAt: new Date().toISOString(), ...getModUser(), ...data }; upd(p => ({ costs: [...(p.costs || []), c] })); supaSave('costs', c); notify('Custo adicionado ✓'); };
             const editCost = (id, data) => { const m = getModUser(); upd(p => ({ costs: (p.costs || []).map(c => c.id === id ? { ...c, ...data, ...m } : c) })); supaUpdate('costs', id, { ...data, ...m }); notify('Custo atualizado ✓'); };
@@ -1020,7 +1035,7 @@
             );
 
             return (
-                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage, metaConns, saveMetaConn, deleteMetaConn, loadMetaConns, addLead, editLead, deleteLead, moveLead, syncLeads, addLeadInteraction, deleteLeadInteraction, addGoal, editGoal, deleteGoal }}>
+                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage, metaConns, saveMetaConn, deleteMetaConn, loadMetaConns, addLead, editLead, deleteLead, moveLead, syncLeads, addLeadInteraction, deleteLeadInteraction, addGoal, editGoal, deleteGoal, addNotif, markNotifRead, markAllNotifsRead, startTimer, stopTimer }}>
                     {children}
                 </Ctx.Provider>
             );
@@ -1217,13 +1232,21 @@
 
         /* ── TASK MODAL ─────────────────────────────────────── */
         function TaskModal({ task, onClose }) {
-            const { addTask, editTask, store } = useApp();
+            const { addTask, editTask, store, addNotif } = useApp();
             const [f, setF] = useState(task || { title: '', clientId: '', clientName: '', status: 'A Fazer', priority: 'Média', assignee: TEAM[0], dueDate: '', desc: '', category: '' });
             const s = (k, v) => setF(p => ({ ...p, [k]: v }));
             const sub = e => {
                 e.preventDefault();
                 const cl = store.clients.find(c => c.id === f.clientId);
+                const prevAssignee = task?.assignee;
                 task ? editTask(task.id, { ...f, clientName: cl?.name || f.clientName }) : addTask({ ...f, clientName: cl?.name || f.clientName });
+                if (f.assignee) {
+                    const usernameMap = { 'Arthur Lemos': 'arthur', 'Lavinia Wallery': 'lavinia', 'Miguel Lemos': 'miguel', 'Caio': 'caio', 'Funcionário': 'funcionario' };
+                    const toUserId = usernameMap[f.assignee] || f.assignee.toLowerCase().replace(/\s+/g, '');
+                    if (!task) addNotif(toUserId, 'task_assigned', 'Nova tarefa atribuída', `Você foi definido como responsável por "${f.title}"`, '', 'task');
+                    else if (f.assignee !== prevAssignee) addNotif(toUserId, 'task_assigned', 'Tarefa atribuída a você', `"${f.title}" foi atribuída a você`, task.id, 'task');
+                    else if (f.dueDate !== task?.dueDate && f.dueDate) addNotif(toUserId, 'task_due', 'Prazo atualizado', `Prazo de "${f.title}" atualizado para ${new Date(f.dueDate + 'T12:00').toLocaleDateString('pt-BR')}`, task.id, 'task');
+                }
                 onClose();
             };
             return (
@@ -1813,6 +1836,61 @@
                             </div>
                         );
                     })()}
+                    {/* ── WIDGET: PRODUTIVIDADE / TIMERS ── */}
+                    {(() => {
+                        const timers = store.taskTimers || [];
+                        const done = timers.filter(t => t.endedAt && t.totalMs > 0);
+                        if (done.length === 0) return null;
+                        const fmtMs = ms => { const h = Math.floor(ms/3600000), m = Math.floor((ms%3600000)/60000); return h > 0 ? `${h}h ${m}m` : `${m}m`; };
+                        const byUser = {}; done.forEach(t => { if (!byUser[t.userName]) byUser[t.userName] = { count: 0, total: 0 }; byUser[t.userName].count++; byUser[t.userName].total += t.totalMs || 0; });
+                        const byStage = {}; done.forEach(t => { if (!byStage[t.stage]) byStage[t.stage] = { count: 0, total: 0 }; byStage[t.stage].count++; byStage[t.stage].total += t.totalMs || 0; });
+                        const avgMs = done.reduce((s, t) => s + (t.totalMs || 0), 0) / done.length;
+                        const recent = [...done].sort((a, b) => new Date(b.endedAt) - new Date(a.endedAt)).slice(0, 8);
+                        return (
+                            <div className="glass" style={{ marginTop: 16, padding: '18px 20px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                                    <span style={{ fontWeight: 700, fontSize: 14 }}>Produtividade Operacional</span>
+                                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginLeft: 4 }}>{done.length} sessões · Tempo médio {fmtMs(avgMs)}</span>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+                                    <div className="glass" style={{ padding: '10px 14px', borderRadius: 8 }}>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.4)', fontWeight: 700, textTransform: 'uppercase', marginBottom: 8 }}>Por Colaborador</div>
+                                        {Object.entries(byUser).sort((a, b) => b[1].total - a[1].total).slice(0, 6).map(([name, d]) => (
+                                            <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                                                <span style={{ fontSize: 11, color: 'rgba(255,255,255,.7)' }}>{name}</span>
+                                                <div style={{ textAlign: 'right' }}>
+                                                    <span style={{ fontSize: 11, fontWeight: 700, color: '#4090ff' }}>{fmtMs(d.total)}</span>
+                                                    <span style={{ fontSize: 9.5, color: 'rgba(255,255,255,.3)', marginLeft: 5 }}>{d.count}x</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="glass" style={{ padding: '10px 14px', borderRadius: 8 }}>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.4)', fontWeight: 700, textTransform: 'uppercase', marginBottom: 8 }}>Por Etapa</div>
+                                        {Object.entries(byStage).sort((a, b) => b[1].total - a[1].total).slice(0, 6).map(([stage, d]) => (
+                                            <div key={stage} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                                                <span style={{ fontSize: 11, color: 'rgba(255,255,255,.7)' }}>{stage || '—'}</span>
+                                                <span style={{ fontSize: 11, fontWeight: 700, color: '#a060ff' }}>{fmtMs(d.total / d.count)}/sessão</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="glass" style={{ padding: '10px 14px', borderRadius: 8 }}>
+                                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,.4)', fontWeight: 700, textTransform: 'uppercase', marginBottom: 8 }}>Histórico Recente</div>
+                                        {recent.map(t => (
+                                            <div key={t.id} style={{ marginBottom: 5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <div style={{ fontSize: 10.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'rgba(255,255,255,.7)' }}>{t.taskTitle || '—'}</div>
+                                                    <div style={{ fontSize: 9, color: 'rgba(255,255,255,.3)' }}>{t.userName} · {t.endedAt ? new Date(t.endedAt).toLocaleDateString('pt-BR') : ''}</div>
+                                                </div>
+                                                <span style={{ fontSize: 11, fontWeight: 700, color: '#00c864', flexShrink: 0, marginLeft: 8 }}>{fmtMs(t.totalMs)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
                 </div>
             );
         }
@@ -1925,6 +2003,7 @@
                                                 </div>
                                                 {t.assignee && <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)', marginTop: 6 }}>→ {t.assignee.split(' ')[0]}</div>}
                                                 <ModTag rec={t} />
+                                                <TaskTimerBtn taskId={t.id} taskTitle={t.title} taskStatus={t.status} />
                                                 <div style={{ display: 'flex', gap: 5, marginTop: 9, justifyContent: 'flex-end' }}>
                                                     <button className="btn-secondary" style={{ padding: '3px 7px' }} onClick={() => setEditing(t)}><Ic n="edit" s={11} /></button>
                                                     <button className="btn-danger" style={{ padding: '3px 7px' }} onClick={() => setDel(t)}><Ic n="trash" s={11} /></button>
@@ -4142,7 +4221,7 @@
         function EventModal({ ev, defaultDate, onClose }) {
             const { store, addCalEvent, editCalEvent } = useApp();
             const EV_COLORS = ['#ff0040', '#a060ff', '#4090ff', '#00c864', '#ffcc00', '#E1306C', '#69C9D0', '#ff8030'];
-            const [f, setF] = useState(ev ? { ...ev } : { title: '', date: defaultDate || new Date().toISOString().split('T')[0], startTime: '09:00', endTime: '10:00', allDay: false, type: 'event', color: '#ff0040', clientId: '', clientCustomName: '', desc: '', category: '', responsavel: '' });
+            const [f, setF] = useState(ev ? { ...ev } : { title: '', date: defaultDate || new Date().toISOString().split('T')[0], startTime: '09:00', endTime: '10:00', allDay: false, type: 'event', color: '#ff0040', clientId: '', clientCustomName: '', desc: '', category: '', responsavel: '', done: false });
             const [calImgs, setCalImgs] = useState(() => { try { return ev?.images ? JSON.parse(ev.images) : []; } catch { return []; } });
             const [imgUploading, setImgUploading] = useState(false);
             const s = (k, v) => setF(p => ({ ...p, [k]: v }));
@@ -4272,6 +4351,10 @@
                                 )}
                             </div>
 
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12, color: f.done ? '#00c853' : 'rgba(255,255,255,.55)', fontWeight: f.done ? 600 : 400, marginTop: 2 }}>
+                                <input type="checkbox" checked={!!f.done} onChange={e => s('done', e.target.checked)} style={{ accentColor: '#00c853', width: 14, height: 14 }} />
+                                Marcar como concluído
+                            </label>
                             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 4 }}>
                                 <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
                                 <button type="submit" className="btn-primary">{ev ? 'Salvar' : '+ Criar Evento'}</button>
@@ -4366,6 +4449,9 @@
             const [gcIdInput, setGcIdInput] = useState(gcClientId);
             const [showTextAdd, setShowTextAdd] = useState(false);
             const [textInput, setTextInput] = useState('');
+            const [bulkMode, setBulkMode] = useState(false);
+            const [bulkSel, setBulkSel] = useState(new Set());
+            const [bulkResp, setBulkResp] = useState('');
 
             useEffect(() => { if (calFocusDate) setFocus(new Date(calFocusDate + 'T12:00')); }, [calFocusDate]);
 
@@ -4430,24 +4516,31 @@
                                         <div onClick={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, maxHeight: 58, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,.12) transparent' }}>
                                             {items.map((ev, j) => {
                                                 const linkedTask = !ev._task ? allTasks.find(t => t.fromCalendar && t.dueDate === ev.date && t.title === ev.title) : null;
-                                                const done = ev._task ? ev.status === 'Concluído' : (linkedTask?.status === 'Concluído');
+                                                const done = ev._task ? ev.status === 'Concluído' : (ev.done || linkedTask?.status === 'Concluído');
                                                 const checkId = ev._task ? ev.id : linkedTask?.id;
-                                                const hasCheck = ev._task || !!linkedTask;
                                                 const clientName = ev._task ? (ev.clientName || '') : (ev.clientName || linkedTask?.clientName || '');
                                                 const clr = done ? '#555' : (ev.color || '#ff0040');
+                                                const isSel = bulkMode && bulkSel.has(ev.id);
                                                 return (
-                                                <div key={j} draggable={true} onDragStart={e => { e.stopPropagation(); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', JSON.stringify({ id: ev.id, type: ev._task ? 'task' : 'event' })); }} style={{ fontSize: 9.5, padding: '2px 4px', borderRadius: 3, background: clr + '2a', color: done ? '#555' : clr, border: `1px solid ${clr}44`, minWidth: 0, overflow: 'hidden', flexShrink: 0, cursor: 'grab' }}>
+                                                <div key={j}
+                                                    draggable={!bulkMode}
+                                                    onDragStart={!bulkMode ? (e => { e.stopPropagation(); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', JSON.stringify({ id: ev.id, type: ev._task ? 'task' : 'event' })); }) : undefined}
+                                                    onClick={e => { e.stopPropagation(); if (bulkMode) { setBulkSel(p => { const n = new Set(p); n.has(ev.id) ? n.delete(ev.id) : n.add(ev.id); return n; }); } }}
+                                                    style={{ fontSize: 9.5, padding: '2px 4px', borderRadius: 3, background: isSel ? clr + '55' : (clr + '2a'), color: done ? '#555' : clr, border: `1px solid ${isSel ? clr + 'aa' : clr + '44'}`, minWidth: 0, overflow: 'hidden', flexShrink: 0, cursor: bulkMode ? 'pointer' : 'grab' }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
-                                                        {hasCheck && <span onClick={e => { e.stopPropagation(); if (checkId) moveTask(checkId, done ? 'A Fazer' : 'Concluído'); }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 10, height: 10, borderRadius: 2, border: `1.5px solid ${done ? '#555' : clr}`, background: done ? '#555' : 'transparent', flexShrink: 0, cursor: 'pointer', fontSize: 7, color: '#fff', lineHeight: 1 }}>{done ? '✓' : ''}</span>}
-                                                        <span onClick={e => { e.stopPropagation(); if (!ev._task) setEditEv(ev); }} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: !ev._task ? 'pointer' : 'default', textDecoration: done ? 'line-through' : 'none', opacity: done ? .5 : 1, minWidth: 0 }}>
+                                                        {bulkMode
+                                                            ? <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 10, height: 10, borderRadius: 2, border: `1.5px solid ${isSel ? '#fff' : clr}`, background: isSel ? clr : 'transparent', flexShrink: 0, fontSize: 7, color: '#fff', lineHeight: 1 }}>{isSel ? '✓' : ''}</span>
+                                                            : <span onClick={e => { e.stopPropagation(); if (ev._task) { if (checkId) moveTask(checkId, done ? 'A Fazer' : 'Concluído'); } else { editCalEvent(ev.id, { done: !ev.done }); } }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 10, height: 10, borderRadius: 2, border: `1.5px solid ${done ? '#555' : clr}`, background: done ? '#555' : 'transparent', flexShrink: 0, cursor: 'pointer', fontSize: 7, color: '#fff', lineHeight: 1 }}>{done ? '✓' : ''}</span>
+                                                        }
+                                                        <span onClick={e => { e.stopPropagation(); if (!bulkMode && !ev._task) setEditEv(ev); }} style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: !bulkMode && !ev._task ? 'pointer' : 'default', textDecoration: done ? 'line-through' : 'none', opacity: done ? .5 : 1, minWidth: 0 }}>
                                                             {!ev.allDay && !ev._task && ev.startTime ? ev.startTime + ' ' : ''}{ev.title}
                                                         </span>
-                                                        {ev._task
+                                                        {!bulkMode && (ev._task
                                                             ? <button onClick={e => { e.stopPropagation(); setDelTask(ev); }} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '0 1px', opacity: .55, fontSize: 9, lineHeight: 1, flexShrink: 0 }}>✕</button>
                                                             : <button onClick={e => { e.stopPropagation(); setDelEv(ev); }} style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '0 1px', opacity: .55, fontSize: 9, lineHeight: 1, flexShrink: 0 }}>✕</button>
-                                                        }
+                                                        )}
                                                     </div>
-                                                    {clientName && <div style={{ fontSize: 8.5, color: done ? '#444' : clr, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: hasCheck ? 14 : 0, opacity: .75 }}>{clientName}</div>}
+                                                    {clientName && <div style={{ fontSize: 8.5, color: done ? '#444' : clr, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: 14, opacity: .75 }}>{clientName}</div>}
                                                 </div>
                                                 );
                                             })}
@@ -4620,6 +4713,9 @@
                                     <Ic n="link" s={11} />Google Agenda
                                 </button>
                             )}
+                            <button className="btn-secondary" onClick={() => { setBulkMode(v => !v); setBulkSel(new Set()); setBulkResp(''); }} style={{ fontSize: 12, gap: 5, ...(bulkMode ? { background: 'rgba(255,200,0,.12)', borderColor: 'rgba(255,200,0,.35)', color: '#ffcc00' } : {}) }}>
+                                ☑ {bulkMode ? 'Sair da Seleção' : 'Selecionar'}
+                            </button>
                             <button className="btn-secondary" onClick={() => { setTextInput(''); setShowTextAdd(true); }} style={{ fontSize: 12, gap: 5 }}>
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
                                 Texto → Evento
@@ -4664,6 +4760,39 @@
                                 <button className="btn-primary" style={{ fontSize: 12 }} onClick={() => { if (gcIdInput.trim()) { localStorage.setItem('gcClientId', gcIdInput.trim()); setGcClientId(gcIdInput.trim()); setGcSetup(false); } }}>Salvar</button>
                                 <button className="btn-secondary" style={{ fontSize: 12 }} onClick={() => setGcSetup(false)}>Cancelar</button>
                             </div>
+                        </div>
+                    )}
+                    {bulkMode && (
+                        <div className="glass fade-in" style={{ padding: '8px 14px', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderColor: 'rgba(255,200,0,.25)' }}>
+                            <span style={{ fontSize: 12, color: '#ffcc00', fontWeight: 600 }}>{bulkSel.size} selecionado{bulkSel.size !== 1 ? 's' : ''}</span>
+                            <button className="btn-secondary" style={{ fontSize: 11 }} onClick={() => {
+                                const yr = focus.getFullYear(), mth = focus.getMonth();
+                                const ids = new Set([
+                                    ...fEvs(calEvs.filter(e => { const d = new Date(e.date + 'T12:00'); return d.getMonth() === mth && d.getFullYear() === yr; })).map(e => e.id),
+                                    ...fTks(kTasks.filter(t => { const d = new Date(t.dueDate + 'T12:00'); return d.getMonth() === mth && d.getFullYear() === yr; })).map(t => t.id)
+                                ]);
+                                setBulkSel(ids);
+                            }}>Selecionar Todos do Mês</button>
+                            {bulkSel.size > 0 && <button className="btn-secondary" style={{ fontSize: 11 }} onClick={() => setBulkSel(new Set())}>Limpar</button>}
+                            {bulkSel.size > 0 && <select className="input-field" style={{ fontSize: 11, padding: '4px 8px' }} value={bulkResp} onChange={e => setBulkResp(e.target.value)}>
+                                <option value="">— Alterar responsável —</option>
+                                {RESPONSAVEIS.map(r => <option key={r} value={r}>{r}</option>)}
+                            </select>}
+                            {bulkSel.size > 0 && bulkResp && <button className="btn-primary" style={{ fontSize: 11 }} onClick={() => {
+                                [...bulkSel].forEach(id => {
+                                    if (kTasks.find(t => t.id === id)) editTask(id, { responsavel: bulkResp });
+                                    else editCalEvent(id, { responsavel: bulkResp });
+                                });
+                                setBulkSel(new Set()); setBulkResp('');
+                            }}>Aplicar</button>}
+                            {bulkSel.size > 0 && <button className="btn-danger" style={{ fontSize: 11 }} onClick={() => {
+                                if (!confirm(`Excluir ${bulkSel.size} item(ns)?`)) return;
+                                [...bulkSel].forEach(id => {
+                                    if (kTasks.find(t => t.id === id)) deleteTask(id);
+                                    else deleteCalEvent(id);
+                                });
+                                setBulkSel(new Set());
+                            }}><Ic n="trash" s={11} />Excluir</button>}
                         </div>
                     )}
                     {vMode === 'month' ? renderMonth() : vMode === 'week' ? renderWeek() : renderDay()}
@@ -5296,10 +5425,12 @@
         const LEAD_PCOL = { Alta:'#ff4060', Média:'#ffcc00', Baixa:'#60d060' };
         const INT_TYPES = ['Nota','Ligação','WhatsApp','E-mail','Reunião','Proposta','Follow-up'];
         const INT_CLR = { Ligação:'#4090ff', WhatsApp:'#25d366', 'E-mail':'#ff9800', Reunião:'#a060ff', Nota:'rgba(255,255,255,.5)', Proposta:'#00bcd4', 'Follow-up':'#ff0040' };
+        const LEAD_QUALS = ['Qualificado','Não qualificado','Em análise','Contato realizado','Conversão','Sem resposta'];
+        const LEAD_QUAL_CLR = { 'Qualificado':'#00c853','Não qualificado':'#ff4060','Em análise':'#ffcc00','Contato realizado':'#4090ff','Conversão':'#00e5ff','Sem resposta':'#888' };
 
         function LeadModal({ lead, onClose }) {
             const { addLead, editLead } = useApp();
-            const blank = { name:'', company:'', phone:'', email:'', origin:'Manual', responsible:'', status:'Novos Leads', priority:'Média', score:0, value:'', tags:'', notes:'', nextAction:'', nextActionDate:'' };
+            const blank = { name:'', company:'', phone:'', email:'', origin:'Manual', responsible:'', status:'Novos Leads', priority:'Média', score:0, value:'', tags:'', notes:'', nextAction:'', nextActionDate:'', qualification:'' };
             const [f, setF] = useState(lead ? { ...blank, ...lead } : blank);
             const set = (k,v) => setF(p => ({ ...p, [k]:v }));
             const save = () => { if (!f.name.trim()) return; lead ? editLead(lead.id, f) : addLead(f); onClose(); };
@@ -5321,6 +5452,7 @@
                             <FRow label="Prioridade"><select className="input-field" style={{ fontSize:13 }} value={f.priority} onChange={e=>set('priority',e.target.value)}>{LEAD_PRIORITIES.map(p=><option key={p}>{p}</option>)}</select></FRow>
                             <FRow label="Valor Potencial (R$)"><input className="input-field" style={{ fontSize:13 }} type="number" value={f.value} onChange={e=>set('value',e.target.value)} placeholder="0" /></FRow>
                             <FRow label="Score (0–100)"><input className="input-field" style={{ fontSize:13 }} type="number" min="0" max="100" value={f.score} onChange={e=>set('score',e.target.value)} /></FRow>
+                            <FRow label="Qualificação"><select className="input-field" style={{ fontSize:13 }} value={f.qualification||''} onChange={e=>set('qualification',e.target.value)}><option value="">— Sem qualificação —</option>{LEAD_QUALS.map(q=><option key={q}>{q}</option>)}</select></FRow>
                         </div>
                         <div style={{ display:'flex', flexDirection:'column', gap:12, marginTop:12 }}>
                             <FRow label="Próxima Ação"><input className="input-field" style={{ fontSize:13 }} value={f.nextAction} onChange={e=>set('nextAction',e.target.value)} placeholder="Descreva a próxima ação" /></FRow>
@@ -5337,14 +5469,14 @@
             );
         }
 
-        function LeadCard({ lead, clr, onDragStart, onClick, onDelete, lastInt }) {
+        function LeadCard({ lead, clr, onDragStart, onClick, onDelete, lastInt, selected }) {
             const fmtV = v => v >= 1000 ? 'R$'+(v/1000).toFixed(1)+'k' : v > 0 ? 'R$'+v : null;
             const score5 = Math.round((lead.score||0)/20);
             return (
                 <div draggable onDragStart={e=>onDragStart(e,lead)} onClick={onClick}
-                    style={{ background:'rgba(255,255,255,.04)', border:`1px solid ${clr}22`, borderLeft:`3px solid ${clr}`, borderRadius:8, padding:'10px 12px', cursor:'pointer', transition:'background .12s', position:'relative' }}
-                    onMouseEnter={e=>e.currentTarget.style.background='rgba(255,255,255,.08)'}
-                    onMouseLeave={e=>e.currentTarget.style.background='rgba(255,255,255,.04)'}>
+                    style={{ background: selected ? clr+'18' : 'rgba(255,255,255,.04)', border: selected ? `1.5px solid ${clr}88` : `1px solid ${clr}22`, borderLeft:`3px solid ${clr}`, borderRadius:8, padding:'10px 12px', cursor:'pointer', transition:'background .12s', position:'relative' }}
+                    onMouseEnter={e=>e.currentTarget.style.background= selected ? clr+'28' : 'rgba(255,255,255,.08)'}
+                    onMouseLeave={e=>e.currentTarget.style.background= selected ? clr+'18' : 'rgba(255,255,255,.04)'}>
                     <button onClick={e=>{e.stopPropagation();onDelete&&onDelete(lead);}} style={{ position:'absolute', top:5, right:6, background:'none', border:'none', color:'rgba(255,255,255,.28)', cursor:'pointer', fontSize:13, lineHeight:1, padding:'2px 3px', borderRadius:4, transition:'color .12s' }}
                         onMouseEnter={e=>e.currentTarget.style.color='#ff4060'} onMouseLeave={e=>e.currentTarget.style.color='rgba(255,255,255,.28)'}>✕</button>
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:4, paddingRight:14 }}>
@@ -5359,6 +5491,7 @@
                     {lead.score > 0 && <div style={{ display:'flex', gap:2, marginBottom:5 }}>{[1,2,3,4,5].map(s=><div key={s} style={{ height:3, flex:1, borderRadius:2, background: s<=score5 ? clr : 'rgba(255,255,255,.1)' }} />)}</div>}
                     {lastInt && <div style={{ fontSize:9, color:'rgba(255,255,255,.26)', marginTop:3 }}>Últ: {lastInt.type} · {lastInt.date ? new Date(lastInt.date+'T12:00').toLocaleDateString('pt-BR') : ''}</div>}
                     {lead.responsible && <div style={{ fontSize:9.5, color:'rgba(255,255,255,.28)', marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>→ {lead.responsible}</div>}
+                    {lead.qualification && <div style={{ display:'inline-block', marginTop:3, fontSize:9, padding:'1px 6px', borderRadius:10, background:(LEAD_QUAL_CLR[lead.qualification]||'#888')+'22', color:LEAD_QUAL_CLR[lead.qualification]||'#888', border:`1px solid ${(LEAD_QUAL_CLR[lead.qualification]||'#888')}44` }}>{lead.qualification}</div>}
                 </div>
             );
         }
@@ -5410,7 +5543,7 @@
                         {tab==='info' && (
                             <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
                                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                                    {[['Telefone',lead.phone],['E-mail',lead.email],['Origem',lead.origin],['Responsável',lead.responsible],['Prioridade',lead.priority],['Valor',lead.value?fmtV(lead.value):null],['Score',lead.score?(lead.score+'/100'):null],['Entrada',lead.createdAt?new Date(lead.createdAt).toLocaleDateString('pt-BR'):null]].map(([label,val])=>(
+                                    {[['Telefone',lead.phone],['E-mail',lead.email],['Origem',lead.origin],['Responsável',lead.responsible],['Prioridade',lead.priority],['Qualificação',lead.qualification||null],['Valor',lead.value?fmtV(lead.value):null],['Score',lead.score?(lead.score+'/100'):null],['Entrada',lead.createdAt?new Date(lead.createdAt).toLocaleDateString('pt-BR'):null]].map(([label,val])=>(
                                         <div key={label} className="glass" style={{ padding:'8px 12px', borderRadius:8 }}>
                                             <div style={{ fontSize:9.5, color:'rgba(255,255,255,.32)', marginBottom:2 }}>{label}</div>
                                             <div style={{ fontSize:12, fontWeight:500, color: val ? 'rgba(255,255,255,.85)' : 'rgba(255,255,255,.2)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{val||'—'}</div>
@@ -5530,7 +5663,7 @@
         };
 
         function LeadsPage() {
-            const { store, addLead, deleteLead, moveLead, syncLeads, notify } = useApp();
+            const { store, addLead, editLead, deleteLead, moveLead, syncLeads, notify } = useApp();
             const leads = store.leads || [];
             const interactions = store.leadInteractions || [];
             const [showAdd, setShowAdd] = useState(false);
@@ -5542,13 +5675,18 @@
             const [showTextLead, setShowTextLead] = useState(false);
             const [textLeadInput, setTextLeadInput] = useState('');
             const [textLeadPreview, setTextLeadPreview] = useState([]);
-            const [filt, setFilt] = useState({ search:'', status:'', origin:'', responsible:'', priority:'' });
+            const [filt, setFilt] = useState({ search:'', status:'', origin:'', responsible:'', priority:'', qualification:'' });
+            const [bulkMode, setBulkMode] = useState(false);
+            const [bulkSel, setBulkSel] = useState(new Set());
+            const [bulkStatus, setBulkStatus] = useState('');
+            const [bulkResp, setBulkResp] = useState('');
             const setF = (k,v) => setFilt(p=>({...p,[k]:v}));
             const filtered = leads.filter(l => {
                 if (filt.search) { const q=filt.search.toLowerCase(); if (!((l.name||'').toLowerCase().includes(q)||(l.phone||'').includes(q)||(l.email||'').toLowerCase().includes(q)||(l.company||'').toLowerCase().includes(q))) return false; }
                 if (filt.status && l.status!==filt.status) return false;
                 if (filt.origin && l.origin!==filt.origin) return false;
                 if (filt.priority && l.priority!==filt.priority) return false;
+                if (filt.qualification && l.qualification!==filt.qualification) return false;
                 return true;
             });
             const fmt = v => 'R$ '+v.toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:0});
@@ -5564,6 +5702,14 @@
                 {label:'Ganhos',value:won,clr:'#00c853',sub:won>0?fmt(leads.filter(l=>l.status==='Fechado Ganho').reduce((s,l)=>s+(parseFloat(l.value)||0),0)):null},
                 {label:'Perdidos',value:lost,clr:'#555'},
             ];
+            const QUAL_METRICS = [
+                {label:'✓ Qualificado',value:leads.filter(l=>l.qualification==='Qualificado').length,clr:'#00c853'},
+                {label:'✗ Não Qualif.',value:leads.filter(l=>l.qualification==='Não qualificado').length,clr:'#ff4060'},
+                {label:'⏳ Em Análise',value:leads.filter(l=>l.qualification==='Em análise').length,clr:'#ffcc00'},
+                {label:'📞 Contatado',value:leads.filter(l=>l.qualification==='Contato realizado').length,clr:'#4090ff'},
+                {label:'🎯 Conversão',value:leads.filter(l=>l.qualification==='Conversão').length,clr:'#00e5ff'},
+                {label:'— Sem Resposta',value:leads.filter(l=>l.qualification==='Sem resposta').length,clr:'#888'},
+            ].filter(m=>m.value>0);
             const onDragStart=(e,lead)=>{setDragging(lead);e.dataTransfer.effectAllowed='move';};
             const onDrop=(e,col)=>{e.preventDefault();if(dragging&&dragging.status!==col)moveLead(dragging.id,col);setDragging(null);setDragOver(null);};
             return (
@@ -5579,6 +5725,7 @@
                         <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
                             <input className="input-field" placeholder="Buscar nome, tel, e-mail..." value={filt.search} onChange={e=>setF('search',e.target.value)} style={{ fontSize:12, padding:'6px 12px', width:210 }} />
                             <button className="btn-secondary" onClick={()=>setShowFilters(v=>!v)} style={{ fontSize:12, gap:5 }}><Ic n="filter" s={12} />Filtros</button>
+                            <button className="btn-secondary" onClick={()=>{ setBulkMode(v=>!v); setBulkSel(new Set()); setBulkStatus(''); setBulkResp(''); }} style={{ fontSize:12, gap:5, ...(bulkMode?{background:'rgba(255,200,0,.12)',borderColor:'rgba(255,200,0,.35)',color:'#ffcc00'}:{}) }}>☑ {bulkMode ? 'Sair da Seleção' : 'Seleção em Massa'}</button>
                             <button className="btn-secondary" onClick={syncLeads} style={{ fontSize:12, gap:5 }} title="Re-envia todos os leads locais ao Supabase">
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/></svg>
                                 Sincronizar
@@ -5601,10 +5748,13 @@
                             <select className="input-field" style={{ fontSize:12, padding:'5px 10px' }} value={filt.priority} onChange={e=>setF('priority',e.target.value)}>
                                 <option value="">Todas prioridades</option>{LEAD_PRIORITIES.map(p=><option key={p}>{p}</option>)}
                             </select>
-                            <button className="btn-secondary" onClick={()=>setFilt({search:'',status:'',origin:'',responsible:'',priority:''})} style={{ fontSize:12 }}>Limpar</button>
+                            <select className="input-field" style={{ fontSize:12, padding:'5px 10px' }} value={filt.qualification} onChange={e=>setF('qualification',e.target.value)}>
+                                <option value="">Todas qualificações</option>{LEAD_QUALS.map(q=><option key={q}>{q}</option>)}
+                            </select>
+                            <button className="btn-secondary" onClick={()=>setFilt({search:'',status:'',origin:'',responsible:'',priority:'',qualification:''})} style={{ fontSize:12 }}>Limpar</button>
                         </div>
                     )}
-                    <div style={{ display:'flex', gap:7, marginBottom:14, overflowX:'auto', paddingBottom:4, flexShrink:0 }}>
+                    <div style={{ display:'flex', gap:7, marginBottom: QUAL_METRICS.length > 0 ? 6 : 14, overflowX:'auto', paddingBottom:4, flexShrink:0 }}>
                         {METRICS.map(m=>(
                             <div key={m.label} className="glass" style={{ flex:'0 0 auto', padding:'10px 14px', borderRadius:10, borderColor:m.clr+'33', minWidth:82, textAlign:'center' }}>
                                 <div style={{ fontSize:22, fontWeight:700, color:m.clr, lineHeight:1 }}>{m.value}</div>
@@ -5613,6 +5763,35 @@
                             </div>
                         ))}
                     </div>
+                    {QUAL_METRICS.length > 0 && (
+                        <div style={{ display:'flex', gap:6, marginBottom:14, overflowX:'auto', paddingBottom:4, flexShrink:0 }}>
+                            <div style={{ fontSize:9.5, color:'rgba(255,255,255,.3)', fontWeight:600, alignSelf:'center', whiteSpace:'nowrap', paddingRight:2 }}>QUALIFICAÇÃO:</div>
+                            {QUAL_METRICS.map(m=>(
+                                <div key={m.label} className="glass" style={{ flex:'0 0 auto', padding:'6px 12px', borderRadius:8, borderColor:m.clr+'33', textAlign:'center', display:'flex', alignItems:'center', gap:7 }}>
+                                    <div style={{ fontSize:16, fontWeight:700, color:m.clr, lineHeight:1 }}>{m.value}</div>
+                                    <div style={{ fontSize:9.5, color:'rgba(255,255,255,.38)' }}>{m.label}</div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {bulkMode && (
+                        <div className="glass fade-in" style={{ padding:'8px 14px', marginBottom:10, display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', borderColor:'rgba(255,200,0,.3)' }}>
+                            <span style={{ fontSize:12, color:'#ffcc00', fontWeight:600 }}>{bulkSel.size} selecionado{bulkSel.size!==1?'s':''}</span>
+                            <button className="btn-secondary" style={{ fontSize:11 }} onClick={()=>setBulkSel(new Set(filtered.map(l=>l.id)))}>Selecionar Todos ({filtered.length})</button>
+                            {bulkSel.size>0 && <button className="btn-secondary" style={{ fontSize:11 }} onClick={()=>setBulkSel(new Set())}>Limpar</button>}
+                            {bulkSel.size>0 && <select className="input-field" style={{ fontSize:11, padding:'4px 8px' }} value={bulkStatus} onChange={e=>setBulkStatus(e.target.value)}>
+                                <option value="">— Alterar status —</option>{LEAD_COLS.map(c=><option key={c}>{c}</option>)}
+                            </select>}
+                            {bulkSel.size>0 && <select className="input-field" style={{ fontSize:11, padding:'4px 8px' }} value={bulkResp} onChange={e=>setBulkResp(e.target.value)}>
+                                <option value="">— Alterar responsável —</option>{RESPONSAVEIS.map(r=><option key={r} value={r}>{r}</option>)}
+                            </select>}
+                            {bulkSel.size>0 && (bulkStatus||bulkResp) && <button className="btn-primary" style={{ fontSize:11 }} onClick={()=>{
+                                [...bulkSel].forEach(id=>{ const upd={}; if(bulkStatus)upd.status=bulkStatus; if(bulkResp)upd.responsible=bulkResp; editLead(id,upd); });
+                                setBulkSel(new Set()); setBulkStatus(''); setBulkResp('');
+                            }}>Aplicar</button>}
+                            {bulkSel.size>0 && <button className="btn-danger" style={{ fontSize:11 }} onClick={()=>{ if(!confirm(`Excluir ${bulkSel.size} lead(s)?`)) return; [...bulkSel].forEach(id=>deleteLead(id)); setBulkSel(new Set()); }}><Ic n="trash" s={11} />Excluir</button>}
+                        </div>
+                    )}
                     <div style={{ display:'flex', gap:10, flex:1, overflowX:'auto', overflowY:'hidden', paddingBottom:12 }}>
                         {LEAD_COLS.map(col=>{
                             const colLeads=filtered.filter(l=>l.status===col);
@@ -5638,7 +5817,7 @@
                                     <div style={{ flex:1, overflowY:'auto', padding:8, display:'flex', flexDirection:'column', gap:6 }}>
                                         {colLeads.map(lead=>{
                                             const lastInt=interactions.filter(i=>i.leadId===lead.id).sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0))[0];
-                                            return <LeadCard key={lead.id} lead={lead} clr={clr} onDragStart={onDragStart} onClick={()=>setSelected(lead)} onDelete={l=>setDelLead(l)} lastInt={lastInt} />;
+                                            return <LeadCard key={lead.id} lead={lead} clr={clr} onDragStart={bulkMode?()=>{}:onDragStart} onClick={bulkMode?()=>setBulkSel(p=>{const n=new Set(p);n.has(lead.id)?n.delete(lead.id):n.add(lead.id);return n;}):()=>setSelected(lead)} onDelete={bulkMode?undefined:l=>setDelLead(l)} lastInt={lastInt} selected={bulkMode&&bulkSel.has(lead.id)} />;
                                         })}
                                         <div onClick={()=>setShowAdd(true)} style={{ border:'1px dashed rgba(255,255,255,.1)', borderRadius:8, padding:'8px', textAlign:'center', cursor:'pointer', fontSize:11, color:'rgba(255,255,255,.22)', transition:'all .12s' }}
                                             onMouseEnter={e=>{e.currentTarget.style.borderColor=clr+'66';e.currentTarget.style.color=clr;}}
@@ -6297,6 +6476,85 @@
             );
         }
 
+        /* ── INBOX / NOTIFICAÇÕES ──────────────────────────── */
+        function InboxBtn() {
+            const { store, markNotifRead, markAllNotifsRead } = useApp();
+            const me = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
+            const myId = me?.username || '';
+            const isEmp = (me?.role || 'employee') !== 'admin';
+            const [open, setOpen] = useState(false);
+            const myNotifs = (store.notifications || []).filter(n => n.userId === myId).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 60);
+            const unread = myNotifs.filter(n => !n.read).length;
+            const botPos = isEmp ? 76 : 136;
+            return (
+                <>
+                    <button onClick={() => setOpen(v => !v)} title="Notificações"
+                        style={{ position: 'fixed', bottom: botPos, right: 22, zIndex: 200, borderRadius: 50, width: 44, height: 44, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: open ? 'rgba(255,160,0,.9)' : 'rgba(255,255,255,.08)', border: '1px solid ' + (open ? 'rgba(255,160,0,.6)' : 'rgba(255,255,255,.15)'), cursor: 'pointer', boxShadow: open ? '0 0 18px rgba(255,160,0,.35)' : 'none', transition: 'all .2s', position: 'fixed' }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                        {unread > 0 && <div style={{ position: 'absolute', top: 7, right: 7, background: '#ff0040', borderRadius: '50%', width: 15, height: 15, fontSize: 8, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', border: '2px solid #07070f' }}>{unread > 9 ? '9+' : unread}</div>}
+                    </button>
+                    {open && (
+                        <div className="glass fade-in" style={{ position: 'fixed', bottom: botPos + 54, right: 22, zIndex: 199, width: 330, maxHeight: 420, borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,.6)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px 10px', borderBottom: '1px solid rgba(255,255,255,.07)', flexShrink: 0 }}>
+                                <span style={{ fontSize: 13, fontWeight: 700 }}>Notificações {unread > 0 && <span style={{ fontSize: 10, background: '#ff0040', color: '#fff', borderRadius: 8, padding: '1px 6px', marginLeft: 4 }}>{unread}</span>}</span>
+                                {unread > 0 && <button onClick={() => markAllNotifsRead(myId)} style={{ fontSize: 10, color: 'rgba(255,160,0,.9)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Marcar todas</button>}
+                            </div>
+                            <div style={{ overflowY: 'auto', flex: 1 }}>
+                                {myNotifs.length === 0 ? (
+                                    <div style={{ padding: 24, textAlign: 'center', color: 'rgba(255,255,255,.25)', fontSize: 12 }}>
+                                        <div style={{ fontSize: 28, marginBottom: 8 }}>🔔</div>Nenhuma notificação
+                                    </div>
+                                ) : myNotifs.map(n => (
+                                    <div key={n.id} onClick={() => { if (!n.read) markNotifRead(n.id); }}
+                                        style={{ padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,.04)', background: n.read ? 'transparent' : 'rgba(255,160,0,.07)', cursor: 'pointer', transition: 'background .12s' }}
+                                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,.05)'}
+                                        onMouseLeave={e => e.currentTarget.style.background = n.read ? 'transparent' : 'rgba(255,160,0,.07)'}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ fontSize: 12, fontWeight: n.read ? 500 : 700, color: n.read ? 'rgba(255,255,255,.6)' : '#fff', marginBottom: 2 }}>{n.title || 'Notificação'}</div>
+                                                {n.body && <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.38)', lineHeight: 1.4 }}>{n.body}</div>}
+                                            </div>
+                                            {!n.read && <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,160,0,.9)', flexShrink: 0, marginTop: 4 }} />}
+                                        </div>
+                                        <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.22)', marginTop: 5 }}>{n.createdAt ? new Date(n.createdAt).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </>
+            );
+        }
+
+        /* ── TIMER DE PRODUÇÃO POR TAREFA ───────────────────── */
+        function TaskTimerBtn({ taskId, taskTitle, taskStatus }) {
+            const { store, startTimer, stopTimer } = useApp();
+            const me = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
+            const myId = me?.username || '';
+            const activeTimer = (store.taskTimers || []).find(t => t.taskId === taskId && t.userId === myId && !t.endedAt);
+            const [tick, setTick] = useState(0);
+            useEffect(() => {
+                if (!activeTimer) { setTick(0); return; }
+                const iv = setInterval(() => setTick(p => p + 1), 1000);
+                return () => clearInterval(iv);
+            }, [activeTimer?.id]);
+            const elapsed = activeTimer ? Math.round((Date.now() - new Date(activeTimer.startedAt)) / 1000) : 0;
+            const fmtT = s => `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+            if (!myId) return null;
+            return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,.06)' }}>
+                    {activeTimer ? (
+                        <>
+                            <span style={{ fontSize: 11, fontWeight: 700, color: '#ff8030', fontFamily: 'monospace', flex: 1 }}>⏱ {fmtT(elapsed)}</span>
+                            <button onClick={e => { e.stopPropagation(); stopTimer(activeTimer.id, activeTimer.startedAt); }} style={{ padding: '2px 7px', fontSize: 9.5, background: 'rgba(255,60,60,.18)', border: '1px solid rgba(255,60,60,.4)', borderRadius: 5, color: '#ff6060', cursor: 'pointer', fontWeight: 700 }}>Finalizar</button>
+                        </>
+                    ) : (
+                        <button onClick={e => { e.stopPropagation(); startTimer({ taskId, taskTitle, userId: myId, userName: me?.name || myId, stage: taskStatus }); }} style={{ padding: '2px 7px', fontSize: 9.5, background: 'rgba(100,200,100,.12)', border: '1px solid rgba(100,200,100,.3)', borderRadius: 5, color: 'rgba(100,220,100,.85)', cursor: 'pointer', fontWeight: 600, flex: 1, textAlign: 'center' }}>▶ Iniciar Timer</button>
+                    )}
+                </div>
+            );
+        }
+
         /* ── APP ────────────────────────────────────────────── */
         function App() {
             const { view, userRole, onlineUsers, chatOpen, setChatOpen } = useApp();
@@ -6317,6 +6575,7 @@
                             <Ic n="plus" s={20} />
                         </button>
                     )}
+                    <InboxBtn />
                     <button onClick={() => setChatOpen(c => !c)} title="Chat Interno"
                         style={{ position: 'fixed', bottom: isEmployee ? 22 : 82, right: 22, zIndex: 200, borderRadius: 50, width: 44, height: 44, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: chatOpen ? '#ff0040' : 'rgba(255,255,255,.08)', border: '1px solid ' + (chatOpen ? '#ff0040' : 'rgba(255,255,255,.15)'), cursor: 'pointer', boxShadow: chatOpen ? '0 0 18px rgba(255,0,64,.4)' : 'none', transition: 'all .2s' }}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
