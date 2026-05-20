@@ -496,7 +496,7 @@
                     { data: trafficData }, { data: designReqs }, { data: performance },
                     { data: calEvents }, { data: costs }, { data: clientImages },
                     { data: leads }, { data: leadInteractions }, { data: goals },
-                    { data: notifications }, { data: taskTimers }
+                    { data: notifications }
                 ] = await Promise.all([
                     supabase.from('clients').select('*'),
                     supabase.from('tasks').select('*'),
@@ -511,14 +511,13 @@
                     supabase.from('leadInteractions').select('*'),
                     supabase.from('goals').select('*'),
                     supabase.from('notifications').select('*'),
-                    supabase.from('taskTimers').select('*'),
                 ]);
                 const store = {
                     clients: clients || [], tasks: tasks || [], financials: financials || [],
                     trafficData: trafficData || [], designReqs: designReqs || [],
                     performance: performance || [], calEvents: calEvents || [], costs: costs || [],
                     clientImages: clientImages || [], leads: leads || [], leadInteractions: leadInteractions || [],
-                    goals: goals || [], notifications: notifications || [], taskTimers: taskTimers || []
+                    goals: goals || [], notifications: notifications || [], taskTimers: []
                 };
                 const hasData = Object.values(store).some(arr => arr.length > 0);
                 if (!hasData) {
@@ -625,7 +624,7 @@
 
             /* ── SUPABASE REALTIME ── */
             useEffect(() => {
-                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions', 'goals', 'notifications', 'taskTimers'];
+                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions', 'goals', 'notifications'];
                 const channel = supabase.channel('neos-db-changes');
                 TABLES.forEach(tbl => {
                     channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, ({ eventType, new: n, old: o }) => {
@@ -982,8 +981,8 @@
             const markAllNotifsRead = userId => { upd(p => ({ notifications: (p.notifications || []).map(n => n.userId === userId ? { ...n, read: true } : n) })); };
 
             /* ── TIMERS DE PRODUÇÃO ── */
-            const startTimer = data => { const t = { id: genId(), taskId: data.taskId || '', taskTitle: data.taskTitle || '', userId: data.userId || '', userName: data.userName || '', stage: data.stage || '', startedAt: new Date().toISOString(), endedAt: null, totalMs: 0, createdAt: new Date().toISOString() }; upd(p => ({ taskTimers: [...(p.taskTimers || []), t] })); supaSave('taskTimers', t); };
-            const stopTimer = (timerId, startedAt) => { const now = new Date().toISOString(); const ms = Math.round(new Date(now) - new Date(startedAt)); upd(p => ({ taskTimers: (p.taskTimers || []).map(t => t.id === timerId ? { ...t, endedAt: now, totalMs: ms } : t) })); supaUpdate('taskTimers', timerId, { endedAt: now, totalMs: ms }); };
+            const startTimer = data => { const t = { id: genId(), taskId: data.taskId || '', taskTitle: data.taskTitle || '', userId: data.userId || '', userName: data.userName || '', stage: data.stage || '', startedAt: new Date().toISOString(), endedAt: null, totalMs: 0, createdAt: new Date().toISOString() }; upd(p => ({ taskTimers: [...(p.taskTimers || []), t] })); };
+            const stopTimer = (timerId, startedAt) => { const now = new Date().toISOString(); const ms = Math.round(new Date(now) - new Date(startedAt)); upd(p => ({ taskTimers: (p.taskTimers || []).map(t => t.id === timerId ? { ...t, endedAt: now, totalMs: ms } : t) })); };
 
             /* ── COSTS ── */
             const addCost = data => { const c = { id: genId(), createdAt: new Date().toISOString(), ...getModUser(), ...data }; upd(p => ({ costs: [...(p.costs || []), c] })); supaSave('costs', c); notify('Custo adicionado ✓'); };
@@ -2003,9 +2002,9 @@
                                                 </div>
                                                 {t.assignee && <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)', marginTop: 6 }}>→ {t.assignee.split(' ')[0]}</div>}
                                                 <ModTag rec={t} />
-                                                <TaskTimerBtn taskId={t.id} taskTitle={t.title} taskStatus={t.status} />
-                                                <div style={{ display: 'flex', gap: 5, marginTop: 9, justifyContent: 'flex-end' }}>
+                                                <div style={{ display: 'flex', gap: 5, marginTop: 9, justifyContent: 'flex-end', alignItems: 'center' }}>
                                                     <button className="btn-secondary" style={{ padding: '3px 7px' }} onClick={() => setEditing(t)}><Ic n="edit" s={11} /></button>
+                                                    <TaskTimerBtn taskId={t.id} taskTitle={t.title} taskStatus={t.status} />
                                                     <button className="btn-danger" style={{ padding: '3px 7px' }} onClick={() => setDel(t)}><Ic n="trash" s={11} /></button>
                                                 </div>
                                             </div>
@@ -4452,6 +4451,7 @@
             const [bulkMode, setBulkMode] = useState(false);
             const [bulkSel, setBulkSel] = useState(new Set());
             const [bulkResp, setBulkResp] = useState('');
+            const [dayMenu, setDayMenu] = useState(null);
 
             useEffect(() => { if (calFocusDate) setFocus(new Date(calFocusDate + 'T12:00')); }, [calFocusDate]);
 
@@ -4512,7 +4512,10 @@
                                     onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) { e.currentTarget.style.outline = 'none'; e.currentTarget.style.background = isT ? 'rgba(255,0,64,.04)' : 'transparent'; } }}
                                     onDrop={e => { e.preventDefault(); e.currentTarget.style.outline = 'none'; e.currentTarget.style.background = isT ? 'rgba(255,0,64,.04)' : 'transparent'; if (!day || !ds) return; try { const d = JSON.parse(e.dataTransfer.getData('text/plain')); if (!d.id) return; if (d.type === 'task') editTask(d.id, { dueDate: ds }); else editCalEvent(d.id, { date: ds }); } catch {} }}>
                                     {day && <>
-                                        <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: isT ? 700 : 400, color: isT ? '#ff0040' : 'rgba(255,255,255,.5)', background: isT ? 'rgba(255,0,64,.2)' : 'transparent', marginBottom: 3, flexShrink: 0 }}>{day}</div>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
+                                            <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: isT ? 700 : 400, color: isT ? '#ff0040' : 'rgba(255,255,255,.5)', background: isT ? 'rgba(255,0,64,.2)' : 'transparent', flexShrink: 0 }}>{day}</div>
+                                            {items.length > 0 && <button onClick={e => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setDayMenu(dayMenu && dayMenu.ds === ds ? null : { ds, items, x: r.left, y: r.bottom }); }} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.35)', cursor: 'pointer', padding: '0 2px', fontSize: 14, lineHeight: 1, flexShrink: 0 }}>⋮</button>}
+                                        </div>
                                         <div onClick={e => e.stopPropagation()} onWheel={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, maxHeight: 58, overflowY: 'auto', scrollbarWidth: 'thin', scrollbarColor: 'rgba(255,255,255,.12) transparent' }}>
                                             {items.map((ev, j) => {
                                                 const linkedTask = !ev._task ? allTasks.find(t => t.fromCalendar && t.dueDate === ev.date && t.title === ev.title) : null;
@@ -4713,9 +4716,6 @@
                                     <Ic n="link" s={11} />Google Agenda
                                 </button>
                             )}
-                            <button className="btn-secondary" onClick={() => { setBulkMode(v => !v); setBulkSel(new Set()); setBulkResp(''); }} style={{ fontSize: 12, gap: 5, ...(bulkMode ? { background: 'rgba(255,200,0,.12)', borderColor: 'rgba(255,200,0,.35)', color: '#ffcc00' } : {}) }}>
-                                ☑ {bulkMode ? 'Sair da Seleção' : 'Selecionar'}
-                            </button>
                             <button className="btn-secondary" onClick={() => { setTextInput(''); setShowTextAdd(true); }} style={{ fontSize: 12, gap: 5 }}>
                                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" /></svg>
                                 Texto → Evento
@@ -4793,6 +4793,7 @@
                                 });
                                 setBulkSel(new Set());
                             }}><Ic n="trash" s={11} />Excluir</button>}
+                            <button className="btn-secondary" style={{ fontSize: 11, marginLeft: 'auto' }} onClick={() => { setBulkMode(false); setBulkSel(new Set()); setBulkResp(''); }}>✕ Sair</button>
                         </div>
                     )}
                     {vMode === 'month' ? renderMonth() : vMode === 'week' ? renderWeek() : renderDay()}
@@ -4800,6 +4801,15 @@
                     {editEv && <EventModal ev={editEv} onClose={() => setEditEv(null)} />}
                     {delEv && <Confirm msg={`Excluir "${delEv.title}"?`} onOk={() => { deleteCalEvent(delEv.id); setDelEv(null); }} onClose={() => setDelEv(null)} />}
                     {delTask && <Confirm msg={`Excluir tarefa "${delTask.title}"?`} onOk={() => { deleteTask(delTask.id); setDelTask(null); }} onClose={() => setDelTask(null)} />}
+                    {dayMenu && (
+                        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 998 }} onClick={() => setDayMenu(null)}>
+                            <div style={{ position: 'fixed', top: dayMenu.y + 4, left: dayMenu.x, background: '#1a1a2e', border: '1px solid rgba(255,255,255,.14)', borderRadius: 8, zIndex: 999, minWidth: 190, padding: '5px 0', boxShadow: '0 8px 28px rgba(0,0,0,.55)' }} onClick={e => e.stopPropagation()}>
+                                <button onClick={() => { setBulkMode(true); setBulkSel(new Set(dayMenu.items.map(i => i.id))); setDayMenu(null); }} style={{ display: 'block', width: '100%', padding: '8px 14px', background: 'none', border: 'none', color: 'rgba(255,255,255,.8)', cursor: 'pointer', textAlign: 'left', fontSize: 12 }}>☑ Selecionar todos do dia</button>
+                                <div style={{ height: 1, background: 'rgba(255,255,255,.07)', margin: '3px 0' }} />
+                                <button onClick={() => { if (!confirm(`Excluir ${dayMenu.items.length} item(s) de ${dayMenu.ds}?`)) return; dayMenu.items.forEach(ev => { if (ev._task) deleteTask(ev.id); else deleteCalEvent(ev.id); }); setDayMenu(null); }} style={{ display: 'block', width: '100%', padding: '8px 14px', background: 'none', border: 'none', color: '#ff6060', cursor: 'pointer', textAlign: 'left', fontSize: 12 }}>🗑 Excluir todos do dia</button>
+                            </div>
+                        </div>
+                    )}
                     {showTextAdd && (
                         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowTextAdd(false)}>
                             <div className="modal-box fade-in" style={{ maxWidth: 460 }}>
@@ -6541,17 +6551,14 @@
             const elapsed = activeTimer ? Math.round((Date.now() - new Date(activeTimer.startedAt)) / 1000) : 0;
             const fmtT = s => `${String(Math.floor(s / 3600)).padStart(2, '0')}:${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
             if (!myId) return null;
+            if (activeTimer) return (
+                <>
+                    <button onClick={e => { e.stopPropagation(); stopTimer(activeTimer.id, activeTimer.startedAt); }} style={{ padding: '3px 7px', fontSize: 9.5, background: 'rgba(255,60,60,.18)', border: '1px solid rgba(255,60,60,.4)', borderRadius: 5, color: '#ff6060', cursor: 'pointer', fontWeight: 700, lineHeight: 1 }}>■</button>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#ff8030', fontFamily: 'monospace' }}>{fmtT(elapsed)}</span>
+                </>
+            );
             return (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,.06)' }}>
-                    {activeTimer ? (
-                        <>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: '#ff8030', fontFamily: 'monospace', flex: 1 }}>⏱ {fmtT(elapsed)}</span>
-                            <button onClick={e => { e.stopPropagation(); stopTimer(activeTimer.id, activeTimer.startedAt); }} style={{ padding: '2px 7px', fontSize: 9.5, background: 'rgba(255,60,60,.18)', border: '1px solid rgba(255,60,60,.4)', borderRadius: 5, color: '#ff6060', cursor: 'pointer', fontWeight: 700 }}>Finalizar</button>
-                        </>
-                    ) : (
-                        <button onClick={e => { e.stopPropagation(); startTimer({ taskId, taskTitle, userId: myId, userName: me?.name || myId, stage: taskStatus }); }} style={{ padding: '2px 7px', fontSize: 9.5, background: 'rgba(100,200,100,.12)', border: '1px solid rgba(100,200,100,.3)', borderRadius: 5, color: 'rgba(100,220,100,.85)', cursor: 'pointer', fontWeight: 600, flex: 1, textAlign: 'center' }}>▶ Iniciar Timer</button>
-                    )}
-                </div>
+                <button onClick={e => { e.stopPropagation(); startTimer({ taskId, taskTitle, userId: myId, userName: me?.name || myId, stage: taskStatus }); }} style={{ padding: '3px 7px', fontSize: 9.5, background: 'rgba(100,200,100,.12)', border: '1px solid rgba(100,200,100,.3)', borderRadius: 5, color: 'rgba(100,220,100,.85)', cursor: 'pointer', fontWeight: 700, lineHeight: 1 }}>▶</button>
             );
         }
 
