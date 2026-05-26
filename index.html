@@ -603,6 +603,7 @@
             const [chatMessages, setChatMessages] = useState([]);
             const viewRef = useRef(view);
             const chatChannelRef = useRef(null);
+            const refreshDataRef = useRef(null);
             useEffect(() => { viewRef.current = view; }, [view]);
 
             useEffect(() => {
@@ -659,10 +660,42 @@
                     });
                 });
                 channel.subscribe(status => {
-                    if (status === 'SUBSCRIBED') console.log('[Neos] Realtime conectado ✓');
-                    if (status === 'CHANNEL_ERROR') console.warn('[Neos] Realtime: verifique a publicação no Supabase');
+                    if (status === 'SUBSCRIBED') {
+                        console.log('[Neos] Realtime conectado ✓');
+                        refreshDataRef.current?.('silent');
+                    }
+                    if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                        console.warn('[Neos] Realtime: canal com problema (' + status + '), fazendo refresh manual...');
+                        setTimeout(() => refreshDataRef.current?.('silent'), 2000);
+                    }
                 });
                 return () => { supabase.removeChannel(channel); };
+            }, [dbReady]);
+
+            /* ── AUTO-REFRESH (visibilidade, online, 5min) ── */
+            useEffect(() => {
+                if (!dbReady) return;
+                let hiddenAt = null;
+                const onVisibility = () => {
+                    if (document.hidden) {
+                        hiddenAt = Date.now();
+                    } else if (hiddenAt && (Date.now() - hiddenAt) > 90000) {
+                        refreshDataRef.current?.('silent');
+                        hiddenAt = null;
+                    }
+                };
+                const onOnline = () => {
+                    console.log('[Neos] Conexão restabelecida, recarregando dados...');
+                    refreshDataRef.current?.('silent');
+                };
+                document.addEventListener('visibilitychange', onVisibility);
+                window.addEventListener('online', onOnline);
+                const iv = setInterval(() => refreshDataRef.current?.('silent'), 5 * 60 * 1000);
+                return () => {
+                    document.removeEventListener('visibilitychange', onVisibility);
+                    window.removeEventListener('online', onOnline);
+                    clearInterval(iv);
+                };
             }, [dbReady]);
 
             /* ── PRESENCE (cursors + online users) ── */
@@ -717,7 +750,8 @@
                 setChatMessages(p => [...p.slice(-99), msg]);
             };
 
-            const refreshData = async () => {
+            const refreshData = async (mode) => {
+                const silent = mode === 'silent';
                 try {
                     const results = await Promise.all(_DB_TABLES.map(t => supabase.from(t).select('*')));
                     const allFailed = results.every(r => r.error);
@@ -726,16 +760,18 @@
                         const next = { ...prev };
                         _DB_TABLES.forEach((t, i) => {
                             if (!results[i].error && results[i].data) {
-                                const remote = results[i].data;
-                                const remoteIds = new Set(remote.map(r => r.id));
-                                next[t] = [...remote, ...(prev[t] || []).filter(r => !remoteIds.has(r.id))];
+                                next[t] = results[i].data;
                             }
                         });
                         return next;
                     });
-                    notify('Dados atualizados ✓');
-                } catch (e) { console.error('[Neos] refreshData:', e.message); notify('Erro ao atualizar dados', 'warn'); }
+                    if (!silent) notify('Dados atualizados ✓');
+                } catch (e) {
+                    console.error('[Neos] refreshData:', e.message);
+                    if (!silent) notify('Erro ao atualizar dados', 'warn');
+                }
             };
+            refreshDataRef.current = refreshData;
 
             const exportJSON = async () => {
                 const ts = new Date();
