@@ -489,46 +489,54 @@
             return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
         }
 
-        async function loadFromDB() {
-            try {
-                const [
-                    { data: clients }, { data: tasks }, { data: financials },
-                    { data: trafficData }, { data: designReqs }, { data: performance },
-                    { data: calEvents }, { data: costs }, { data: clientImages },
-                    { data: leads }, { data: leadInteractions }, { data: goals },
-                    { data: notifications }
-                ] = await Promise.all([
-                    supabase.from('clients').select('*'),
-                    supabase.from('tasks').select('*'),
-                    supabase.from('financials').select('*'),
-                    supabase.from('trafficData').select('*'),
-                    supabase.from('designReqs').select('*'),
-                    supabase.from('performance').select('*'),
-                    supabase.from('calEvents').select('*'),
-                    supabase.from('costs').select('*'),
-                    supabase.from('clientImages').select('*'),
-                    supabase.from('leads').select('*'),
-                    supabase.from('leadInteractions').select('*'),
-                    supabase.from('goals').select('*'),
-                    supabase.from('notifications').select('*'),
-                ]);
-                const store = {
-                    clients: clients || [], tasks: tasks || [], financials: financials || [],
-                    trafficData: trafficData || [], designReqs: designReqs || [],
-                    performance: performance || [], calEvents: calEvents || [], costs: costs || [],
-                    clientImages: clientImages || [], leads: leads || [], leadInteractions: leadInteractions || [],
-                    goals: goals || [], notifications: notifications || [], taskTimers: []
-                };
-                const hasData = Object.values(store).some(arr => arr.length > 0);
-                if (!hasData) {
-                    const local = await loadFromIndexedDB();
-                    if (local && Object.values(local).some(arr => arr.length > 0)) return local;
+        const _DB_TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions', 'goals', 'notifications'];
+
+        async function loadFromDB(onStatus) {
+            for (let attempt = 0; attempt < 3; attempt++) {
+                if (attempt > 0) {
+                    onStatus?.(`Reconectando... (tentativa ${attempt + 1}/3)`);
+                    await new Promise(r => setTimeout(r, 2000 * attempt));
+                } else {
+                    onStatus?.('Carregando dados do banco...');
                 }
-                return store;
-            } catch (e) {
-                console.error('[Neos] Erro ao carregar do Supabase, usando IndexedDB:', e);
-                return await loadFromIndexedDB();
+                try {
+                    const results = await Promise.all(_DB_TABLES.map(t => supabase.from(t).select('*')));
+                    const erroredTables = _DB_TABLES.filter((_, i) => results[i].error);
+
+                    // All tables failed → retry if attempts remain
+                    if (erroredTables.length === _DB_TABLES.length && attempt < 2) {
+                        console.warn(`[Neos] Todas as tabelas falharam (tentativa ${attempt + 1}/3), aguardando...`);
+                        continue;
+                    }
+
+                    // Some tables failed → use IndexedDB cache for those
+                    let localCache = null;
+                    if (erroredTables.length > 0) {
+                        console.warn('[Neos] Tabelas com erro, usando cache local para:', erroredTables.join(', '));
+                        localCache = await loadFromIndexedDB();
+                    }
+
+                    const store = { taskTimers: [] };
+                    _DB_TABLES.forEach((t, i) => {
+                        store[t] = results[i].error ? (localCache?.[t] || []) : (results[i].data || []);
+                    });
+                    return store;
+                } catch (e) {
+                    console.error(`[Neos] loadFromDB tentativa ${attempt + 1}/3 falhou:`, e.message);
+                    if (attempt === 2) {
+                        onStatus?.('Usando cache local...');
+                        const local = await loadFromIndexedDB();
+                        return local || { ..._EMPTY_STORE() };
+                    }
+                }
             }
+            onStatus?.('Usando cache local...');
+            const local = await loadFromIndexedDB();
+            return local || { ..._EMPTY_STORE() };
+        }
+
+        function _EMPTY_STORE() {
+            return { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [], goals: [], notifications: [], taskTimers: [] };
         }
 
         async function loadFromIndexedDB() {
@@ -585,6 +593,7 @@
             const [store, setStore] = useState(EMPTY_STORE);
             const [metaConns, setMetaConns] = useState([]);
             const [dbReady, setDbReady] = useState(false);
+            const [loadMsg, setLoadMsg] = useState('Conectando ao banco de dados...');
             const [view, setView] = useState(userRole === 'admin' ? 'dashboard' : 'kanban');
             const [toast, setToast] = useState(null);
             const [calFocusDate, setCalFocusDate] = useState(null);
@@ -597,18 +606,27 @@
             useEffect(() => { viewRef.current = view; }, [view]);
 
             useEffect(() => {
-                supabase.from('clients').select('id', { count: 'exact', head: true })
-                    .then(({ error }) => setSupaStatus(error ? 'error' : 'ok'))
-                    .catch(() => setSupaStatus('error'));
+                const checkConn = async (retries = 3) => {
+                    for (let i = 0; i < retries; i++) {
+                        if (i > 0) await new Promise(r => setTimeout(r, 2000 * i));
+                        try {
+                            const { error } = await supabase.from('clients').select('id', { count: 'exact', head: true });
+                            if (!error) { setSupaStatus('ok'); return; }
+                        } catch {}
+                    }
+                    setSupaStatus('error');
+                };
+                checkConn();
             }, []);
 
             useEffect(() => {
                 (async () => {
-                    const existing = await loadFromDB();
-                    const hasData = existing.clients.length + existing.tasks.length + existing.financials.length + existing.trafficData.length + existing.designReqs.length + (existing.performance || []).length > 0;
+                    const existing = await loadFromDB(setLoadMsg);
+                    const hasData = (existing.clients?.length || 0) + (existing.tasks?.length || 0) + (existing.financials?.length || 0) + (existing.trafficData?.length || 0) + (existing.designReqs?.length || 0) + (existing.performance?.length || 0) > 0;
                     if (!hasData) {
+                        setLoadMsg('Verificando migração de dados...');
                         const migrated = await migrateFromLocalStorage();
-                        if (migrated) { setStore({ clients: migrated.clients || [], tasks: migrated.tasks || [], financials: migrated.financials || [], trafficData: migrated.trafficData || [], designReqs: migrated.designReqs || [], performance: [], calEvents: [], costs: [] }); }
+                        if (migrated) { setStore({ clients: migrated.clients || [], tasks: migrated.tasks || [], financials: migrated.financials || [], trafficData: migrated.trafficData || [], designReqs: migrated.designReqs || [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [], goals: [], notifications: [], taskTimers: [] }); }
                         else setStore(EMPTY_STORE);
                     } else {
                         setStore(existing);
@@ -701,37 +719,22 @@
 
             const refreshData = async () => {
                 try {
-                    const [
-                        { data: clients }, { data: tasks }, { data: financials },
-                        { data: trafficData }, { data: designReqs }, { data: performance },
-                        { data: calEvents }, { data: costs }
-                    ] = await Promise.all([
-                        supabase.from('clients').select('*'),
-                        supabase.from('tasks').select('*'),
-                        supabase.from('financials').select('*'),
-                        supabase.from('trafficData').select('*'),
-                        supabase.from('designReqs').select('*'),
-                        supabase.from('performance').select('*'),
-                        supabase.from('calEvents').select('*'),
-                        supabase.from('costs').select('*'),
-                    ]);
-                    const merge = (remote, local) => {
-                        const remoteIds = new Set((remote || []).map(r => r.id));
-                        const localOnly = (local || []).filter(r => !remoteIds.has(r.id));
-                        return [...(remote || []), ...localOnly];
-                    };
-                    setStore(prev => ({
-                        clients: merge(clients, prev.clients),
-                        tasks: merge(tasks, prev.tasks),
-                        financials: merge(financials, prev.financials),
-                        trafficData: merge(trafficData, prev.trafficData),
-                        designReqs: merge(designReqs, prev.designReqs),
-                        performance: merge(performance, prev.performance),
-                        calEvents: merge(calEvents, prev.calEvents),
-                        costs: merge(costs, prev.costs),
-                    }));
+                    const results = await Promise.all(_DB_TABLES.map(t => supabase.from(t).select('*')));
+                    const allFailed = results.every(r => r.error);
+                    if (allFailed) throw new Error('Sem conexão com Supabase');
+                    setStore(prev => {
+                        const next = { ...prev };
+                        _DB_TABLES.forEach((t, i) => {
+                            if (!results[i].error && results[i].data) {
+                                const remote = results[i].data;
+                                const remoteIds = new Set(remote.map(r => r.id));
+                                next[t] = [...remote, ...(prev[t] || []).filter(r => !remoteIds.has(r.id))];
+                            }
+                        });
+                        return next;
+                    });
                     notify('Dados atualizados ✓');
-                } catch { notify('Erro ao atualizar dados', 'warn'); }
+                } catch (e) { console.error('[Neos] refreshData:', e.message); notify('Erro ao atualizar dados', 'warn'); }
             };
 
             const exportJSON = async () => {
@@ -1026,9 +1029,14 @@
             const deleteCampaign = id => { upd(p => ({ trafficData: p.trafficData.filter(t => t.id !== id) })); supaDelete('trafficData', id); notify('Campanha excluída', 'warn'); };
 
             if (!dbReady) return (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 16, background: '#07070f', color: 'rgba(255,255,255,.6)' }}>
-                    <div style={{ width: 36, height: 36, border: '3px solid rgba(255,0,64,.3)', borderTopColor: '#ff0040', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                    <span style={{ fontSize: 13 }}>Carregando banco de dados...</span>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', gap: 14, background: '#07070f', color: 'rgba(255,255,255,.55)' }}>
+                    <div style={{ width: 36, height: 36, border: '3px solid rgba(255,0,64,.25)', borderTopColor: '#ff0040', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                    <span style={{ fontSize: 13, maxWidth: 280, textAlign: 'center', lineHeight: 1.5 }}>{loadMsg}</span>
+                    {loadMsg.includes('cache') && (
+                        <button onClick={() => window.location.reload()} style={{ marginTop: 4, padding: '7px 18px', background: 'rgba(255,0,64,.12)', border: '1px solid rgba(255,0,64,.3)', borderRadius: 8, color: 'rgba(255,80,80,.85)', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                            Tentar novamente
+                        </button>
+                    )}
                     <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
                 </div>
             );
