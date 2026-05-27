@@ -4499,8 +4499,21 @@
 
             useEffect(() => { if (calFocusDate) setFocus(new Date(calFocusDate + 'T12:00')); }, [calFocusDate]);
 
+            const _normStr = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+            const _findClient = name => {
+                if (!name) return null;
+                const clients = store.clients || [];
+                const q = _normStr(name);
+                // 1. match exato
+                let m = clients.find(c => _normStr(c.name) === q);
+                // 2. um contém o outro
+                if (!m) m = clients.find(c => { const n = _normStr(c.name); return n.includes(q) || q.includes(n); });
+                // 3. qualquer palavra com 3+ caracteres coincide
+                if (!m) { const words = q.split(' ').filter(w => w.length >= 3); if (words.length) m = clients.find(c => words.some(w => _normStr(c.name).includes(w))); }
+                return m || null;
+            };
             const parseOneEvent = block => {
-                const ev = { title: '', date: '', type: 'Reunião', desc: '', clientName: '' };
+                const ev = { title: '', date: '', type: 'Reunião', desc: '', clientName: '', clientId: '' };
                 const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
                 for (const line of lines) {
                     const lower = line.toLowerCase();
@@ -4513,6 +4526,11 @@
                     else if (lower.startsWith('cliente:')) ev.clientName = val;
                     else if (lower.startsWith('descrição:') || lower.startsWith('descricao:') || lower.startsWith('obs:')) ev.desc = val;
                     else if (!ev.title && line.length > 2 && !lower.includes(':')) ev.title = line;
+                }
+                // Vincular ao cliente cadastrado
+                if (ev.clientName) {
+                    const found = _findClient(ev.clientName);
+                    if (found) { ev.clientId = found.id; ev.clientName = found.name; }
                 }
                 return ev;
             };
@@ -4866,9 +4884,21 @@
                                     Título: Nome do evento<br />
                                     Data: DD/MM/AAAA<br />
                                     Tipo: Reunião | Entrega | Prazo | Outro<br />
-                                    Cliente: Nome do cliente (opcional)<br />
+                                    <span style={{ color: 'rgba(100,200,255,.7)' }}>Cliente: Nome do cliente — reconhecido automaticamente ✦</span><br />
                                     Obs: Descrição (opcional)
                                 </div>
+                                {textInput.trim() && (() => {
+                                    const evs = parseEventTexts(textInput);
+                                    const matched = evs.filter(e => e.clientId);
+                                    const unmatched = evs.filter(e => e.clientName && !e.clientId);
+                                    if (!matched.length && !unmatched.length) return null;
+                                    return (
+                                        <div style={{ fontSize: 10.5, marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                            {matched.map((e, i) => <div key={i} style={{ color: 'rgba(80,210,120,.85)', background: 'rgba(80,210,120,.07)', borderRadius: 5, padding: '3px 8px' }}>✓ "{e.title}" → <strong>{e.clientName}</strong></div>)}
+                                            {unmatched.map((e, i) => <div key={i} style={{ color: 'rgba(255,180,60,.8)', background: 'rgba(255,180,60,.07)', borderRadius: 5, padding: '3px 8px' }}>⚠ "{e.title}" — cliente "{e.clientName}" não encontrado nos cadastros</div>)}
+                                        </div>
+                                    );
+                                })()}
                                 <textarea
                                     className="input-field"
                                     rows={10}
