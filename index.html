@@ -20,6 +20,7 @@
     </script>
     <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -449,6 +450,7 @@
         db.version(5).stores({ leads: 'id, status, responsible, origin, createdAt', leadInteractions: 'id, leadId, type, createdAt' });
         db.version(6).stores({ goals: 'id, category, responsible, createdAt' });
         db.version(7).stores({ notifications: 'id, userId, read, createdAt', taskTimers: 'id, taskId, userId, startedAt, createdAt' });
+        db.version(8).stores({ flowgramProjects: 'id, clientId, type, createdAt', flowgramTemplates: 'id, type, category, createdAt', flowgramAssets: 'id, clientId, type, createdAt' });
         const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [], goals: [], notifications: [], taskTimers: [] };
 
         /* ── SUPABASE HELPERS ───────────────────────────────── */
@@ -3839,9 +3841,495 @@
             );
         }
 
+        /* ── NEOS FLOWGRAM ─────────────────────────────────────── */
+        const FG_SIZES = {
+            'Post':       { w: 1080, h: 1080, label: '1080×1080' },
+            'Carrossel':  { w: 1080, h: 1080, label: '1080×1080 (multi)' },
+            'Story':      { w: 1080, h: 1920, label: '1080×1920' },
+            'Flyer':      { w: 1080, h: 1350, label: '1080×1350' },
+            'Banner':     { w: 1200, h: 628,  label: '1200×628' },
+            'Thumb':      { w: 1280, h: 720,  label: '1280×720' },
+        };
+
+        const FG_TEMPLATES = [
+            { id: 'tpl1', name: 'Minimalista', type: 'Post',      thumb: null, bg: '#1a1a2e', objects: [
+                { kind: 'rect',  left: 80, top: 80, width: 920, height: 920, fill: '#16213e', rx: 24 },
+                { kind: 'text',  left: 540, top: 420, text: 'Seu Título Aqui', fontSize: 64, fill: '#fff', fontWeight: 'bold', textAlign: 'center', originX: 'center' },
+                { kind: 'text',  left: 540, top: 520, text: 'Subtítulo ou descrição curta', fontSize: 28, fill: 'rgba(255,255,255,0.55)', textAlign: 'center', originX: 'center' },
+            ]},
+            { id: 'tpl2', name: 'Gradiente',  type: 'Post',      thumb: null, bg: '#0f0f23', objects: [
+                { kind: 'rect',  left: 0,  top: 700, width: 1080, height: 380, fill: 'rgba(255,0,64,0.85)' },
+                { kind: 'text',  left: 540, top: 780, text: 'TÍTULO IMPACTANTE', fontSize: 72, fill: '#fff', fontWeight: 'bold', textAlign: 'center', originX: 'center' },
+                { kind: 'text',  left: 540, top: 880, text: '@sua_marca', fontSize: 30, fill: 'rgba(255,255,255,0.7)', textAlign: 'center', originX: 'center' },
+            ]},
+            { id: 'tpl3', name: 'Story Clean', type: 'Story',    thumb: null, bg: '#ffffff', objects: [
+                { kind: 'rect',  left: 40, top: 200, width: 1000, height: 1520, fill: '#f5f5f5', rx: 32 },
+                { kind: 'text',  left: 540, top: 800, text: 'Seu Conteúdo', fontSize: 80, fill: '#111', fontWeight: 'bold', textAlign: 'center', originX: 'center' },
+                { kind: 'text',  left: 540, top: 920, text: 'Link na bio ↓', fontSize: 36, fill: '#555', textAlign: 'center', originX: 'center' },
+            ]},
+            { id: 'tpl4', name: 'Banner Ad',  type: 'Banner',    thumb: null, bg: '#0d1117', objects: [
+                { kind: 'rect',  left: 0, top: 0, width: 1200, height: 628, fill: '#161b22' },
+                { kind: 'rect',  left: 0, top: 0, width: 6, height: 628, fill: '#ff0040' },
+                { kind: 'text',  left: 80, top: 220, text: 'Headline Aqui', fontSize: 72, fill: '#fff', fontWeight: 'bold' },
+                { kind: 'text',  left: 80, top: 320, text: 'Chamada de ação ou descrição do produto', fontSize: 30, fill: 'rgba(255,255,255,0.6)' },
+            ]},
+        ];
+
+        function FlowGram() {
+            const { store } = useApp();
+            const canvasRef = useRef(null);
+            const fabricRef = useRef(null);
+            const [creativeType, setCreativeType] = useState('Post');
+            const [clientId, setClientId] = useState('');
+            const [prompt, setPrompt] = useState('');
+            const [generating, setGenerating] = useState(false);
+            const [zoom, setZoom] = useState(0.35);
+            const [pages, setPages] = useState([[]]);
+            const [activePage, setActivePage] = useState(0);
+            const [selObj, setSelObj] = useState(null);
+            const [projects, setProjects] = useState([]);
+            const [showProjects, setShowProjects] = useState(false);
+            const [exportMsg, setExportMsg] = useState('');
+            const [activeTemplate, setActiveTemplate] = useState(null);
+
+            const size = FG_SIZES[creativeType] || FG_SIZES['Post'];
+            const isCarrossel = creativeType === 'Carrossel';
+
+            /* Init / resize Fabric canvas */
+            useEffect(() => {
+                if (!canvasRef.current) return;
+                if (fabricRef.current) { fabricRef.current.dispose(); }
+                if (!window.fabric) return;
+                const fc = new window.fabric.Canvas(canvasRef.current, {
+                    width: size.w,
+                    height: size.h,
+                    backgroundColor: '#1a1a2e',
+                    preserveObjectStacking: true,
+                });
+                fabricRef.current = fc;
+                fc.on('selection:created', e => setSelObj(e.selected?.[0] || null));
+                fc.on('selection:updated', e => setSelObj(e.selected?.[0] || null));
+                fc.on('selection:cleared', () => setSelObj(null));
+                fc.on('object:modified', () => setSelObj(fc.getActiveObject() || null));
+                /* restore page objects */
+                const saved = pages[activePage];
+                if (saved && saved.length) {
+                    window.fabric.util.enlivenObjects(saved, objs => {
+                        objs.forEach(o => fc.add(o));
+                        fc.renderAll();
+                    });
+                }
+                return () => { fc.dispose(); fabricRef.current = null; };
+            }, [creativeType, activePage]);
+
+            /* Save page state before switching */
+            const savePage = () => {
+                if (!fabricRef.current) return;
+                const json = fabricRef.current.getObjects().map(o => o.toObject(['id','kind']));
+                setPages(prev => { const n = [...prev]; n[activePage] = json; return n; });
+            };
+
+            const switchPage = (idx) => {
+                savePage();
+                setActivePage(idx);
+            };
+
+            const addPage = () => {
+                savePage();
+                setPages(prev => [...prev, []]);
+                setActivePage(pages.length);
+            };
+
+            /* Apply template */
+            const applyTemplate = (tpl) => {
+                if (!fabricRef.current || !window.fabric) return;
+                const fc = fabricRef.current;
+                fc.clear();
+                fc.backgroundColor = tpl.bg || '#1a1a2e';
+                tpl.objects.forEach(o => {
+                    if (o.kind === 'rect') {
+                        const r = new window.fabric.Rect({ left: o.left, top: o.top, width: o.width, height: o.height, fill: o.fill, rx: o.rx || 0, ry: o.rx || 0, selectable: true });
+                        fc.add(r);
+                    } else if (o.kind === 'text') {
+                        const t = new window.fabric.IText(o.text, { left: o.left, top: o.top, fontSize: o.fontSize || 40, fill: o.fill || '#fff', fontWeight: o.fontWeight || 'normal', textAlign: o.textAlign || 'left', originX: o.originX || 'left', selectable: true });
+                        fc.add(t);
+                    }
+                });
+                fc.renderAll();
+                setActiveTemplate(tpl.id);
+            };
+
+            /* AI generate (mock: fills template with prompt text) */
+            const handleGenerate = async () => {
+                if (!prompt.trim()) return;
+                setGenerating(true);
+                await new Promise(r => setTimeout(r, 1200));
+                const tpl = FG_TEMPLATES.find(t => t.type === creativeType) || FG_TEMPLATES[0];
+                applyTemplate(tpl);
+                if (!fabricRef.current || !window.fabric) { setGenerating(false); return; }
+                const fc = fabricRef.current;
+                const textObjs = fc.getObjects('i-text');
+                if (textObjs[0]) textObjs[0].set('text', prompt.slice(0, 60));
+                if (textObjs[1]) textObjs[1].set('text', store.clients.find(c => c.id === clientId)?.name || 'Neos Digital');
+                fc.renderAll();
+                setGenerating(false);
+            };
+
+            /* Add text object */
+            const addText = () => {
+                if (!fabricRef.current || !window.fabric) return;
+                const t = new window.fabric.IText('Clique para editar', { left: size.w / 2, top: size.h / 2, originX: 'center', originY: 'center', fontSize: 48, fill: '#ffffff', fontWeight: 'bold' });
+                fabricRef.current.add(t);
+                fabricRef.current.setActiveObject(t);
+                fabricRef.current.renderAll();
+            };
+
+            /* Add image from file */
+            const addImage = (e) => {
+                const file = e.target.files[0];
+                if (!file || !window.fabric) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    window.fabric.Image.fromURL(ev.target.result, img => {
+                        const scale = Math.min(size.w * 0.6 / img.width, size.h * 0.6 / img.height);
+                        img.scale(scale);
+                        img.set({ left: size.w / 2, top: size.h / 2, originX: 'center', originY: 'center' });
+                        fabricRef.current.add(img);
+                        fabricRef.current.setActiveObject(img);
+                        fabricRef.current.renderAll();
+                    });
+                };
+                reader.readAsDataURL(file);
+                e.target.value = '';
+            };
+
+            /* Add color rect */
+            const addRect = () => {
+                if (!fabricRef.current || !window.fabric) return;
+                const r = new window.fabric.Rect({ left: 100, top: 100, width: 300, height: 200, fill: 'rgba(255,0,64,0.7)', rx: 12, ry: 12 });
+                fabricRef.current.add(r);
+                fabricRef.current.setActiveObject(r);
+                fabricRef.current.renderAll();
+            };
+
+            /* Delete selected */
+            const deleteSelected = () => {
+                const fc = fabricRef.current;
+                if (!fc) return;
+                const obj = fc.getActiveObject();
+                if (obj) { fc.remove(obj); fc.renderAll(); setSelObj(null); }
+            };
+
+            /* Export PNG */
+            const exportPNG = async () => {
+                if (!fabricRef.current) return;
+                if (isCarrossel) {
+                    savePage();
+                    const { jsPDF } = window.jspdf;
+                    const pdf = new jsPDF({ orientation: 'portrait', unit: 'px', format: [size.w, size.h] });
+                    for (let i = 0; i < pages.length; i++) {
+                        if (i > 0) pdf.addPage([size.w, size.h]);
+                        const fc2 = new window.fabric.StaticCanvas(null, { width: size.w, height: size.h, backgroundColor: '#1a1a2e' });
+                        await new Promise(res => {
+                            if (!pages[i] || !pages[i].length) { res(); return; }
+                            window.fabric.util.enlivenObjects(pages[i], objs => { objs.forEach(o => fc2.add(o)); fc2.renderAll(); res(); });
+                        });
+                        const dataUrl = fc2.toDataURL({ format: 'jpeg', quality: 0.92 });
+                        pdf.addImage(dataUrl, 'JPEG', 0, 0, size.w, size.h);
+                        fc2.dispose();
+                    }
+                    pdf.save('flowgram-carrossel.pdf');
+                    setExportMsg('PDF exportado!');
+                } else {
+                    const dataUrl = fabricRef.current.toDataURL({ format: 'png', multiplier: 1 });
+                    const a = document.createElement('a');
+                    a.href = dataUrl;
+                    a.download = `flowgram-${creativeType.toLowerCase()}.png`;
+                    a.click();
+                    setExportMsg('PNG exportado!');
+                }
+                setTimeout(() => setExportMsg(''), 2500);
+            };
+
+            /* Save project to IndexedDB */
+            const saveProject = async () => {
+                savePage();
+                const proj = {
+                    id: 'fg_' + Date.now(),
+                    name: (store.clients.find(c => c.id === clientId)?.name || 'Sem cliente') + ' — ' + creativeType,
+                    type: creativeType, clientId,
+                    pages: JSON.stringify(pages),
+                    bg: fabricRef.current?.backgroundColor || '#1a1a2e',
+                    createdAt: new Date().toISOString(),
+                };
+                await db.flowgramProjects.put(proj);
+                setExportMsg('Projeto salvo!');
+                setTimeout(() => setExportMsg(''), 2000);
+            };
+
+            /* Load projects */
+            const loadProjects = async () => {
+                const all = await db.flowgramProjects.toArray();
+                setProjects(all.reverse());
+                setShowProjects(true);
+            };
+
+            /* Load a saved project */
+            const loadProject = async (proj) => {
+                setCreativeType(proj.type);
+                setClientId(proj.clientId || '');
+                const pgs = JSON.parse(proj.pages || '[[]]');
+                setPages(pgs);
+                setActivePage(0);
+                setShowProjects(false);
+            };
+
+            /* Prop panel helpers */
+            const setProp = (key, val) => {
+                if (!selObj) return;
+                selObj.set(key, val);
+                fabricRef.current?.renderAll();
+                setSelObj(Object.assign(Object.create(Object.getPrototypeOf(selObj)), selObj));
+            };
+
+            const isText = selObj && (selObj.type === 'i-text' || selObj.type === 'text');
+            const isImg  = selObj && selObj.type === 'image';
+            const isRect = selObj && selObj.type === 'rect';
+
+            /* canvas wrapper scale to fit panel */
+            const PANEL_W = 680;
+            const dispW = size.w * zoom;
+            const dispH = size.h * zoom;
+
+            return (
+                <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 120px)', gap: 0 }}>
+                    {/* Top toolbar */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0 12px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 15, fontWeight: 700, color: 'rgba(255,255,255,.85)', marginRight: 4 }}>FlowGram</span>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                            {Object.keys(FG_SIZES).map(t => (
+                                <button key={t} onClick={() => { savePage(); setCreativeType(t); setPages([[]]); setActivePage(0); }}
+                                    style={{ padding: '5px 11px', borderRadius: 7, border: '1px solid', fontSize: 11.5, fontWeight: 700, cursor: 'pointer', transition: 'all .2s',
+                                        background: creativeType === t ? 'rgba(255,0,64,.18)' : 'rgba(255,255,255,.04)',
+                                        borderColor: creativeType === t ? 'rgba(255,0,64,.5)' : 'rgba(255,255,255,.1)',
+                                        color: creativeType === t ? '#ff4060' : 'rgba(255,255,255,.55)' }}>
+                                    {t}
+                                </button>
+                            ))}
+                        </div>
+                        <select value={clientId} onChange={e => setClientId(e.target.value)}
+                            style={{ padding: '5px 10px', borderRadius: 7, background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', color: '#fff', fontSize: 12, cursor: 'pointer' }}>
+                            <option value="">— Cliente —</option>
+                            {store.clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                        <div style={{ marginLeft: 'auto', display: 'flex', gap: 7, alignItems: 'center' }}>
+                            {exportMsg && <span style={{ fontSize: 12, color: '#00c864', fontWeight: 700 }}>{exportMsg}</span>}
+                            <button onClick={loadProjects} style={{ padding: '5px 11px', borderRadius: 7, background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.12)', color: 'rgba(255,255,255,.7)', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>📂 Projetos</button>
+                            <button onClick={saveProject} style={{ padding: '5px 11px', borderRadius: 7, background: 'rgba(100,180,255,.08)', border: '1px solid rgba(100,180,255,.3)', color: '#80ccff', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>💾 Salvar</button>
+                            <button onClick={exportPNG} style={{ padding: '5px 14px', borderRadius: 7, background: 'rgba(255,0,64,.14)', border: '1px solid rgba(255,0,64,.4)', color: '#ff4060', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>
+                                {isCarrossel ? '⬇ PDF' : '⬇ PNG'}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 14, flex: 1, minHeight: 0 }}>
+                        {/* Left sidebar */}
+                        <div style={{ width: 220, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+                            {/* AI Prompt */}
+                            <div className="glass" style={{ padding: 14 }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,.4)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: .5 }}>Gerar com IA</div>
+                                <textarea value={prompt} onChange={e => setPrompt(e.target.value)} rows={3}
+                                    placeholder="Descreva o criativo..."
+                                    style={{ width: '100%', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', borderRadius: 7, color: '#fff', padding: '8px 10px', fontSize: 12, resize: 'none', outline: 'none', lineHeight: 1.5 }} />
+                                <button onClick={handleGenerate} disabled={generating}
+                                    style={{ width: '100%', marginTop: 8, padding: '8px 0', borderRadius: 7, background: generating ? 'rgba(255,255,255,.06)' : 'rgba(255,0,64,.18)', border: '1px solid rgba(255,0,64,.4)', color: generating ? 'rgba(255,255,255,.3)' : '#ff4060', fontWeight: 700, fontSize: 12.5, cursor: generating ? 'default' : 'pointer', transition: 'all .2s' }}>
+                                    {generating ? '⟳ Gerando...' : '✦ Gerar Criativo'}
+                                </button>
+                            </div>
+
+                            {/* Add elements */}
+                            <div className="glass" style={{ padding: 14 }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,.4)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: .5 }}>Adicionar</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    <button onClick={addText} style={{ padding: '7px 10px', borderRadius: 6, background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'rgba(255,255,255,.8)', fontSize: 12, cursor: 'pointer', textAlign: 'left', fontWeight: 600 }}>T Texto</button>
+                                    <button onClick={addRect} style={{ padding: '7px 10px', borderRadius: 6, background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'rgba(255,255,255,.8)', fontSize: 12, cursor: 'pointer', textAlign: 'left', fontWeight: 600 }}>▬ Forma</button>
+                                    <label style={{ padding: '7px 10px', borderRadius: 6, background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.1)', color: 'rgba(255,255,255,.8)', fontSize: 12, cursor: 'pointer', fontWeight: 600, display: 'block' }}>
+                                        🖼 Imagem<input type="file" accept="image/*" style={{ display: 'none' }} onChange={addImage} />
+                                    </label>
+                                    {selObj && <button onClick={deleteSelected} style={{ padding: '7px 10px', borderRadius: 6, background: 'rgba(255,40,40,.1)', border: '1px solid rgba(255,40,40,.3)', color: '#ff6060', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>🗑 Excluir seleção</button>}
+                                </div>
+                            </div>
+
+                            {/* Templates */}
+                            <div className="glass" style={{ padding: 14 }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,.4)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: .5 }}>Templates</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    {FG_TEMPLATES.filter(t => t.type === creativeType).length === 0
+                                        ? <div style={{ fontSize: 11, color: 'rgba(255,255,255,.25)', textAlign: 'center', padding: '12px 0' }}>Sem templates para {creativeType}</div>
+                                        : FG_TEMPLATES.filter(t => t.type === creativeType).map(tpl => (
+                                            <button key={tpl.id} onClick={() => applyTemplate(tpl)}
+                                                style={{ padding: '8px 10px', borderRadius: 7, background: activeTemplate === tpl.id ? 'rgba(255,0,64,.12)' : 'rgba(255,255,255,.04)', border: '1px solid ' + (activeTemplate === tpl.id ? 'rgba(255,0,64,.45)' : 'rgba(255,255,255,.08)'), color: activeTemplate === tpl.id ? '#ff6070' : 'rgba(255,255,255,.7)', fontSize: 12, cursor: 'pointer', fontWeight: 600, textAlign: 'left' }}>
+                                                {tpl.name}
+                                            </button>
+                                        ))
+                                    }
+                                    {FG_TEMPLATES.filter(t => t.type !== creativeType && t.type !== 'Story').slice(0, 2).map(tpl => (
+                                        <button key={tpl.id + '_alt'} onClick={() => applyTemplate(tpl)}
+                                            style={{ padding: '8px 10px', borderRadius: 7, background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.06)', color: 'rgba(255,255,255,.35)', fontSize: 11, cursor: 'pointer', fontWeight: 500, textAlign: 'left' }}>
+                                            {tpl.name} <span style={{ fontSize: 9, opacity: .6 }}>({tpl.type})</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Zoom */}
+                            <div className="glass" style={{ padding: '10px 14px' }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,.4)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: .5 }}>Zoom: {Math.round(zoom * 100)}%</div>
+                                <input type="range" min="0.1" max="0.8" step="0.05" value={zoom} onChange={e => setZoom(+e.target.value)}
+                                    style={{ width: '100%', cursor: 'pointer', accentColor: '#ff0040' }} />
+                                <div style={{ display: 'flex', gap: 5, marginTop: 6 }}>
+                                    {[0.25, 0.35, 0.5].map(z => (
+                                        <button key={z} onClick={() => setZoom(z)} style={{ flex: 1, padding: '4px 0', borderRadius: 5, background: zoom === z ? 'rgba(255,0,64,.14)' : 'rgba(255,255,255,.04)', border: '1px solid ' + (zoom === z ? 'rgba(255,0,64,.3)' : 'rgba(255,255,255,.08)'), color: zoom === z ? '#ff4060' : 'rgba(255,255,255,.4)', fontSize: 10, cursor: 'pointer', fontWeight: 600 }}>{Math.round(z * 100)}%</button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Canvas area */}
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: 0 }}>
+                            {isCarrossel && (
+                                <div style={{ display: 'flex', gap: 6, marginBottom: 10, alignItems: 'center' }}>
+                                    {pages.map((_, i) => (
+                                        <button key={i} onClick={() => switchPage(i)}
+                                            style={{ width: 28, height: 28, borderRadius: 7, background: activePage === i ? 'rgba(255,0,64,.2)' : 'rgba(255,255,255,.06)', border: '1px solid ' + (activePage === i ? 'rgba(255,0,64,.5)' : 'rgba(255,255,255,.1)'), color: activePage === i ? '#ff4060' : 'rgba(255,255,255,.5)', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                                            {i + 1}
+                                        </button>
+                                    ))}
+                                    <button onClick={addPage} style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.1)', color: 'rgba(255,255,255,.45)', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,.3)', marginLeft: 4 }}>{pages.length} página{pages.length !== 1 ? 's' : ''}</span>
+                                </div>
+                            )}
+                            <div style={{ position: 'relative', overflow: 'auto', maxHeight: 'calc(100vh - 230px)', background: 'rgba(255,255,255,.03)', borderRadius: 10, border: '1px solid rgba(255,255,255,.07)', padding: 20, display: 'flex', alignItems: 'flex-start', justifyContent: 'center' }}>
+                                <div style={{ position: 'relative', width: dispW, height: dispH, flexShrink: 0 }}>
+                                    <canvas ref={canvasRef} style={{ transformOrigin: 'top left', transform: `scale(${zoom})`, position: 'absolute', top: 0, left: 0, borderRadius: 6, boxShadow: '0 8px 40px rgba(0,0,0,.6)' }} />
+                                </div>
+                            </div>
+                            <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,.25)' }}>{size.label} · {creativeType}</div>
+                        </div>
+
+                        {/* Right properties panel */}
+                        <div style={{ width: 200, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            {!selObj ? (
+                                <div className="glass" style={{ padding: 16, textAlign: 'center' }}>
+                                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,.25)', lineHeight: 1.7 }}>Selecione um elemento no canvas para editar suas propriedades</div>
+                                </div>
+                            ) : (
+                                <div className="glass" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                    <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,.4)', textTransform: 'uppercase', letterSpacing: .5 }}>
+                                        {isText ? 'Texto' : isImg ? 'Imagem' : 'Forma'}
+                                    </div>
+
+                                    {isText && (<>
+                                        <PropRow label="Fonte">
+                                            <select value={selObj.fontFamily || 'Arial'} onChange={e => setProp('fontFamily', e.target.value)}
+                                                style={{ width: '100%', background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 5, color: '#fff', padding: '4px 6px', fontSize: 11 }}>
+                                                {['Arial','Helvetica','Georgia','Verdana','Trebuchet MS','Impact','Times New Roman'].map(f => <option key={f} value={f}>{f}</option>)}
+                                            </select>
+                                        </PropRow>
+                                        <PropRow label="Tamanho">
+                                            <input type="number" min="8" max="400" value={selObj.fontSize || 40} onChange={e => setProp('fontSize', +e.target.value)}
+                                                style={{ width: '100%', background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.12)', borderRadius: 5, color: '#fff', padding: '4px 6px', fontSize: 11 }} />
+                                        </PropRow>
+                                        <PropRow label="Negrito">
+                                            <button onClick={() => setProp('fontWeight', selObj.fontWeight === 'bold' ? 'normal' : 'bold')}
+                                                style={{ padding: '3px 10px', borderRadius: 5, background: selObj.fontWeight === 'bold' ? 'rgba(255,0,64,.2)' : 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff', fontSize: 12, cursor: 'pointer', fontWeight: 700 }}>B</button>
+                                        </PropRow>
+                                        <PropRow label="Alinhamento">
+                                            <div style={{ display: 'flex', gap: 4 }}>
+                                                {['left','center','right'].map(a => (
+                                                    <button key={a} onClick={() => setProp('textAlign', a)}
+                                                        style={{ flex: 1, padding: '3px 0', borderRadius: 5, background: selObj.textAlign === a ? 'rgba(255,0,64,.2)' : 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.1)', color: '#fff', fontSize: 10, cursor: 'pointer' }}>
+                                                        {a === 'left' ? '⬤⬤⬤' : a === 'center' ? ' ⬤⬤ ' : '  ⬤⬤⬤'}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </PropRow>
+                                    </>)}
+
+                                    <PropRow label="Cor">
+                                        <input type="color" value={(selObj.fill && selObj.fill.startsWith('#')) ? selObj.fill : '#ffffff'} onChange={e => setProp('fill', e.target.value)}
+                                            style={{ width: '100%', height: 28, borderRadius: 5, border: '1px solid rgba(255,255,255,.15)', cursor: 'pointer', background: 'none', padding: 1 }} />
+                                    </PropRow>
+                                    <PropRow label="Opacidade">
+                                        <input type="range" min="0" max="1" step="0.05" value={selObj.opacity ?? 1} onChange={e => setProp('opacity', +e.target.value)}
+                                            style={{ width: '100%', cursor: 'pointer', accentColor: '#ff0040' }} />
+                                        <span style={{ fontSize: 10, color: 'rgba(255,255,255,.4)' }}>{Math.round((selObj.opacity ?? 1) * 100)}%</span>
+                                    </PropRow>
+
+                                    {(isRect) && (
+                                        <PropRow label="Raio">
+                                            <input type="range" min="0" max="200" step="2" value={selObj.rx ?? 0} onChange={e => { setProp('rx', +e.target.value); setProp('ry', +e.target.value); }}
+                                                style={{ width: '100%', cursor: 'pointer', accentColor: '#ff0040' }} />
+                                        </PropRow>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Canvas bg color */}
+                            <div className="glass" style={{ padding: '10px 14px' }}>
+                                <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,.4)', marginBottom: 7, textTransform: 'uppercase', letterSpacing: .5 }}>Fundo</div>
+                                <input type="color" value={fabricRef.current?.backgroundColor?.startsWith?.('#') ? fabricRef.current.backgroundColor : '#1a1a2e'}
+                                    onChange={e => { if (fabricRef.current) { fabricRef.current.backgroundColor = e.target.value; fabricRef.current.renderAll(); } }}
+                                    style={{ width: '100%', height: 32, borderRadius: 6, border: '1px solid rgba(255,255,255,.15)', cursor: 'pointer', background: 'none', padding: 2 }} />
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Projects modal */}
+                    {showProjects && (
+                        <div className="modal-overlay" onClick={() => setShowProjects(false)}>
+                            <div className="modal-box" style={{ width: 480, maxHeight: '70vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                                    <h3 style={{ fontSize: 16, fontWeight: 700 }}>Projetos Salvos</h3>
+                                    <button onClick={() => setShowProjects(false)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.5)', cursor: 'pointer', fontSize: 18 }}>✕</button>
+                                </div>
+                                {projects.length === 0 ? (
+                                    <div style={{ textAlign: 'center', padding: '30px 0', color: 'rgba(255,255,255,.3)', fontSize: 13 }}>Nenhum projeto salvo ainda.</div>
+                                ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                        {projects.map(p => (
+                                            <div key={p.id} className="glass glass-hover" style={{ padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => loadProject(p)}>
+                                                <div>
+                                                    <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}</div>
+                                                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginTop: 2 }}>{p.type} · {p.createdAt?.slice(0, 10)}</div>
+                                                </div>
+                                                <button style={{ background: 'rgba(255,0,64,.1)', border: '1px solid rgba(255,0,64,.3)', borderRadius: 6, color: '#ff4060', fontSize: 11, padding: '4px 10px', cursor: 'pointer', fontWeight: 700 }}>Abrir</button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        /* PropRow helper for FlowGram properties panel */
+        function PropRow({ label, children }) {
+            return (
+                <div>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,.35)', marginBottom: 4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: .4 }}>{label}</div>
+                    {children}
+                </div>
+            );
+        }
+
         function Design() {
             const { store, deleteDesign, editDesign } = useApp();
+            const [designTab, setDesignTab] = useState('solicitacoes');
             const [showAdd, setShowAdd] = useState(false);
+
             const [editing, setEditing] = useState(null);
             const [del, setDel] = useState(null);
             const [filt, setFilt] = useState('Todos');
@@ -3872,6 +4360,19 @@
 
             return (
                 <div className="fade-in">
+                    {/* Design tab bar */}
+                    <div style={{ display: 'flex', gap: 0, marginBottom: 22, borderBottom: '1px solid rgba(255,255,255,.08)' }}>
+                        {[['solicitacoes', '🎨 Solicitações'], ['flowgram', '✦ FlowGram']].map(([key, label]) => (
+                            <button key={key} onClick={() => setDesignTab(key)}
+                                style={{ padding: '9px 20px', background: 'none', border: 'none', borderBottom: designTab === key ? '2px solid #ff0040' : '2px solid transparent', color: designTab === key ? '#fff' : 'rgba(255,255,255,.4)', fontWeight: designTab === key ? 700 : 500, fontSize: 13.5, cursor: 'pointer', transition: 'all .2s', marginBottom: -1 }}>
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {designTab === 'flowgram' && <FlowGram />}
+
+                    {designTab === 'solicitacoes' && (<>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
                         <div><h1 style={{ fontSize: 21, fontWeight: 700 }}>Solicitações de Design</h1><p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>{store.designReqs.length} solicitações</p></div>
                         <div style={{ display: 'flex', gap: 8 }}>
@@ -4009,6 +4510,7 @@
                     {editingTask && <DesignTaskModal reqId={editingTask.reqId} task={editingTask.task} onClose={() => setEditingTask(null)} />}
                     {lightbox && <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />}
                     {showModelos && <PromptTemplateModal onClose={() => setShowModelos(false)} />}
+                    </>)}
                 </div>
             );
         }
