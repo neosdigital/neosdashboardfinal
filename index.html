@@ -1602,9 +1602,579 @@
         }
 
         /* ── DASHBOARD ──────────────────────────────────────── */
+        /* ── REPORT EXPORT MODAL ───────────────────────────────── */
+        const _MONTHS_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+        const _MONTHS_SHORT = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+
+        function ReportExportModal({ onClose }) {
+            const { store } = useApp();
+            const now = new Date();
+            const [exportAll, setExportAll] = useState(false);
+            const [fromMonth, setFromMonth] = useState(1);
+            const [fromYear, setFromYear] = useState(now.getFullYear());
+            const [toMonth, setToMonth] = useState(now.getMonth() + 1);
+            const [toYear, setToYear] = useState(now.getFullYear());
+            const [generating, setGenerating] = useState(false);
+            const [progress, setProgress] = useState('');
+
+            const generate = async () => {
+                if (typeof window.jspdf === 'undefined') { alert('jsPDF não carregado. Verifique sua conexão e recarregue.'); return; }
+                setGenerating(true);
+                try {
+                    const { jsPDF } = window.jspdf;
+                    const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+                    const W = 595.28, H = 841.89, M = 40;
+                    const CW = W - M * 2;
+                    let y = M, pageNum = 1;
+
+                    /* ── PDF Helpers ── */
+                    const addPageHeader = (section) => {
+                        doc.setFillColor(13, 12, 37);
+                        doc.rect(0, 0, W, 32, 'F');
+                        doc.setFillColor(230, 51, 85);
+                        doc.rect(0, 31, W, 2, 'F');
+                        doc.setFont('helvetica', 'bold'); doc.setFontSize(8); doc.setTextColor(153, 153, 187);
+                        doc.text('NEOS DIGITAL — ' + section.toUpperCase(), M, 21);
+                        doc.text(periodLabel, W - M, 21, { align: 'right' });
+                        doc.setFontSize(7.5); doc.setTextColor(100, 100, 130);
+                        doc.text('Pág. ' + pageNum, W / 2, H - 15, { align: 'center' });
+                    };
+
+                    const newPage = (section) => {
+                        doc.addPage(); pageNum++; y = 48;
+                        addPageHeader(section);
+                    };
+
+                    const checkY = (need, section) => { if (y + need > H - 40) newPage(section); };
+
+                    const sectionHeader = (title, section) => {
+                        checkY(36, section || title);
+                        doc.setFillColor(26, 26, 46);
+                        doc.rect(M, y, CW, 26, 'F');
+                        doc.setFillColor(230, 51, 85);
+                        doc.rect(M, y, 4, 26, 'F');
+                        doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5); doc.setTextColor(255, 255, 255);
+                        doc.text(title.toUpperCase(), M + 12, y + 17);
+                        y += 34;
+                    };
+
+                    const metricCards = (items, colCount) => {
+                        const colW = (CW - (colCount - 1) * 8) / colCount;
+                        let ci = 0;
+                        items.forEach((m, i) => {
+                            if (i > 0 && i % colCount === 0) { ci = 0; y += 56; }
+                            const mx = M + ci * (colW + 8);
+                            const [r, g, b] = hexToRgb(m.color);
+                            doc.setFillColor(248, 249, 255); doc.roundedRect(mx, y, colW, 46, 4, 4, 'F');
+                            doc.setFillColor(r, g, b); doc.rect(mx, y, 3, 46, 'F');
+                            doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(136, 136, 136);
+                            doc.text(m.label, mx + 9, y + 14);
+                            doc.setFont('helvetica', 'bold');
+                            const valStr = String(m.value);
+                            doc.setFontSize(valStr.length > 10 ? 10 : valStr.length > 6 ? 13 : 18);
+                            doc.setTextColor(r, g, b);
+                            doc.text(valStr, mx + 9, y + 36);
+                            ci++;
+                        });
+                        y += 56;
+                    };
+
+                    const drawTable = (headers, rows, widths, section) => {
+                        checkY(22, section);
+                        let x = M;
+                        doc.setFillColor(26, 26, 46); doc.rect(M, y, CW, 17, 'F');
+                        doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); doc.setTextColor(255, 255, 255);
+                        headers.forEach((h, i) => { doc.text(h, x + 4, y + 11); x += widths[i]; });
+                        y += 17;
+                        rows.slice(0, 60).forEach((row, ri) => {
+                            checkY(14, section);
+                            x = M;
+                            doc.setFillColor(ri % 2 === 0 ? 250 : 255, ri % 2 === 0 ? 250 : 255, ri % 2 === 0 ? 252 : 255);
+                            doc.rect(M, y, CW, 14, 'F');
+                            doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(51, 51, 51);
+                            row.forEach((cell, ci) => {
+                                const s = String(cell == null ? '—' : cell).slice(0, Math.floor(widths[ci] / 5.5));
+                                doc.text(s, x + 4, y + 9.5); x += widths[ci];
+                            });
+                            y += 14;
+                        });
+                        if (rows.length > 60) {
+                            doc.setFontSize(7.5); doc.setTextColor(153, 153, 153);
+                            doc.text(`... e mais ${rows.length - 60} registros`, M + 4, y + 9);
+                            y += 13;
+                        }
+                        y += 10;
+                    };
+
+                    const hexToRgb = (hex) => {
+                        const r = parseInt(hex.slice(1, 3), 16);
+                        const g = parseInt(hex.slice(3, 5), 16);
+                        const b = parseInt(hex.slice(5, 7), 16);
+                        return [r, g, b];
+                    };
+
+                    const fmtBRL = v => 'R$ ' + (v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+                    /* ── Data preparation ── */
+                    const { clients, tasks, financials, costs, leads, designReqs } = store;
+
+                    const inRange = (dateStr) => {
+                        if (exportAll) return true;
+                        if (!dateStr) return false;
+                        const d = new Date(dateStr);
+                        if (isNaN(d.getTime())) return false;
+                        const from = new Date(fromYear, fromMonth - 1, 1);
+                        const to = new Date(toYear, toMonth, 0, 23, 59, 59);
+                        return d >= from && d <= to;
+                    };
+
+                    const filtFin = (financials || []).filter(f => inRange(f.date));
+                    const filtCosts = (costs || []).filter(c => inRange(c.date));
+                    const filtLeads = (leads || []).filter(l => inRange(l.createdAt));
+                    const filtTasks = exportAll ? tasks : tasks.filter(t => inRange(t.createdAt) || !t.createdAt);
+                    const filtDesign = exportAll ? (designReqs || []) : (designReqs || []).filter(r => inRange(r.createdAt) || !r.createdAt);
+
+                    const revenue  = filtFin.filter(f => f.status === 'Pago').reduce((s, f) => s + (f.amount || 0), 0);
+                    const pendingR = filtFin.filter(f => f.status === 'Pendente').reduce((s, f) => s + (f.amount || 0), 0);
+                    const overdueR = filtFin.filter(f => f.status === 'Atrasado').reduce((s, f) => s + (f.amount || 0), 0);
+                    const totalExp = filtCosts.reduce((s, c) => s + (parseFloat(c.amount) || 0), 0);
+                    const netProfit = revenue - totalExp;
+
+                    const activeC = clients.filter(c => c.status === 'Ativo');
+                    const avgTicket = activeC.length > 0 ? activeC.reduce((s, c) => s + (parseFloat(c.plan) || 0), 0) / activeC.length : 0;
+                    const doneTasks = filtTasks.filter(t => t.status === 'Concluído');
+                    const lateTasks = filtTasks.filter(t => t.dueDate && isOverdue(t.dueDate) && t.status !== 'Concluído');
+                    const periodLabel = exportAll ? 'Histórico Completo' : `${_MONTHS_PT[fromMonth-1]}/${fromYear} → ${_MONTHS_PT[toMonth-1]}/${toYear}`;
+
+                    // Revenue by client
+                    const revByClient = {};
+                    filtFin.filter(f => f.status === 'Pago').forEach(f => { const n = f.clientName || 'Sem cliente'; revByClient[n] = (revByClient[n] || 0) + (f.amount || 0); });
+
+                    // Revenue by month
+                    const revByMonth = {};
+                    filtFin.filter(f => f.status === 'Pago' && f.date).forEach(f => {
+                        const d = new Date(f.date); if (isNaN(d)) return;
+                        const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+                        revByMonth[k] = (revByMonth[k] || 0) + (f.amount || 0);
+                    });
+
+                    /* ── PAGE 1: Cover ── */
+                    setProgress('Gerando capa...');
+                    doc.setFillColor(13, 12, 37); doc.rect(0, 0, W, H, 'F');
+                    doc.setFillColor(230, 51, 85); doc.rect(0, 0, W, 5, 'F');
+                    doc.setFillColor(230, 51, 85); doc.rect(0, H - 5, W, 5, 'F');
+
+                    // Try logo
+                    try {
+                        const img = new Image(); img.src = 'images/LOGOTIPO 2 copiar 2.png';
+                        await new Promise(r => { img.onload = r; img.onerror = r; setTimeout(r, 2000); });
+                        if (img.naturalWidth > 0) {
+                            const ratio = Math.min(200 / img.naturalWidth, 80 / img.naturalHeight);
+                            const lW = img.naturalWidth * ratio, lH = img.naturalHeight * ratio;
+                            const lc = document.createElement('canvas'); lc.width = img.naturalWidth; lc.height = img.naturalHeight;
+                            lc.getContext('2d').drawImage(img, 0, 0);
+                            doc.addImage(lc.toDataURL('image/png'), 'PNG', (W - lW) / 2, 110, lW, lH);
+                        }
+                    } catch {}
+
+                    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(102, 102, 170);
+                    doc.text('NEOS DIGITAL', W / 2, 100, { align: 'center' });
+                    doc.setFontSize(34); doc.setTextColor(255, 255, 255);
+                    doc.text('Relatório Gerencial', W / 2, 265, { align: 'center' });
+                    doc.setFont('helvetica', 'normal'); doc.setFontSize(13); doc.setTextColor(153, 153, 187);
+                    doc.text(periodLabel, W / 2, 295, { align: 'center' });
+                    doc.setDrawColor(230, 51, 85); doc.setLineWidth(1.5);
+                    doc.line(W / 2 - 70, 312, W / 2 + 70, 312);
+                    doc.setFontSize(9.5); doc.setTextColor(102, 102, 153);
+                    doc.text(`Gerado em ${new Date().toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`, W / 2, 330, { align: 'center' });
+
+                    // Summary box
+                    doc.setFillColor(22, 22, 50); doc.roundedRect(M + 40, 370, CW - 80, 120, 8, 8, 'F');
+                    doc.setDrawColor(230, 51, 85); doc.setLineWidth(0.8); doc.roundedRect(M + 40, 370, CW - 80, 120, 8, 8, 'D');
+                    const summaryItems = [
+                        ['Clientes Ativos', activeC.length, '#00c864'],
+                        ['Total de Tarefas', filtTasks.length, '#4090ff'],
+                        ['Receita do Período', fmtBRL(revenue), '#e63355'],
+                        ['Leads', filtLeads.length, '#a060ff'],
+                    ];
+                    const sumColW = (CW - 80) / 4;
+                    summaryItems.forEach((s, i) => {
+                        const sx = M + 40 + i * sumColW + 12;
+                        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(102, 102, 153);
+                        doc.text(s[0], sx, 397);
+                        doc.setFont('helvetica', 'bold');
+                        const [r, g, b] = hexToRgb(s[2]);
+                        doc.setTextColor(r, g, b);
+                        doc.setFontSize(String(s[1]).length > 8 ? 11 : 16);
+                        doc.text(String(s[1]), sx, 433);
+                    });
+
+                    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(68, 68, 102);
+                    doc.text('Relatório gerado automaticamente pelo sistema Neos Dashboard — Confidencial', W / 2, H - 28, { align: 'center' });
+
+                    /* ── PAGE 2: Executive Summary ── */
+                    setProgress('Resumo executivo...');
+                    doc.addPage(); pageNum = 2; y = 48;
+                    addPageHeader('Resumo Executivo');
+
+                    sectionHeader('Clientes', 'Resumo Executivo');
+                    metricCards([
+                        { label: 'Total de Clientes', value: clients.length, color: '#4090ff' },
+                        { label: 'Ativos', value: activeC.length, color: '#00c864' },
+                        { label: 'Pausados', value: clients.filter(c => c.status === 'Pausado').length, color: '#ffcc00' },
+                        { label: 'Encerrados', value: clients.filter(c => c.status === 'Encerrado').length, color: '#ff6060' },
+                    ], 4);
+
+                    checkY(100, 'Resumo Executivo');
+                    sectionHeader('Tarefas', 'Resumo Executivo');
+                    metricCards([
+                        { label: 'Total de Tarefas', value: filtTasks.length, color: '#a060ff' },
+                        { label: 'Concluídas', value: doneTasks.length, color: '#00c864' },
+                        { label: 'Em Andamento', value: filtTasks.filter(t => t.status === 'Em Andamento').length, color: '#4090ff' },
+                        { label: 'Atrasadas', value: lateTasks.length, color: '#ff6060' },
+                    ], 4);
+
+                    checkY(100, 'Resumo Executivo');
+                    sectionHeader('Financeiro — ' + periodLabel, 'Resumo Executivo');
+                    metricCards([
+                        { label: 'Receita (Pago)', value: fmtBRL(revenue), color: '#00c864' },
+                        { label: 'Pendente', value: fmtBRL(pendingR), color: '#ffcc00' },
+                        { label: 'Despesas', value: fmtBRL(totalExp), color: '#ff8030' },
+                        { label: 'Lucro Líquido', value: fmtBRL(netProfit), color: netProfit >= 0 ? '#00c864' : '#ff4060' },
+                        { label: 'Ticket Médio', value: fmtBRL(avgTicket), color: '#a060ff' },
+                        { label: 'Em Atraso', value: fmtBRL(overdueR), color: '#ff6060' },
+                    ], 3);
+
+                    /* ── PAGE 3: Financial ── */
+                    setProgress('Seção financeira...');
+                    doc.addPage(); pageNum++; y = 48;
+                    addPageHeader('Financeiro');
+
+                    sectionHeader('Receita por Cliente', 'Financeiro');
+                    const revClientRows = Object.entries(revByClient).sort((a, b) => b[1] - a[1]).map(([n, v]) => [n.slice(0, 36), fmtBRL(v)]);
+                    if (revClientRows.length > 0) drawTable(['Empresa / Projeto', 'Receita'], revClientRows, [CW * 0.65, CW * 0.35], 'Financeiro');
+                    else { doc.setFontSize(8.5); doc.setTextColor(153, 153, 153); doc.text('Nenhum registro de receita no período.', M, y); y += 18; }
+
+                    checkY(60, 'Financeiro');
+                    sectionHeader('Receita Mensal', 'Financeiro');
+                    const monthRows = Object.entries(revByMonth).sort().map(([k, v]) => {
+                        const [yr, mn] = k.split('-');
+                        return [`${_MONTHS_SHORT[parseInt(mn)-1]}/${yr}`, fmtBRL(v)];
+                    });
+                    if (monthRows.length > 0) drawTable(['Mês', 'Receita (Pago)'], monthRows, [CW * 0.5, CW * 0.5], 'Financeiro');
+                    else { doc.setFontSize(8.5); doc.setTextColor(153, 153, 153); doc.text('Nenhuma receita mensal no período.', M, y); y += 18; }
+
+                    checkY(60, 'Financeiro');
+                    sectionHeader('Despesas por Categoria', 'Financeiro');
+                    const expByCategory = {};
+                    filtCosts.forEach(c => { const cat = c.category || 'Outros'; expByCategory[cat] = (expByCategory[cat] || 0) + (parseFloat(c.amount) || 0); });
+                    const expRows = Object.entries(expByCategory).sort((a, b) => b[1] - a[1]).map(([cat, v]) => [cat, fmtBRL(v)]);
+                    if (expRows.length > 0) drawTable(['Categoria', 'Total'], expRows, [CW * 0.6, CW * 0.4], 'Financeiro');
+                    else { doc.setFontSize(8.5); doc.setTextColor(153, 153, 153); doc.text('Nenhuma despesa no período.', M, y); y += 18; }
+
+                    checkY(70, 'Financeiro');
+                    sectionHeader('Resultado', 'Financeiro');
+                    const [gr, gg, gb] = hexToRgb(netProfit >= 0 ? '#00c864' : '#ff4060');
+                    doc.setFillColor(netProfit >= 0 ? 240 : 255, netProfit >= 0 ? 255 : 240, netProfit >= 0 ? 248 : 248);
+                    doc.roundedRect(M, y, CW, 52, 6, 6, 'F');
+                    doc.setDrawColor(gr, gg, gb); doc.setLineWidth(0.6); doc.roundedRect(M, y, CW, 52, 6, 6, 'D');
+                    [[fmtBRL(revenue),'Receita Total','#00c864'],[fmtBRL(totalExp),'Despesas Totais','#ff8030'],[fmtBRL(netProfit),'Lucro Líquido', netProfit >= 0 ? '#00c864' : '#ff4060']].forEach((r, i) => {
+                        const rx = M + i * (CW / 3) + 12;
+                        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(102, 102, 102);
+                        doc.text(r[1], rx, y + 17);
+                        const [rr, rg, rb] = hexToRgb(r[2]);
+                        doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(rr, rg, rb);
+                        doc.text(r[0], rx, y + 38);
+                    });
+                    if (revenue > 0) {
+                        const margin = ((netProfit / revenue) * 100).toFixed(1);
+                        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(102, 102, 102);
+                        doc.text(`Margem de lucro: ${margin}%`, W - M - 8, y + 38, { align: 'right' });
+                    }
+                    y += 66;
+
+                    /* ── PAGE 4: Clients ── */
+                    setProgress('Seção de clientes...');
+                    doc.addPage(); pageNum++; y = 48;
+                    addPageHeader('Clientes');
+
+                    sectionHeader(`Clientes — Total: ${clients.length}`, 'Clientes');
+                    metricCards([
+                        { label: 'Ativos', value: activeC.length, color: '#00c864' },
+                        { label: 'Pausados', value: clients.filter(c => c.status === 'Pausado').length, color: '#ffcc00' },
+                        { label: 'Encerrados', value: clients.filter(c => c.status === 'Encerrado').length, color: '#ff6060' },
+                    ], 3);
+
+                    checkY(40, 'Clientes');
+                    const clientTableRows = clients.map(c => [
+                        (c.name || '—').slice(0, 28),
+                        (c.service || '—').slice(0, 20),
+                        c.status || '—',
+                        c.createdAt ? new Date(c.createdAt).toLocaleDateString('pt-BR') : '—',
+                    ]);
+                    drawTable(['Empresa', 'Serviço', 'Status', 'Entrada'], clientTableRows, [CW*.40, CW*.30, CW*.17, CW*.13], 'Clientes');
+
+                    /* ── PAGE 5: Tasks ── */
+                    setProgress('Seção de tarefas...');
+                    doc.addPage(); pageNum++; y = 48;
+                    addPageHeader('Tarefas');
+
+                    sectionHeader(`Tarefas — Total: ${filtTasks.length}`, 'Tarefas');
+                    metricCards([
+                        { label: 'Concluídas', value: doneTasks.length, color: '#00c864' },
+                        { label: 'Em Andamento', value: filtTasks.filter(t => t.status === 'Em Andamento').length, color: '#4090ff' },
+                        { label: 'A Fazer', value: filtTasks.filter(t => t.status === 'A Fazer').length, color: '#7878c8' },
+                        { label: 'Atrasadas', value: lateTasks.length, color: '#ff6060' },
+                    ], 4);
+
+                    checkY(20, 'Tarefas');
+                    const compRate = filtTasks.length > 0 ? ((doneTasks.length / filtTasks.length) * 100).toFixed(1) : '0';
+                    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(102, 102, 102);
+                    doc.text(`Taxa de conclusão: ${compRate}%`, M, y); y += 16;
+
+                    const taskTableRows = filtTasks.map(t => [
+                        (t.title || '—').slice(0, 30),
+                        (t.assignee || '—').split(' ')[0],
+                        (t.status || '—').slice(0, 14),
+                        t.dueDate || '—',
+                    ]);
+                    drawTable(['Tarefa', 'Responsável', 'Status', 'Prazo'], taskTableRows, [CW*.41, CW*.21, CW*.22, CW*.16], 'Tarefas');
+
+                    if (filtDesign.length > 0) {
+                        checkY(50, 'Tarefas');
+                        sectionHeader(`Solicitações de Design — Total: ${filtDesign.length}`, 'Tarefas');
+                        const dsRows = filtDesign.map(r => [(r.title||'—').slice(0,30),(r.clientName||'—').slice(0,22),r.status||'—',r.dueDate||'—']);
+                        drawTable(['Título','Cliente','Status','Prazo'], dsRows, [CW*.40,CW*.30,CW*.17,CW*.13], 'Tarefas');
+                    }
+
+                    /* ── PAGE 6: Team & Productivity ── */
+                    setProgress('Equipe e produtividade...');
+                    doc.addPage(); pageNum++; y = 48;
+                    addPageHeader('Equipe & Produtividade');
+
+                    sectionHeader('Equipe', 'Equipe & Produtividade');
+                    const teamTableRows = TEAM.map(name => {
+                        const mt = filtTasks.filter(t => t.assignee === name);
+                        const md = mt.filter(t => t.status === 'Concluído').length;
+                        const ml = filtLeads.filter(l => l.responsible === name).length;
+                        return [name, String(mt.length), String(md), String(ml)];
+                    });
+                    drawTable(['Colaborador','Tarefas Vinculadas','Concluídas','Leads'], teamTableRows, [CW*.40,CW*.22,CW*.20,CW*.18], 'Equipe');
+
+                    checkY(60, 'Equipe & Produtividade');
+                    sectionHeader('Distribuição de Tarefas por Status', 'Equipe & Produtividade');
+                    const kanbanRows = COLS.map(s => {
+                        const cnt = filtTasks.filter(t => t.status === s).length;
+                        const pct = filtTasks.length > 0 ? ((cnt / filtTasks.length) * 100).toFixed(1) : '0';
+                        return [s, String(cnt), pct + '%'];
+                    });
+                    drawTable(['Status Kanban','Quantidade','Percentual'], kanbanRows, [CW*.50,CW*.25,CW*.25], 'Equipe');
+
+                    const timers = (store.taskTimers || []).filter(t => t.endedAt && t.totalMs > 0);
+                    if (timers.length > 0) {
+                        const fmtMs = ms => { const h = Math.floor(ms/3600000), m = Math.floor((ms%3600000)/60000); return h > 0 ? `${h}h ${m}m` : `${m}m`; };
+                        checkY(60, 'Equipe & Produtividade');
+                        sectionHeader('Registros de Tempo (Timer)', 'Equipe & Produtividade');
+                        const avgMs = timers.reduce((s, t) => s + (t.totalMs || 0), 0) / timers.length;
+                        doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(102,102,102);
+                        doc.text(`${timers.length} sessões registradas · Tempo médio: ${fmtMs(avgMs)}`, M, y); y += 14;
+                        const byUser = {};
+                        timers.forEach(t => { if (!byUser[t.userName]) byUser[t.userName] = { c: 0, total: 0 }; byUser[t.userName].c++; byUser[t.userName].total += t.totalMs || 0; });
+                        const timerRows = Object.entries(byUser).sort((a,b) => b[1].total - a[1].total).map(([n, d]) => [n, String(d.c), fmtMs(d.total), fmtMs(d.total/d.c)]);
+                        drawTable(['Colaborador','Sessões','Tempo Total','Média/Sessão'], timerRows, [CW*.36,CW*.18,CW*.26,CW*.20], 'Equipe');
+                    }
+
+                    /* ── PAGE 7: Marketing / Leads (only if data exists) ── */
+                    if (filtLeads.length > 0) {
+                        setProgress('Marketing e leads...');
+                        doc.addPage(); pageNum++; y = 48;
+                        addPageHeader('Marketing & Leads');
+
+                        const wonLeads = filtLeads.filter(l => l.status === 'Fechado Ganho');
+                        const convRate = filtLeads.length > 0 ? ((wonLeads.length / filtLeads.length) * 100).toFixed(1) : '0';
+
+                        sectionHeader(`Marketing & Leads — Total: ${filtLeads.length}`, 'Marketing');
+                        metricCards([
+                            { label: 'Total de Leads', value: filtLeads.length, color: '#4090ff' },
+                            { label: 'Fechados (Ganho)', value: wonLeads.length, color: '#00c864' },
+                            { label: 'Perdidos', value: filtLeads.filter(l => l.status === 'Perdido').length, color: '#ff6060' },
+                            { label: 'Taxa de Conversão', value: convRate + '%', color: '#a060ff' },
+                        ], 4);
+
+                        checkY(50, 'Marketing');
+                        sectionHeader('Funil de Leads por Etapa', 'Marketing');
+                        const LEAD_STAGES = ['Novos Leads','Contato Inicial','Qualificação','Proposta Enviada','Follow-up','Em Negociação','Fechado Ganho','Perdido'];
+                        const leadStageRows = LEAD_STAGES.map(s => {
+                            const cnt = filtLeads.filter(l => l.status === s).length;
+                            return [s, String(cnt), filtLeads.length > 0 ? ((cnt/filtLeads.length)*100).toFixed(1)+'%' : '0%'];
+                        });
+                        drawTable(['Etapa do Funil', 'Leads', '% do Total'], leadStageRows, [CW*.55, CW*.22, CW*.23], 'Marketing');
+
+                        const totalVal = filtLeads.reduce((s, l) => s + (parseFloat(l.value) || 0), 0);
+                        if (totalVal > 0) {
+                            checkY(20, 'Marketing');
+                            doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(102,102,102);
+                            doc.text(`Valor total do pipeline: ${fmtBRL(totalVal)} · Valor ganho: ${fmtBRL(wonLeads.reduce((s,l) => s+(parseFloat(l.value)||0),0))}`, M, y); y += 16;
+                        }
+                    }
+
+                    /* ── PAGE 8: Insights & Footer ── */
+                    setProgress('Gerando insights...');
+                    doc.addPage(); pageNum++; y = 48;
+                    addPageHeader('Insights & Conclusão');
+
+                    sectionHeader('Observações e Insights Automáticos', 'Insights');
+
+                    const insights = [];
+                    if (activeC.length > 0) insights.push(`A agência mantém ${activeC.length} cliente${activeC.length > 1 ? 's' : ''} ativo${activeC.length > 1 ? 's' : ''} no momento.`);
+                    if (avgTicket > 0) insights.push(`O ticket médio atual é ${fmtBRL(avgTicket)} por cliente ativo.`);
+                    if (revenue > 0 && totalExp > 0) {
+                        const m = ((netProfit / revenue) * 100).toFixed(1);
+                        insights.push(netProfit > 0 ? `Margem de lucro de ${m}% no período — lucro líquido de ${fmtBRL(netProfit)}.` : `Atenção: resultado negativo no período. Lucro líquido: ${fmtBRL(netProfit)}.`);
+                    } else if (revenue > 0) insights.push(`Receita de ${fmtBRL(revenue)} registrada no período.`);
+
+                    const topRevClient = Object.entries(revByClient).sort((a,b) => b[1]-a[1])[0];
+                    if (topRevClient) insights.push(`Maior receita por cliente: "${topRevClient[0]}" com ${fmtBRL(topRevClient[1])}.`);
+
+                    if (filtTasks.length > 0) {
+                        const cp = ((doneTasks.length / filtTasks.length) * 100).toFixed(0);
+                        if (parseInt(cp) >= 70) insights.push(`Alta taxa de conclusão de tarefas: ${cp}%. Ótimo desempenho operacional.`);
+                        else if (parseInt(cp) >= 40) insights.push(`Taxa de conclusão de tarefas em ${cp}%. Há espaço para melhoria.`);
+                        else insights.push(`Taxa de conclusão de tarefas baixa: ${cp}%. Atenção ao backlog.`);
+                    }
+                    if (lateTasks.length > 0) insights.push(`Gargalo: ${lateTasks.length} tarefa${lateTasks.length > 1 ? 's' : ''} atrasada${lateTasks.length > 1 ? 's' : ''} aguardando resolução.`);
+
+                    if (filtLeads.length > 0) {
+                        const cr = ((filtLeads.filter(l => l.status === 'Fechado Ganho').length / filtLeads.length) * 100).toFixed(1);
+                        insights.push(`Taxa de conversão de leads: ${cr}%${parseFloat(cr) >= 30 ? ' — acima da média do mercado.' : '.'}`);
+                    }
+
+                    const topTeam = TEAM.map(n => ({ n, done: filtTasks.filter(t => t.assignee === n && t.status === 'Concluído').length })).sort((a,b) => b.done - a.done)[0];
+                    if (topTeam && topTeam.done > 0) insights.push(`Colaborador mais produtivo: ${topTeam.n} com ${topTeam.done} tarefa${topTeam.done > 1 ? 's' : ''} concluída${topTeam.done > 1 ? 's' : ''}.`);
+
+                    const topMonthEntry = Object.entries(revByMonth).sort((a,b) => b[1]-a[1])[0];
+                    if (topMonthEntry) {
+                        const [k, v] = topMonthEntry;
+                        const [yr, mn] = k.split('-');
+                        insights.push(`Melhor mês de faturamento: ${_MONTHS_SHORT[parseInt(mn)-1]}/${yr} com ${fmtBRL(v)}.`);
+                    }
+
+                    if (insights.length === 0) insights.push('Nenhum dado suficiente para gerar insights. Adicione clientes, tarefas e registros financeiros.');
+
+                    insights.forEach(ins => {
+                        checkY(28, 'Insights');
+                        const [rr, rg, rb] = hexToRgb('#e63355');
+                        doc.setFillColor(rr, rg, rb); doc.circle(M + 4, y - 2.5, 2.5, 'F');
+                        doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(26, 26, 46);
+                        const lines = doc.splitTextToSize(ins, CW - 18);
+                        doc.text(lines, M + 14, y);
+                        y += lines.length * 13 + 9;
+                    });
+
+                    // Footer block
+                    const footY = Math.max(y + 30, H - 100);
+                    doc.setFillColor(13, 12, 37); doc.rect(0, footY, W, H - footY, 'F');
+                    doc.setFillColor(230, 51, 85); doc.rect(0, footY, W, 2, 'F');
+                    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5); doc.setTextColor(153, 153, 187);
+                    doc.text('Relatório gerado automaticamente pelo sistema Neos Dashboard.', W / 2, footY + 22, { align: 'center' });
+                    doc.text('Este documento não substitui análises contábeis ou fiscais profissionais.', W / 2, footY + 35, { align: 'center' });
+                    doc.setFontSize(7.5); doc.setTextColor(102, 102, 136);
+                    doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, W / 2, footY + 50, { align: 'center' });
+                    doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(230, 51, 85);
+                    doc.text('NEOS DIGITAL', W / 2, footY + 70, { align: 'center' });
+
+                    setProgress('Salvando PDF...');
+                    await new Promise(r => setTimeout(r, 80));
+                    doc.save(`Relatorio_Agencia_${new Date().toISOString().slice(0, 10)}.pdf`);
+                    onClose();
+                } catch (err) {
+                    console.error('[Neos] Erro ao gerar PDF:', err);
+                    alert('Erro ao gerar PDF: ' + err.message);
+                } finally {
+                    setGenerating(false);
+                    setProgress('');
+                }
+            };
+
+            return (
+                <div className="modal-overlay" onClick={onClose}>
+                    <div className="modal-box" style={{ width: 500, maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
+                            <div>
+                                <h3 style={{ fontSize: 17, fontWeight: 700 }}>📄 Exportar Relatório</h3>
+                                <p style={{ fontSize: 11.5, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>Relatório gerencial completo da agência em PDF</p>
+                            </div>
+                            <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.4)', cursor: 'pointer', fontSize: 20, lineHeight: 1 }}>✕</button>
+                        </div>
+
+                        {/* Export all */}
+                        <div style={{ background: 'rgba(255,255,255,.04)', borderRadius: 9, padding: '11px 14px', marginBottom: 12, border: '1px solid rgba(255,255,255,.08)', cursor: 'pointer' }} onClick={() => setExportAll(v => !v)}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                                <input type="checkbox" checked={exportAll} readOnly style={{ width: 16, height: 16, accentColor: '#ff0040', cursor: 'pointer', flexShrink: 0 }} />
+                                <div>
+                                    <div style={{ fontSize: 13, fontWeight: 600 }}>Exportar histórico completo</div>
+                                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', marginTop: 1 }}>Ignora filtros de data e inclui todos os registros do sistema</div>
+                                </div>
+                            </label>
+                        </div>
+
+                        {/* Period selection */}
+                        {!exportAll && (
+                            <div style={{ background: 'rgba(255,255,255,.04)', borderRadius: 9, padding: '14px', border: '1px solid rgba(255,255,255,.08)', marginBottom: 14 }}>
+                                <div style={{ fontSize: 10.5, fontWeight: 700, color: 'rgba(255,255,255,.38)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: .6 }}>Intervalo de Período</div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                                    {[['Mês / Ano Inicial', fromMonth, fromYear, setFromMonth, setFromYear], ['Mês / Ano Final', toMonth, toYear, setToMonth, setToYear]].map(([lbl, mo, yr, setMo, setYr]) => (
+                                        <div key={lbl}>
+                                            <label style={{ fontSize: 11, color: 'rgba(255,255,255,.45)', display: 'block', marginBottom: 6 }}>{lbl}</label>
+                                            <div style={{ display: 'flex', gap: 6 }}>
+                                                <select value={mo} onChange={e => setMo(+e.target.value)} style={{ flex: 1, padding: '7px 6px', borderRadius: 7, background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.12)', color: '#fff', fontSize: 11.5 }}>
+                                                    {_MONTHS_PT.map((m, i) => <option key={i} value={i+1}>{m}</option>)}
+                                                </select>
+                                                <select value={yr} onChange={e => setYr(+e.target.value)} style={{ width: 74, padding: '7px 5px', borderRadius: 7, background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.12)', color: '#fff', fontSize: 11.5 }}>
+                                                    {[2023,2024,2025,2026,2027].map(y => <option key={y} value={y}>{y}</option>)}
+                                                </select>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div style={{ marginTop: 10, padding: '7px 10px', background: 'rgba(255,255,255,.03)', borderRadius: 6, fontSize: 11, color: 'rgba(255,255,255,.38)' }}>
+                                    Período selecionado: <strong style={{ color: 'rgba(255,255,255,.7)' }}>{_MONTHS_PT[fromMonth-1]}/{fromYear} → {_MONTHS_PT[toMonth-1]}/{toYear}</strong>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Sections preview */}
+                        <div style={{ background: 'rgba(255,255,255,.03)', borderRadius: 8, padding: '10px 14px', marginBottom: 18, border: '1px solid rgba(255,255,255,.06)' }}>
+                            <div style={{ fontSize: 10.5, fontWeight: 700, color: 'rgba(255,255,255,.38)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: .5 }}>Seções do relatório</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 3 }}>
+                                {['📋 Capa','📊 Resumo Executivo','💰 Financeiro','👥 Clientes','✅ Tarefas & Projetos','👤 Equipe & Produtividade','📣 Marketing & Leads','💡 Insights Automáticos'].map(s => (
+                                    <div key={s} style={{ fontSize: 11, color: 'rgba(255,255,255,.5)', padding: '2px 0' }}>{s}</div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div style={{ fontSize: 10.5, color: 'rgba(255,150,150,.6)', background: 'rgba(255,0,0,.04)', border: '1px solid rgba(255,0,0,.12)', borderRadius: 7, padding: '8px 12px', marginBottom: 16 }}>
+                            🔒 Dados sensíveis protegidos: telefones, e-mails, CPF, CNPJ e tokens são excluídos automaticamente.
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                            <button onClick={onClose} className="btn-secondary" disabled={generating} style={{ opacity: generating ? .5 : 1 }}>Cancelar</button>
+                            <button onClick={generate} disabled={generating}
+                                style={{ padding: '10px 22px', borderRadius: 8, background: generating ? 'rgba(255,0,64,.06)' : 'rgba(255,0,64,.18)', border: '1px solid rgba(255,0,64,.4)', color: generating ? 'rgba(255,255,255,.3)' : '#ff4060', fontWeight: 700, fontSize: 13, cursor: generating ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 8, minWidth: 160, justifyContent: 'center', transition: 'all .2s' }}>
+                                {generating ? (
+                                    <><span style={{ display: 'inline-block', width: 13, height: 13, border: '2px solid rgba(255,64,96,.25)', borderTopColor: '#ff4060', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />{progress || 'Gerando...'}</>
+                                ) : '📄 Gerar PDF'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         function Dashboard() {
             const { store, setView } = useApp();
             const { clients, tasks, financials, trafficData } = store;
+            const [showReport, setShowReport] = useState(false);
             const active = clients.filter(c => c.status === 'Ativo').length;
             const paid = financials.filter(f => f.status === 'Pago').reduce((s, f) => s + (f.amount || 0), 0);
             const pending = financials.filter(f => f.status === 'Pendente').reduce((s, f) => s + (f.amount || 0), 0);
@@ -1656,9 +2226,15 @@
 
             return (
                 <div className="fade-in">
-                    <div style={{ marginBottom: 20 }}>
-                        <h1 style={{ fontSize: 21, fontWeight: 700 }}>Dashboard</h1>
-                        <p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>{new Date().toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                    <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 10 }}>
+                        <div>
+                            <h1 style={{ fontSize: 21, fontWeight: 700 }}>Dashboard</h1>
+                            <p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>{new Date().toLocaleDateString('pt-BR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                        </div>
+                        <button onClick={() => setShowReport(true)} style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '8px 16px', borderRadius: 8, background: 'rgba(255,0,64,.12)', border: '1px solid rgba(255,0,64,.35)', color: '#ff4060', fontWeight: 700, fontSize: 12.5, cursor: 'pointer', transition: 'all .2s', flexShrink: 0 }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,0,64,.2)'} onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,0,64,.12)'}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                            Exportar Relatório
+                        </button>
                     </div>
                     {(overdueTasks.length > 0 || nearDue.length > 0) && (
                         <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
@@ -1936,6 +2512,7 @@
                             </div>
                         );
                     })()}
+                    {showReport && <ReportExportModal onClose={() => setShowReport(false)} />}
                 </div>
             );
         }
