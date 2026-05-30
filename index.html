@@ -6598,7 +6598,7 @@
             const [showAnalysisFromModal, setShowAnalysisFromModal] = useState(false);
             const set = (k,v) => setF(p => ({ ...p, [k]:v }));
             const save = () => { if (!f.name.trim()) return; lead ? editLead(lead.id, f) : addLead(f); onClose(); };
-            return (
+            return (<React.Fragment>
                 <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.75)', zIndex:2000, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
                     <div className="glass" style={{ width:540, maxHeight:'88vh', overflowY:'auto', borderRadius:16, padding:'24px 28px' }}>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
@@ -6640,6 +6640,7 @@
                     </div>
                 </div>
                 {showAnalysisFromModal && <StrategicAnalysisModal lead={f} onClose={()=>setShowAnalysisFromModal(false)} />}
+            </React.Fragment>
             );
         }
 
