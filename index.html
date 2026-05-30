@@ -6595,6 +6595,7 @@
             const { addLead, editLead } = useApp();
             const blank = { name:'', company:'', phone:'', email:'', origin:'Manual', responsible:'', status:'Novos Leads', priority:'Média', score:0, value:'', tags:'', notes:'', nextAction:'', nextActionDate:'', qualification:'' };
             const [f, setF] = useState(lead ? { ...blank, ...lead } : blank);
+            const [showAnalysisFromModal, setShowAnalysisFromModal] = useState(false);
             const set = (k,v) => setF(p => ({ ...p, [k]:v }));
             const save = () => { if (!f.name.trim()) return; lead ? editLead(lead.id, f) : addLead(f); onClose(); };
             return (
@@ -6623,12 +6624,22 @@
                             <FRow label="Tags (separadas por vírgula)"><input className="input-field" style={{ fontSize:13 }} value={f.tags} onChange={e=>set('tags',e.target.value)} placeholder="ex: quente, site, 2024" /></FRow>
                             <FRow label="Observações"><textarea className="input-field" style={{ fontSize:13, minHeight:68, resize:'vertical' }} value={f.notes} onChange={e=>set('notes',e.target.value)} placeholder="Observações internas..." /></FRow>
                         </div>
-                        <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:20 }}>
-                            <button className="btn-secondary" onClick={onClose}>Cancelar</button>
-                            <button className="btn-primary" onClick={save}>{lead ? 'Salvar' : 'Criar Lead'}</button>
+                        <div style={{ marginTop:20, paddingTop:16, borderTop:'1px solid rgba(255,255,255,.07)' }}>
+                            <button onClick={()=>setShowAnalysisFromModal(true)}
+                                style={{ width:'100%', display:'flex', alignItems:'center', justifyContent:'center', gap:8, padding:'10px 0', borderRadius:8, background:'linear-gradient(135deg,rgba(230,51,85,.15),rgba(160,80,255,.12))', border:'1px solid rgba(230,51,85,.4)', color:'#ff6070', fontWeight:700, fontSize:12.5, cursor:'pointer', marginBottom:12, transition:'all .2s' }}
+                                onMouseEnter={e=>e.currentTarget.style.background='linear-gradient(135deg,rgba(230,51,85,.25),rgba(160,80,255,.2))'}
+                                onMouseLeave={e=>e.currentTarget.style.background='linear-gradient(135deg,rgba(230,51,85,.15),rgba(160,80,255,.12))'}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                                Gerar Análise Estratégica
+                            </button>
+                            <div style={{ display:'flex', gap:10, justifyContent:'flex-end' }}>
+                                <button className="btn-secondary" onClick={onClose}>Cancelar</button>
+                                <button className="btn-primary" onClick={save}>{lead ? 'Salvar' : 'Criar Lead'}</button>
+                            </div>
                         </div>
                     </div>
                 </div>
+                {showAnalysisFromModal && <StrategicAnalysisModal lead={f} onClose={()=>setShowAnalysisFromModal(false)} />}
             );
         }
 
@@ -6659,9 +6670,789 @@
             );
         }
 
+        /* ── STRATEGIC ANALYSIS MODAL ─────────────────────────── */
+        const _SA_OBJECTIVES = ['Gerar mais leads','Aumentar vendas','Fortalecer marca','Crescer nas redes sociais','Melhorar posicionamento','Melhorar conversão','Lançar produto','Outros'];
+        const _SA_STEP_LABELS = ['Informações Básicas','Identidade da Marca','Objetivos','Presença Digital'];
+
+        function StrategicAnalysisModal({ lead, onClose }) {
+            const now2 = new Date();
+            const blank2 = { companyName: lead?.company||'', responsible: lead?.name||'', segment:'', cityState:'', website:'', instagram:'', facebook:'', linkedin:'', tiktok:'', youtube:'', companyDesc:'', valueProposition:'', differentials:'', targetAudience:'', productsServices:'', competitors:'', objectives:[], postsPerWeek:'2', paidTraffic:false, marketingTeam:false, visualIdentity:false, contentStrategy:false, hasCRM:false, hasAutomations:false, logoData:null, logoName:'', observations:'' };
+            const [fd, setFd] = useState(blank2);
+            const [step, setStep] = useState(1);
+            const [generating, setGenerating] = useState(false);
+            const [progress, setProgress] = useState('');
+            const [pct, setPct] = useState(0);
+
+            const sf = (k, v) => setFd(p => ({ ...p, [k]: v }));
+            const togObj = o => setFd(p => ({ ...p, objectives: p.objectives.includes(o) ? p.objectives.filter(x => x !== o) : [...p.objectives, o] }));
+            const togBool = k => setFd(p => ({ ...p, [k]: !p[k] }));
+
+            const handleLogo = e => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = ev => { sf('logoData', ev.target.result); sf('logoName', file.name); };
+                reader.readAsDataURL(file);
+                e.target.value = '';
+            };
+
+            const calcScore = () => {
+                let s = 0;
+                const p = parseInt(fd.postsPerWeek) || 0;
+                if (p >= 7) s += 40; else if (p >= 5) s += 34; else if (p >= 3) s += 26; else if (p >= 1) s += 14; else s += 0;
+                if (fd.paidTraffic) s += 15;
+                if (fd.marketingTeam) s += 10;
+                if (fd.visualIdentity) s += 12;
+                if (fd.contentStrategy) s += 12;
+                if (fd.hasCRM) s += 6;
+                if (fd.hasAutomations) s += 5;
+                return Math.min(s, 100);
+            };
+
+            const scoreInfo = sc => {
+                if (sc <= 20) return { label:'Crítico', color:'#ff4060', rgb:[255,64,96] };
+                if (sc <= 40) return { label:'Baixo', color:'#ff8030', rgb:[255,128,48] };
+                if (sc <= 60) return { label:'Médio', color:'#ffcc00', rgb:[255,204,0] };
+                if (sc <= 80) return { label:'Bom', color:'#00c864', rgb:[0,200,100] };
+                return { label:'Excelente', color:'#4090ff', rgb:[64,144,255] };
+            };
+
+            const generatePDF = async () => {
+                if (typeof window.jspdf === 'undefined') { alert('jsPDF não carregado.'); return; }
+                setGenerating(true);
+                try {
+                    const { jsPDF } = window.jspdf;
+                    const doc = new jsPDF({ orientation:'portrait', unit:'pt', format:'a4' });
+                    const W = 595.28, H = 841.89, M = 42, CW = W - M * 2;
+                    let y = M, pg = 1;
+                    const score = calcScore();
+                    const si = scoreInfo(score);
+                    const today = new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric'});
+
+                    /* helpers */
+                    const hr = hex => [parseInt(hex.slice(1,3),16),parseInt(hex.slice(3,5),16),parseInt(hex.slice(5,7),16)];
+                    const setFill = hex => { const [r,g,b]=hr(hex); doc.setFillColor(r,g,b); };
+                    const setTxt = hex => { const [r,g,b]=hr(hex); doc.setTextColor(r,g,b); };
+                    const setStroke = hex => { const [r,g,b]=hr(hex); doc.setDrawColor(r,g,b); };
+
+                    /* NEOS logo load */
+                    let nL=null, nW=0, nH=0;
+                    try {
+                        const img=new Image(); img.src='images/LOGOTIPO 2 copiar 2.png';
+                        await new Promise(r=>{img.onload=r;img.onerror=r;setTimeout(r,2000);});
+                        if (img.naturalWidth>0){
+                            const rat=Math.min(110/img.naturalWidth,38/img.naturalHeight);
+                            nW=img.naturalWidth*rat; nH=img.naturalHeight*rat;
+                            const lc=document.createElement('canvas'); lc.width=img.naturalWidth; lc.height=img.naturalHeight;
+                            lc.getContext('2d').drawImage(img,0,0); nL=lc.toDataURL('image/png');
+                        }
+                    } catch {}
+
+                    /* client logo load */
+                    let cL=null, cLW=0, cLH=0;
+                    if (fd.logoData) {
+                        try {
+                            const img=new Image(); img.src=fd.logoData;
+                            await new Promise(r=>{img.onload=r;img.onerror=r;setTimeout(r,1500);});
+                            if (img.naturalWidth>0){
+                                const rat=Math.min(150/img.naturalWidth,70/img.naturalHeight);
+                                cLW=img.naturalWidth*rat; cLH=img.naturalHeight*rat;
+                                cL=fd.logoData;
+                            }
+                        } catch {}
+                    }
+
+                    const pgHeader = (section) => {
+                        doc.setFillColor(13,12,37); doc.rect(0,0,W,33,'F');
+                        doc.setFillColor(230,51,85); doc.rect(0,32,W,2,'F');
+                        if (nL) doc.addImage(nL,'PNG',M,(33-nH)/2,nW,nH);
+                        else { doc.setFont('helvetica','bold'); doc.setFontSize(8); setTxt('#e63355'); doc.text('NEOS',M,21); }
+                        doc.setFont('helvetica','normal'); doc.setFontSize(7.5); setTxt('#7777aa');
+                        doc.text('ANÁLISE ESTRATÉGICA — '+(fd.companyName||'').toUpperCase(),W/2,20,{align:'center'});
+                        doc.text(String(pg),W-M,21,{align:'right'});
+                        doc.setDrawColor(60,60,100); doc.setLineWidth(0.4);
+                        doc.line(M,H-18,W-M,H-18);
+                        doc.setFontSize(7); setTxt('#555577');
+                        doc.text('Desenvolvido por NEOS Digital — Análise Estratégica de Posicionamento Digital',W/2,H-9,{align:'center'});
+                    };
+
+                    const np = (section) => { doc.addPage(); pg++; y=50; pgHeader(section); };
+                    const chk = (n,sec) => { if (y+n>H-40) np(sec); };
+
+                    const secTitle = (title,sub) => {
+                        chk(52,title);
+                        doc.setFont('helvetica','bold'); doc.setFontSize(16); setTxt('#1a1a2e');
+                        doc.text(title,M,y); y+=sub?18:22;
+                        if (sub){ doc.setFont('helvetica','normal'); doc.setFontSize(9); setTxt('#8888aa'); doc.text(sub,M,y); y+=16; }
+                        setFill('#e63355'); doc.rect(M,y,48,2.5,'F');
+                        setFill('#e8e8f0'); doc.rect(M+50,y,CW-50,2.5,'F');
+                        y+=14;
+                    };
+
+                    const subHdr = (title,color) => {
+                        chk(28,title);
+                        const col=color||'#1a1a2e';
+                        setFill('#f0f2ff'); doc.rect(M,y,CW,20,'F');
+                        const [r,g,b]=hr(color||'#e63355'); doc.setFillColor(r,g,b); doc.rect(M,y,3,20,'F');
+                        doc.setFont('helvetica','bold'); doc.setFontSize(9); setTxt(col);
+                        doc.text(title.toUpperCase(),M+10,y+13); y+=27;
+                    };
+
+                    const para = (text,sec) => {
+                        const lines=doc.splitTextToSize(text,CW);
+                        chk(lines.length*13+6,sec||'');
+                        doc.setFont('helvetica','normal'); doc.setFontSize(9.5); setTxt('#333355');
+                        doc.text(lines,M,y); y+=lines.length*13+8;
+                    };
+
+                    const bul = (text,color,sec) => {
+                        const lines=doc.splitTextToSize(text,CW-18);
+                        chk(lines.length*13+5,sec||'');
+                        const [r,g,b]=hr(color||'#e63355');
+                        doc.setFillColor(r,g,b); doc.circle(M+4,y-2.5,2.5,'F');
+                        doc.setFont('helvetica','normal'); doc.setFontSize(9.5); setTxt('#333355');
+                        doc.text(lines,M+14,y); y+=lines.length*13+5;
+                    };
+
+                    const mCard = (lbl,val,color,x,w,h) => {
+                        const [r,g,b]=hr(color);
+                        doc.setFillColor(248,248,255); doc.roundedRect(x,y,w,h||50,5,5,'F');
+                        doc.setFillColor(r,g,b); doc.rect(x,y,3,h||50,'F');
+                        setStroke(color); doc.setLineWidth(0.4); doc.roundedRect(x,y,w,h||50,5,5,'D');
+                        doc.setFont('helvetica','normal'); doc.setFontSize(7.5); setTxt('#888888');
+                        doc.text(lbl,x+9,y+14);
+                        doc.setFont('helvetica','bold');
+                        const vs=String(val); doc.setFontSize(vs.length>10?9:vs.length>6?12:17);
+                        doc.setTextColor(r,g,b); doc.text(vs,x+9,y+35);
+                    };
+
+                    const name  = fd.companyName||'a empresa';
+                    const seg   = fd.segment||'seu segmento';
+                    const city  = fd.cityState||'';
+                    const posts = parseInt(fd.postsPerWeek)||0;
+                    const socials = [fd.instagram,fd.facebook,fd.linkedin,fd.tiktok,fd.youtube].filter(Boolean);
+                    const objs  = fd.objectives;
+
+                    /* ══ CAPA ══════════════════════════════════════════════ */
+                    setProgress('Gerando capa...'); setPct(5);
+                    doc.setFillColor(13,12,37); doc.rect(0,0,W,H,'F');
+                    doc.setFillColor(230,51,85); doc.rect(0,0,W,5,'F');
+                    doc.setFillColor(230,51,85); doc.rect(0,H-5,W,5,'F');
+                    doc.setFillColor(26,26,60); doc.rect(W*0.62,0,W*0.4,H,'F');
+
+                    if (nL) doc.addImage(nL,'PNG',W-M-nW*1.3,22,nW*1.3,nH*1.3);
+                    else { doc.setFont('helvetica','bold'); doc.setFontSize(9); setTxt('#e63355'); doc.text('NEOS DIGITAL',W-M,30,{align:'right'}); }
+
+                    if (cL) doc.addImage(cL,'PNG',(W-cLW)/2,90,cLW,cLH);
+
+                    const titleY = cL ? 185 : 130;
+                    doc.setFont('helvetica','bold'); doc.setFontSize(8); setTxt('#e63355');
+                    doc.text('ANÁLISE ESTRATÉGICA DE POSICIONAMENTO DIGITAL',W/2,titleY,{align:'center'});
+                    doc.setFont('helvetica','bold'); doc.setFontSize(30); setTxt('#ffffff');
+                    const nameLines=doc.splitTextToSize(fd.companyName||'Empresa',CW);
+                    nameLines.forEach((nl,i)=>doc.text(nl,W/2,titleY+28+i*34,{align:'center'}));
+                    const afterName=titleY+28+nameLines.length*34;
+                    doc.setFont('helvetica','normal'); doc.setFontSize(11); setTxt('#aaaacc');
+                    doc.text('Diagnóstico completo da presença digital da marca',W/2,afterName+8,{align:'center'});
+                    doc.setDrawColor(230,51,85); doc.setLineWidth(1.5);
+                    doc.line(W/2-70,afterName+22,W/2+70,afterName+22);
+
+                    const infoY=afterName+42;
+                    const infoItems=[['Segmento',fd.segment||'—'],['Localização',fd.cityState||'—'],['Responsável',fd.responsible||'—'],['Data',today]].filter(([,v])=>v!=='—');
+                    infoItems.forEach(([lbl,val],i)=>{
+                        const ix=M+(i%2)*(CW/2+8), iy=infoY+Math.floor(i/2)*44;
+                        doc.setFillColor(22,22,54); doc.roundedRect(ix,iy,CW/2,36,4,4,'F');
+                        doc.setFont('helvetica','normal'); doc.setFontSize(7); setTxt('#7777aa');
+                        doc.text(lbl.toUpperCase(),ix+10,iy+12);
+                        doc.setFont('helvetica','bold'); doc.setFontSize(10); setTxt('#ddddee');
+                        doc.text(String(val).slice(0,26),ix+10,iy+27);
+                    });
+
+                    const scoreY=infoY+Math.ceil(infoItems.length/2)*44+18;
+                    const [sr,sg,sb]=si.rgb;
+                    doc.setFillColor(22,22,54); doc.roundedRect(M+CW/2-85,scoreY,170,68,6,6,'F');
+                    doc.setDrawColor(sr,sg,sb); doc.setLineWidth(1); doc.roundedRect(M+CW/2-85,scoreY,170,68,6,6,'D');
+                    doc.setFont('helvetica','normal'); doc.setFontSize(7.5); setTxt('#8888bb');
+                    doc.text('SCORE DE PRESENÇA DIGITAL',W/2,scoreY+14,{align:'center'});
+                    doc.setFont('helvetica','bold'); doc.setFontSize(32); doc.setTextColor(sr,sg,sb);
+                    doc.text(String(score),W/2-10,scoreY+48,{align:'center'});
+                    doc.setFontSize(13); doc.text('/100',W/2+20,scoreY+48);
+                    doc.setFontSize(10); doc.text(si.label,W/2,scoreY+63,{align:'center'});
+
+                    doc.setFont('helvetica','normal'); doc.setFontSize(8); setTxt('#555577');
+                    doc.text('Desenvolvido por NEOS Digital',W/2,H-25,{align:'center'});
+                    doc.text('Relatório confidencial — uso exclusivo do destinatário',W/2,H-13,{align:'center'});
+
+                    /* ══ PÁG 2: RESUMO EXECUTIVO ════════════════════════ */
+                    setProgress('Resumo executivo...'); setPct(12);
+                    doc.addPage(); pg=2; y=50; pgHeader('Resumo Executivo');
+
+                    secTitle('Resumo Executivo','Diagnóstico estratégico da situação atual');
+
+                    subHdr('Situação Atual','#1a1a2e');
+                    const isLow=score<41, isMed=score>=41&&score<71, isHigh=score>=71;
+                    para(`${name} é uma empresa${seg?` do segmento de ${seg}`:''}${city?', localizada em '+city:''}. O diagnóstico realizado identificou um Score de Presença Digital de ${score}/100, classificado como ${si.label}.`,'Resumo Executivo');
+                    if (isLow) para(`A análise evidencia que a marca ainda não estruturou de forma consistente sua estratégia digital. Existem lacunas significativas em pilares fundamentais como frequência de conteúdo, investimento em mídia paga e ferramentas de gestão — fatores que limitam diretamente o crescimento e a visibilidade da empresa.`,'Resumo Executivo');
+                    else if (isMed) para(`A empresa possui bases digitais em construção, com alguns pilares já estabelecidos, porém com oportunidades claras de evolução. Há consistência em certas frentes, mas gaps importantes que impedem ${name} de atingir seu pleno potencial de posicionamento e geração de resultados previsíveis.`,'Resumo Executivo');
+                    else para(`${name} demonstra maturidade digital acima da média do mercado, com processos e canais bem estruturados. O momento é estratégico para otimizar o que já funciona e escalar resultados, consolidando a posição de autoridade no segmento.`,'Resumo Executivo');
+                    if (fd.companyDesc) para(`Contexto da empresa: "${fd.companyDesc.slice(0,180)}${fd.companyDesc.length>180?'...':''}"`, 'Resumo Executivo');
+                    y+=4;
+
+                    subHdr('Principais Pontos Fortes','#00c864');
+                    if (fd.visualIdentity) bul('Identidade visual definida — transmite profissionalismo e facilita o reconhecimento da marca.','#00c864','Resumo Executivo');
+                    if (fd.paidTraffic) bul('Investimento em tráfego pago — visão estratégica e comprometimento com resultados mensuráveis.','#00c864','Resumo Executivo');
+                    if (fd.marketingTeam) bul('Equipe de marketing estruturada — diferencial competitivo para execução das estratégias.','#00c864','Resumo Executivo');
+                    if (fd.hasCRM) bul('CRM implementado — gestão organizada do relacionamento com clientes e leads.','#00c864','Resumo Executivo');
+                    if (fd.hasAutomations) bul('Automações ativas — eficiência operacional que permite escalar sem aumentar custos.','#00c864','Resumo Executivo');
+                    if (fd.contentStrategy) bul('Estratégia de conteúdo definida — base para construção de autoridade e relacionamento.','#00c864','Resumo Executivo');
+                    if (socials.length>=3) bul(`Presença em ${socials.length} canais digitais — abrangência multicanal que amplia o alcance da marca.`,'#00c864','Resumo Executivo');
+                    if (posts>=5) bul(`Alta frequência de publicações (${posts}×/semana) — consistência que favorece os algoritmos e mantém o público engajado.`,'#00c864','Resumo Executivo');
+                    if (fd.valueProposition) bul('Proposta de valor identificada — clareza estratégica sobre o diferencial da empresa no mercado.','#00c864','Resumo Executivo');
+                    if ([fd.visualIdentity,fd.paidTraffic,fd.marketingTeam,fd.hasCRM,fd.hasAutomations,fd.contentStrategy].every(v=>!v)&&posts<2) {
+                        bul('Disposição para estruturar o posicionamento digital — primeiro passo para a transformação.','#00c864','Resumo Executivo');
+                        bul('Oportunidade de construir com base sólida, sem vícios de estratégias anteriores.','#00c864','Resumo Executivo');
+                    }
+                    y+=4;
+
+                    subHdr('Principais Pontos de Atenção','#ff8030');
+                    if (!fd.paidTraffic) bul('Ausência de tráfego pago — limita o crescimento acelerado e a previsibilidade na geração de leads.','#ff8030','Resumo Executivo');
+                    if (!fd.marketingTeam) bul('Sem equipe de marketing dedicada — risco de inconsistência na execução das estratégias.','#ff8030','Resumo Executivo');
+                    if (!fd.visualIdentity) bul('Identidade visual não definida — impacta a percepção de profissionalismo e dificulta o reconhecimento.','#ff8030','Resumo Executivo');
+                    if (!fd.contentStrategy) bul('Ausência de estratégia de conteúdo — produção reativa reduz o impacto e a autoridade.','#ff8030','Resumo Executivo');
+                    if (!fd.hasCRM) bul('Sem CRM — leads e oportunidades podem ser perdidos por falta de acompanhamento sistematizado.','#ff8030','Resumo Executivo');
+                    if (!fd.hasAutomations) bul('Sem automações — processos manuais reduzem eficiência e limitam a escalabilidade.','#ff8030','Resumo Executivo');
+                    if (posts<=1) bul(`Frequência de publicações muito baixa (${posts}×/semana) — insuficiente para gerar engajamento e autoridade consistentes.`,'#ff8030','Resumo Executivo');
+                    if (socials.length===0) bul('Ausência nas redes sociais — oportunidade perdida de construir relacionamento e visibilidade digital.','#ff8030','Resumo Executivo');
+                    y+=4;
+
+                    subHdr('Potencial de Crescimento','#4090ff');
+                    para(`${name} possui potencial de crescimento digital de ${100-score} pontos no Score de Presença. ${isLow?'Com ações estruturadas nos próximos 90 dias, é possível evoluir do estágio '+si.label+' para Médio ou superior, gerando impacto direto na captação de clientes.':isMed?'A empresa está a poucos ajustes estratégicos de atingir o nível Bom ou Excelente, o que impacta diretamente na geração de leads qualificados e conversão.':'O foco deve ser na otimização, escala e consolidação da posição de liderança no segmento de '+seg+'.'}`,'Resumo Executivo');
+                    if (objs.length>0) para(`Os objetivos declarados — ${objs.join(', ')} — são totalmente alcançáveis com a estratégia e execução corretas.`,'Resumo Executivo');
+
+                    /* ══ PÁG 3: IDENTIDADE VISUAL ══════════════════════ */
+                    setProgress('Diagnóstico de identidade visual...'); setPct(22);
+                    np('Identidade Visual');
+
+                    secTitle('Diagnóstico de Identidade Visual','Análise do posicionamento visual e percepção de marca');
+
+                    const mColW=(CW-16)/3;
+                    mCard('Identidade Visual',fd.visualIdentity?'Definida':'Indefinida',fd.visualIdentity?'#00c864':'#ff6060',M,mColW);
+                    mCard('Profissionalismo',fd.visualIdentity?'Alto':'Em Desenvolvimento',fd.visualIdentity?'#4090ff':'#ffcc00',M+mColW+8,mColW);
+                    mCard('Consistência',(fd.visualIdentity&&fd.contentStrategy)?'Consistente':'Irregular',(fd.visualIdentity&&fd.contentStrategy)?'#00c864':'#ff8030',M+(mColW+8)*2,mColW);
+                    y+=58;
+
+                    subHdr('Avaliação da Identidade de Marca','#1a1a2e');
+                    if (fd.visualIdentity){
+                        para(`${name} possui identidade visual formalmente definida, o que representa um diferencial importante perante concorrentes que ainda não realizaram esse investimento. A consistência visual é fundamental para a construção de reconhecimento e autoridade de marca.`,'Identidade Visual');
+                        para(fd.contentStrategy?`A combinação de identidade visual com estratégia de conteúdo posiciona ${name} em nível de maturidade acima da média, facilitando a produção de materiais coesos e impactantes em todos os canais.`:`Apesar da identidade visual estabelecida, a ausência de estratégia de conteúdo pode levar a inconsistências na aplicação e comunicação da marca nas diferentes plataformas.`,'Identidade Visual');
+                    } else {
+                        para(`${name} ainda não possui identidade visual formalmente definida. Isso impacta diretamente a percepção de profissionalismo, a confiança gerada e o reconhecimento da marca pelo público-alvo.`,'Identidade Visual');
+                        para('Em um mercado cada vez mais visual, a falta de padronização gráfica pode gerar confusão na mente do consumidor e transmitir uma imagem de improviso, mesmo que a empresa entregue produtos ou serviços de alta qualidade.','Identidade Visual');
+                    }
+                    if (fd.valueProposition) para(`A proposta de valor identificada — "${fd.valueProposition.slice(0,140)}${fd.valueProposition.length>140?'...':''}" — precisa estar refletida de forma clara em todos os elementos visuais e comunicacionais da marca.`,'Identidade Visual');
+                    y+=4;
+
+                    subHdr('Pontos Fortes','#00c864');
+                    if (fd.visualIdentity){ bul('Marca com identidade visual consistente — profissionalismo percebido favorece conversão.','#00c864','Identidade Visual'); bul('Base visual sólida para expansão de materiais de marketing em todos os canais.','#00c864','Identidade Visual'); }
+                    else { bul('Oportunidade de construir identidade visual moderna e diferenciada desde o início.','#00c864','Identidade Visual'); bul('Potencial de se destacar no segmento com uma marca bem posicionada e memorável.','#00c864','Identidade Visual'); }
+                    if (fd.differentials) bul(`Diferenciais identificados: "${fd.differentials.slice(0,100)}" — base excelente para a construção da identidade.`,'#00c864','Identidade Visual');
+                    y+=4;
+
+                    subHdr('Pontos Fracos e Recomendações','#ff8030');
+                    if (!fd.visualIdentity){ bul('Desenvolver identidade visual completa: logo, paleta de cores, tipografia e guia de marca.','#ff8030','Identidade Visual'); bul('Criar templates padronizados para posts, apresentações e materiais comerciais.','#ff8030','Identidade Visual'); }
+                    if (!fd.contentStrategy) bul('Criar manual de comunicação definindo tom de voz, estilo de linguagem e pilares de conteúdo.','#ff8030','Identidade Visual');
+                    bul('Revisar periodicamente os materiais para garantir consistência e atualização da imagem.','#ff8030','Identidade Visual');
+                    bul('Investir em fotografia e vídeo profissional para elevar a percepção de qualidade da marca.','#ff8030','Identidade Visual');
+
+                    /* ══ PÁG 4: COMUNICAÇÃO ═════════════════════════════ */
+                    setProgress('Diagnóstico de comunicação...'); setPct(32);
+                    np('Comunicação');
+
+                    secTitle('Diagnóstico de Comunicação','Análise da mensagem, tom de voz e clareza comunicacional');
+
+                    subHdr('Tom de Voz e Clareza da Mensagem','#1a1a2e');
+                    if (fd.companyDesc) para(`Com base na descrição fornecida: "${fd.companyDesc.slice(0,120)}..." — é possível identificar elementos-chave que devem nortear toda a comunicação da marca.`,'Comunicação');
+                    if (fd.targetAudience) para(`O público-alvo mapeado — ${fd.targetAudience.slice(0,120)} — exige linguagem e abordagem específicas para gerar identificação genuína e construir autoridade no segmento de ${seg}.`,'Comunicação');
+                    para(`A comunicação de ${name} precisa transmitir clareza, credibilidade e diferenciação em cada ponto de contato. Cada mensagem publicada deve reforçar o posicionamento estratégico e aproximar a marca de seu cliente ideal.`,'Comunicação');
+                    if (fd.valueProposition) para(`A proposta de valor "${fd.valueProposition.slice(0,120)}" deve ser comunicada de forma recorrente e consistente — é o principal argumento de persuasão e diferenciação da marca.`,'Comunicação');
+                    y+=4;
+
+                    subHdr('Autoridade e Diferenciação','#4090ff');
+                    const commScore=[fd.visualIdentity,fd.contentStrategy,posts>=3].filter(Boolean).length;
+                    if (commScore===3) para(`${name} apresenta boa consistência comunicacional. O próximo passo é aprimorar a qualidade das mensagens, segmentar o conteúdo por persona e implementar storytelling para criar conexão emocional com o público.`,'Comunicação');
+                    else if (commScore===2) para(`A comunicação está parcialmente estruturada. Existem boas bases, mas faltam elementos para garantir consistência total e máximo impacto. Pequenos ajustes estratégicos podem elevar significativamente a percepção de autoridade.`,'Comunicação');
+                    else para(`A comunicação de ${name} ainda é irregular e reativa. A ausência de planejamento e padronização compromete a percepção da marca e dificulta a construção de autoridade no digital.`,'Comunicação');
+                    if (fd.competitors) para(`Análise de concorrência permite identificar oportunidades de diferenciação: comunicar o que os concorrentes (${fd.competitors.slice(0,80)}) não comunicam — seja pela abordagem, formato ou canal.`,'Comunicação');
+                    y+=4;
+
+                    subHdr('Oportunidades de Melhoria','#ffcc00');
+                    if (!fd.contentStrategy) bul('Criar calendário editorial mensal com temas, formatos e objetivos definidos por publicação.','#ffcc00','Comunicação');
+                    if (posts<3) bul(`Aumentar frequência de publicações de ${posts}× para no mínimo 4–5 por semana.`,'#ffcc00','Comunicação');
+                    bul('Desenvolver storytelling da marca: história, bastidores, resultados e cases de clientes.','#ffcc00','Comunicação');
+                    bul('Implementar série de conteúdos educativos posicionando a empresa como referência no segmento.','#ffcc00','Comunicação');
+                    bul('Criar banco de depoimentos e provas sociais para fortalecer credibilidade.','#ffcc00','Comunicação');
+                    y+=4;
+
+                    subHdr('Recomendações Práticas','#a060ff');
+                    bul('Definir 3 pilares de conteúdo e alternar entre eles semanalmente (educar, engajar, converter).','#a060ff','Comunicação');
+                    bul('Criar respostas-padrão para os comentários mais frequentes e humanizar a comunicação.','#a060ff','Comunicação');
+                    bul('Implementar análise mensal de performance das publicações para otimização contínua.','#a060ff','Comunicação');
+                    if (!fd.visualIdentity) bul('Padronizar layout visual das publicações antes de escalar a frequência.','#a060ff','Comunicação');
+                    bul('Explorar formatos interativos: enquetes, quizzes, perguntas e respostas ao vivo.','#a060ff','Comunicação');
+
+                    /* ══ PÁG 5: REDES SOCIAIS ══════════════════════════ */
+                    setProgress('Diagnóstico das redes sociais...'); setPct(42);
+                    np('Redes Sociais');
+
+                    secTitle('Diagnóstico das Redes Sociais','Avaliação de presença, frequência e posicionamento digital');
+
+                    /* Score gauge */
+                    doc.setFillColor(248,248,255); doc.roundedRect(M,y,CW,72,8,8,'F');
+                    doc.setDrawColor(sr,sg,sb); doc.setLineWidth(1); doc.roundedRect(M,y,CW,72,8,8,'D');
+                    doc.setFont('helvetica','bold'); doc.setFontSize(8.5); setTxt('#7777aa');
+                    doc.text('SCORE DE PRESENÇA DIGITAL',M+14,y+16);
+                    doc.setFont('helvetica','bold'); doc.setFontSize(34); doc.setTextColor(sr,sg,sb);
+                    doc.text(String(score),M+14,y+54);
+                    doc.setFontSize(14); doc.text('/100',M+52,y+54);
+                    doc.setFontSize(13); doc.text(si.label,M+102,y+54);
+                    const bX=M+195, bY2=y+36, bW=CW-210, bH2=16;
+                    doc.setFillColor(220,220,235); doc.roundedRect(bX,bY2,bW,bH2,4,4,'F');
+                    doc.setTextColor(sr,sg,sb); doc.setFillColor(sr,sg,sb); doc.roundedRect(bX,bY2,bW*(score/100),bH2,4,4,'F');
+                    doc.setFont('helvetica','normal'); doc.setFontSize(6.5); setTxt('#999999');
+                    ['Crítico','Baixo','Médio','Bom','Excelente'].forEach((lbl,i)=>doc.text(lbl,bX+bW*(i/4),bY2+bH2+10,{align:'center'}));
+                    y+=90;
+
+                    subHdr('Canais Digitais Identificados','#4090ff');
+                    const chMap=[['Instagram',fd.instagram,!!fd.instagram],['Facebook',fd.facebook,!!fd.facebook],['LinkedIn',fd.linkedin,!!fd.linkedin],['TikTok',fd.tiktok,!!fd.tiktok],['YouTube',fd.youtube,!!fd.youtube],['Site/Blog',fd.website,!!fd.website]];
+                    chMap.filter(([,,h])=>h).forEach(([n2,handle])=>bul(`${n2}${handle?': '+handle:''} — canal ativo, deve ser trabalhado com consistência e estratégia.`,'#4090ff','Redes Sociais'));
+                    chMap.filter(([,,h])=>!h).forEach(([n2])=>bul(`${n2} — canal não explorado. Oportunidade de expansão de alcance e posicionamento.`,'#ff8030','Redes Sociais'));
+                    y+=4;
+
+                    subHdr('Frequência e Engajamento','#1a1a2e');
+                    if (posts===0) para(`${name} não realiza publicações regulares. Sem conteúdo, não há visibilidade, engajamento ou possibilidade de construção de autoridade digital — este é o ponto crítico mais urgente a resolver.`,'Redes Sociais');
+                    else if (posts<=2) para(`A frequência atual de ${posts} publicação${posts>1?'ões':''} por semana está abaixo do recomendado. Para a maioria dos segmentos, o ideal é de 4 a 7 publicações semanais para manter relevância nos algoritmos e na mente do público.`,'Redes Sociais');
+                    else if (posts<=5) para(`A frequência de ${posts} publicações semanais é adequada para manutenção de presença. Com diversificação de formatos (Reels, carrossel, stories) e melhoria na qualidade, é possível ampliar significativamente o alcance orgânico.`,'Redes Sociais');
+                    else para(`Excelente frequência de publicações: ${posts}× por semana. O próximo passo é garantir que a qualidade e relevância do conteúdo acompanhem o volume, maximizando engajamento e conversões.`,'Redes Sociais');
+                    y+=4;
+
+                    subHdr('Recomendações para Redes Sociais','#a060ff');
+                    if (posts<5) bul('Aumentar frequência para 5–7 publicações semanais com mix de formatos variados.','#a060ff','Redes Sociais');
+                    if (!fd.instagram) bul('Criar e otimizar perfil no Instagram — plataforma essencial para a maioria dos segmentos B2C e B2B.','#a060ff','Redes Sociais');
+                    if (!fd.linkedin&&(objs.includes('Fortalecer marca')||objs.includes('Gerar mais leads'))) bul('Ativar LinkedIn para posicionamento B2B e construção de autoridade profissional.','#a060ff','Redes Sociais');
+                    bul('Priorizar Reels e vídeos curtos — formato com maior alcance orgânico no momento.','#a060ff','Redes Sociais');
+                    bul('Responder todos os comentários e DMs em até 24h para ampliar engajamento.','#a060ff','Redes Sociais');
+                    bul('Implementar estratégia de hashtags segmentadas por nicho para ampliar descoberta orgânica.','#a060ff','Redes Sociais');
+                    if (!fd.paidTraffic) bul('Considerar impulsionamento dos melhores posts para ampliar alcance além do orgânico.','#a060ff','Redes Sociais');
+
+                    /* ══ PÁG 6: CONCORRÊNCIA ════════════════════════════ */
+                    setProgress('Análise de concorrência...'); setPct(52);
+                    np('Concorrência');
+
+                    secTitle('Análise de Concorrência','Comparativo de posicionamento e oportunidades competitivas');
+
+                    const comps=fd.competitors?fd.competitors.split(',').map(c=>c.trim()).filter(Boolean):[];
+                    subHdr('Mapeamento Competitivo','#1a1a2e');
+                    if (comps.length>0){
+                        para(`Foram mapeados ${comps.length} concorrente${comps.length>1?'s':''} principais: ${comps.join(', ')}. A análise a seguir oferece insights estratégicos sobre posicionamento competitivo e oportunidades não exploradas no segmento de ${seg}.`,'Concorrência');
+                        comps.slice(0,5).forEach(c=>bul(`${c}: monitorar canais, frequência de posts, engajamento, anúncios ativos e proposta de valor comunicada.`,'#4090ff','Concorrência'));
+                    } else {
+                        para(`${name} ainda não mapeou formalmente seus concorrentes. O mapeamento competitivo é fundamental para identificar gaps de mercado e oportunidades de diferenciação — recomendamos como ação prioritária.`,'Concorrência');
+                        bul('Mapear os 5 principais concorrentes diretos no segmento de '+seg+'.','#4090ff','Concorrência');
+                        bul('Analisar presença digital de cada um: redes sociais, site, anúncios ativos e posicionamento.','#4090ff','Concorrência');
+                    }
+                    y+=4;
+
+                    subHdr('Oportunidades Não Exploradas','#00c864');
+                    bul(`Conteúdo educativo sobre ${seg} — a maioria dos concorrentes não investe em educar o mercado, gerando autoridade gratuita.`,'#00c864','Concorrência');
+                    bul('Marketing de bastidores (BTS) — humanizar a marca cria conexão emocional diferenciada e fidelização.','#00c864','Concorrência');
+                    if (!fd.hasCRM) bul('Estrutura de relacionamento e pós-venda — geralmente negligenciada, cria vantagem competitiva significativa.','#00c864','Concorrência');
+                    if (!fd.hasAutomations) bul('Automações de marketing — ganhar eficiência operacional enquanto concorrentes ainda operam manualmente.','#00c864','Concorrência');
+                    bul('Parcerias estratégicas com negócios complementares para co-marketing e ampliação de alcance.','#00c864','Concorrência');
+                    if (!fd.youtube) bul('YouTube e vídeos longos — canal com menor concorrência no nicho e maior autoridade percebida.','#00c864','Concorrência');
+                    y+=4;
+
+                    subHdr('Vantagens Competitivas Potenciais','#a060ff');
+                    if (fd.differentials) para(`Os diferenciais identificados — "${fd.differentials.slice(0,150)}" — são ativos estratégicos que devem ser amplamente comunicados e reforçados em todos os pontos de contato com o mercado.`,'Concorrência');
+                    bul(`Especialização e profundidade no segmento de ${seg} — ser reconhecido como a referência no nicho.`,'#a060ff','Concorrência');
+                    bul('Velocidade de adaptação — empresas bem estruturadas respondem mais rápido às tendências do mercado.','#a060ff','Concorrência');
+                    bul('Relacionamento personalizado — diferencial que grandes concorrentes dificilmente conseguem escalar.','#a060ff','Concorrência');
+
+                    /* ══ PÁG 7: OPORTUNIDADES ══════════════════════════ */
+                    setProgress('Oportunidades de crescimento...'); setPct(62);
+                    np('Oportunidades');
+
+                    secTitle('Oportunidades de Crescimento','Estratégias e canais para expansão da presença digital');
+
+                    subHdr('Melhorias Rápidas (Quick Wins)','#00c864');
+                    if (!fd.visualIdentity) bul('Desenvolver ou contratar identidade visual profissional — impacto imediato na percepção de marca.','#00c864','Oportunidades');
+                    if (posts<3) bul('Aumentar frequência de publicações para pelo menos 3× por semana como meta inicial.','#00c864','Oportunidades');
+                    if (!fd.instagram) bul('Criar e otimizar perfil no Instagram com bio estratégica, link na bio e primeiros 9 posts.','#00c864','Oportunidades');
+                    bul('Solicitar avaliações e depoimentos de clientes atuais — prova social gratuita e poderosa.','#00c864','Oportunidades');
+                    if (fd.website) bul('Otimizar SEO básico do site: títulos, meta-descrições, velocidade e experiência mobile.','#00c864','Oportunidades');
+                    bul('Criar conta no Google Meu Negócio — visibilidade local gratuita com alto potencial de conversão.','#00c864','Oportunidades');
+                    y+=4;
+
+                    subHdr('Oportunidades de Médio Prazo (30–90 dias)','#ffcc00');
+                    if (!fd.paidTraffic) bul('Implementar campanhas de tráfego pago no Meta Ads e/ou Google Ads com orçamento inicial de teste.','#ffcc00','Oportunidades');
+                    if (!fd.hasCRM) bul('Implementar CRM para organizar e nutrir o pipeline de leads sem perder oportunidades.','#ffcc00','Oportunidades');
+                    bul('Criar fluxo de nutrição de leads com e-mail marketing segmentado por interesse.','#ffcc00','Oportunidades');
+                    if (!fd.hasAutomations) bul('Automatizar respostas no WhatsApp Business e Instagram Direct para não perder contatos.','#ffcc00','Oportunidades');
+                    bul('Produzir conteúdo em vídeo (Reels) com estratégia de SEO para ampliar alcance orgânico.','#ffcc00','Oportunidades');
+                    if (objs.includes('Lançar produto')) bul('Estruturar estratégia de lançamento digital com pré-aquecimento, lançamento e pós-venda.','#ffcc00','Oportunidades');
+                    y+=4;
+
+                    subHdr('Oportunidades de Longo Prazo (90+ dias)','#4090ff');
+                    bul('Construir audiência própria: newsletter, comunidade no WhatsApp ou grupo de clientes.','#4090ff','Oportunidades');
+                    if (!fd.youtube) bul('Desenvolver presença no YouTube com conteúdos de autoridade que gerem leads recorrentes.','#4090ff','Oportunidades');
+                    bul('Criar programa de indicação e fidelização de clientes com incentivos estruturados.','#4090ff','Oportunidades');
+                    bul('Desenvolver hub de conteúdo (blog ou podcast) para posicionamento orgânico de longo prazo.','#4090ff','Oportunidades');
+                    bul('Implementar estratégia de influenciadores ou parceiros estratégicos no segmento.','#4090ff','Oportunidades');
+                    if (objs.includes('Melhorar conversão')) bul('Desenvolver funis de venda otimizados com landing pages, sequências de e-mail e remarketing.','#4090ff','Oportunidades');
+
+                    /* ══ PÁG 8: PLANO DE AÇÃO ══════════════════════════ */
+                    setProgress('Plano de ação 30/60/90 dias...'); setPct(72);
+                    np('Plano de Ação');
+
+                    secTitle('Plano de Ação','Roteiro estratégico para os próximos 90 dias');
+
+                    const planBlock = (label,color,actions) => {
+                        chk(30,label);
+                        const [pr,pg2,pb]=hr(color);
+                        setFill(color+'15'||'#ff000015'); doc.setFillColor(pr,pg2,pb,0.08); doc.roundedRect(M,y,CW,22,4,4,'F');
+                        doc.setFillColor(pr,pg2,pb); doc.roundedRect(M,y,4,22,2,2,'F');
+                        doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(pr,pg2,pb);
+                        doc.text(label,M+12,y+14); y+=30;
+                        actions.slice(0,6).forEach((a,i)=>{
+                            chk(16,'Plano de Ação');
+                            doc.setFillColor(i%2===0?250:255,i%2===0?250:255,i%2===0?252:255);
+                            doc.rect(M,y,CW,16,'F');
+                            doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(pr,pg2,pb);
+                            doc.text(`${i+1}.`,M+5,y+11);
+                            doc.setFont('helvetica','normal'); doc.setFontSize(8.5); setTxt('#333355');
+                            doc.text(a.slice(0,85),M+17,y+11); y+=16;
+                        });
+                        y+=10;
+                    };
+
+                    const a30=[
+                        ...(!fd.visualIdentity?['Contratar designer para desenvolvimento de identidade visual completa.']:[]),
+                        ...(!fd.contentStrategy?['Criar calendário editorial para os próximos 30 dias com temas e formatos.']:[]),
+                        ...(posts<3?[`Estabelecer rotina de ${Math.max(posts+2,4)} publicações semanais nas redes sociais.`]:[]),
+                        'Configurar e otimizar todos os perfis nas redes sociais com bio estratégica.',
+                        ...(!fd.instagram?['Criar perfil no Instagram e publicar primeiros 9 posts de apresentação.']:[]),
+                        'Coletar e publicar pelo menos 5 depoimentos de clientes satisfeitos.',
+                        'Realizar mapeamento dos 3 principais concorrentes e seus posicionamentos digitais.',
+                        ...(fd.website&&!fd.paidTraffic?['Realizar auditoria do site e corrigir problemas de SEO e velocidade.']:[]),
+                        'Criar conta no Google Meu Negócio e otimizar informações da empresa.',
+                    ];
+                    const a60=[
+                        ...(!fd.paidTraffic?['Lançar primeiras campanhas de tráfego pago no Meta Ads com teste de criativos.']:[]),
+                        ...(!fd.hasCRM?['Implementar CRM (RD Station, HubSpot ou similar) e migrar base de leads.']:[]),
+                        'Criar 2 Reels semanais com conteúdo educativo e de posicionamento.',
+                        ...(!fd.hasAutomations?['Configurar respostas automáticas no WhatsApp Business e Instagram.']:[]),
+                        'Iniciar estratégia de e-mail marketing com lista segmentada de leads.',
+                        'Produzir case de sucesso de um cliente com resultados concretos e mensuráveis.',
+                        'Otimizar investimento em tráfego com base nos dados dos primeiros 30 dias.',
+                    ];
+                    const a90=[
+                        'Revisar e otimizar todas as estratégias com base nos dados acumulados.',
+                        'Escalar orçamento de tráfego pago nos canais com melhor custo por resultado.',
+                        'Lançar programa de indicação de clientes com incentivos estruturados.',
+                        ...(!fd.youtube?['Iniciar produção de vídeos para YouTube com conteúdo de autoridade.']:[]),
+                        'Implementar estratégia de remarketing para leads que não converteram.',
+                        'Criar landing page dedicada para captação de leads qualificados.',
+                        'Documentar todos os processos de marketing para garantir escalabilidade.',
+                    ];
+
+                    planBlock('PRÓXIMOS 30 DIAS — Fundação Estratégica','#e63355',a30);
+                    planBlock('PRÓXIMOS 60 DIAS — Aceleração e Tráfego','#ffcc00',a60);
+                    planBlock('PRÓXIMOS 90 DIAS — Consolidação e Escala','#00c864',a90);
+
+                    /* ══ PÁG 9: RECOMENDAÇÕES NEOS ═════════════════════ */
+                    setProgress('Recomendações da NEOS...'); setPct(82);
+                    np('Recomendações NEOS');
+
+                    secTitle('Recomendações da NEOS','Como podemos transformar os resultados da sua empresa');
+
+                    para(`Com base no diagnóstico completo de ${name}, a NEOS Digital identificou um conjunto de soluções específicas para acelerar o crescimento e resolver os gargalos encontrados. Nossa metodologia une estratégia, criatividade e dados para gerar resultados mensuráveis e previsíveis.`,'Recomendações');
+                    y+=8;
+
+                    const services=[
+                        ...(!fd.visualIdentity||!fd.contentStrategy?[{s:'Branding & Identidade Visual',d:`Criação ou reestruturação completa da identidade de ${name}: logo, manual de marca, templates e estratégia visual para todas as plataformas.`,c:'#a060ff'}]:[]),
+                        ...(posts<4||!fd.contentStrategy?[{s:'Gestão de Redes Sociais',d:`Produção, design e publicação de conteúdo estratégico ${Math.max(posts+2,5)}× por semana, com relatórios mensais e otimização contínua baseada em dados.`,c:'#4090ff'}]:[]),
+                        ...(!fd.paidTraffic?[{s:'Tráfego Pago (Meta & Google Ads)',d:`Gestão profissional de campanhas para gerar leads qualificados e vendas com menor custo por resultado no segmento de ${seg}.`,c:'#ff8030'}]:[]),
+                        ...(!fd.hasCRM||!fd.hasAutomations?[{s:'Automações e CRM',d:'Implementação de fluxos de automação, CRM e nutrição de leads para aumentar conversão sem aumentar custos operacionais.',c:'#00c864'}]:[]),
+                        {s:'Estratégia Digital Completa',d:`Planejamento estratégico com metas, KPIs e roadmap de crescimento personalizado para ${name} no segmento de ${seg}.`,c:'#e63355'},
+                        ...(!fd.website?[{s:'Sites e Landing Pages',d:'Desenvolvimento de site profissional e landing pages otimizadas para conversão com SEO e performance.',c:'#ffcc00'}]:[]),
+                    ];
+
+                    services.slice(0,6).forEach(({s,d,c})=>{
+                        chk(58,'Recomendações');
+                        const [nr,ng,nb]=hr(c);
+                        doc.setFillColor(248,248,255); doc.roundedRect(M,y,CW,52,5,5,'F');
+                        doc.setFillColor(nr,ng,nb); doc.rect(M,y,4,52,'F');
+                        doc.setDrawColor(nr,ng,nb); doc.setLineWidth(0.3); doc.roundedRect(M,y,CW,52,5,5,'D');
+                        doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(nr,ng,nb);
+                        doc.text(s,M+12,y+16);
+                        doc.setFont('helvetica','normal'); doc.setFontSize(8.5); setTxt('#444466');
+                        const dLines=doc.splitTextToSize(d,CW-24);
+                        doc.text(dLines.slice(0,2),M+12,y+30); y+=60;
+                    });
+
+                    /* ══ PÁG 10: PRÓXIMOS PASSOS ═══════════════════════ */
+                    setProgress('Próximos passos...'); setPct(90);
+                    np('Próximos Passos');
+
+                    secTitle('O que fazer agora?','Próximos passos para transformar os resultados');
+
+                    const steps=[
+                        {n:'01',t:'Implementar melhorias prioritárias',d:`Iniciar imediatamente com as ações de alto impacto identificadas: ${!fd.visualIdentity?'definir identidade visual, ':''}${posts<3?'aumentar frequência de posts, ':''}${!fd.paidTraffic?'estruturar tráfego pago, ':''}consolidar presença nas redes sociais estratégicas.`,c:'#e63355'},
+                        {n:'02',t:'Corrigir os gargalos identificados',d:`Resolver os pontos críticos do diagnóstico: ${!fd.hasCRM?'implementar CRM, ':''}${!fd.contentStrategy?'criar estratégia de conteúdo, ':''}${!fd.hasAutomations?'implementar automações, ':''}garantindo base sólida antes de escalar.`,c:'#ff8030'},
+                        {n:'03',t:'Estruturar crescimento previsível',d:'Implementar métricas, KPIs e processos que permitam crescimento consistente. Criar dashboard de acompanhamento com metas mensais claras e reuniões de otimização.',c:'#ffcc00'},
+                        {n:'04',t:'Agendar reunião estratégica com a NEOS',d:`Apresentar os resultados desta análise e definir o próximo passo: como a NEOS pode acelerar o crescimento de ${name} com estratégia, execução e resultados mensuráveis.`,c:'#00c864'},
+                    ];
+
+                    steps.forEach(({n,t,d,c})=>{
+                        chk(72,'Próximos Passos');
+                        const [xr,xg,xb]=hr(c);
+                        doc.setFillColor(248,248,255); doc.roundedRect(M,y,CW,66,6,6,'F');
+                        doc.setFillColor(xr,xg,xb); doc.circle(M+22,y+33,18,'F');
+                        doc.setFont('helvetica','bold'); doc.setFontSize(14); setTxt('#ffffff');
+                        doc.text(n,M+22,y+38,{align:'center'});
+                        doc.setFont('helvetica','bold'); doc.setFontSize(11); setTxt('#1a1a2e');
+                        doc.text(t,M+48,y+22);
+                        doc.setFont('helvetica','normal'); doc.setFontSize(8.5); setTxt('#444466');
+                        const dL=doc.splitTextToSize(d,CW-56);
+                        doc.text(dL.slice(0,3),M+48,y+36); y+=74;
+                    });
+
+                    /* ══ PÁG FINAL: CTA ════════════════════════════════ */
+                    setProgress('Finalizando PDF...'); setPct(96);
+                    doc.addPage(); pg++;
+
+                    doc.setFillColor(13,12,37); doc.rect(0,0,W,H,'F');
+                    doc.setFillColor(230,51,85); doc.rect(0,0,W,5,'F');
+                    doc.setFillColor(230,51,85); doc.rect(0,H-5,W,5,'F');
+                    doc.setFillColor(26,26,60); doc.rect(W*0.58,0,W*0.45,H,'F');
+
+                    if (nL) doc.addImage(nL,'PNG',M,20,nW*1.3,nH*1.3);
+                    else { doc.setFont('helvetica','bold'); doc.setFontSize(9); setTxt('#e63355'); doc.text('NEOS DIGITAL',M,32); }
+
+                    doc.setFont('helvetica','bold'); doc.setFontSize(8); setTxt('#e63355');
+                    doc.text('SUA EMPRESA ESTÁ PREPARADA PARA O PRÓXIMO NÍVEL?',W/2,90,{align:'center'});
+                    doc.setFont('helvetica','bold'); doc.setFontSize(27); setTxt('#ffffff');
+                    doc.text('Transforme esta análise',W/2,128,{align:'center'});
+                    setTxt('#e63355'); doc.text('em resultados reais.',W/2,158,{align:'center'});
+                    doc.setFont('helvetica','normal'); doc.setFontSize(10); setTxt('#aaaacc');
+                    doc.text(`A análise de ${(fd.companyName||'sua empresa').slice(0,30)} revelou oportunidades`,W/2,190,{align:'center'});
+                    doc.text('importantes de crescimento. Agora é hora de agir.',W/2,204,{align:'center'});
+
+                    const ctaSvcs=['Estratégia Digital','Gestão de Redes Sociais','Tráfego Pago','Branding','Automações & CRM','Sites & Landing Pages','Funis de Vendas'];
+                    const ctaCW=(CW)/4;
+                    ctaSvcs.forEach((s,i)=>{
+                        const cx=M+(i%4)*ctaCW, cy=228+Math.floor(i/4)*34;
+                        doc.setFillColor(22,22,54); doc.roundedRect(cx,cy,ctaCW-6,26,4,4,'F');
+                        doc.setDrawColor(230,51,85); doc.setLineWidth(0.4); doc.roundedRect(cx,cy,ctaCW-6,26,4,4,'D');
+                        doc.setFont('helvetica','bold'); doc.setFontSize(7.5); setTxt('#e63355');
+                        doc.text('✓',cx+7,cy+16); setTxt('#ccccee'); doc.text(s,cx+17,cy+16);
+                    });
+
+                    const btnY=314;
+                    doc.setFillColor(230,51,85); doc.roundedRect(M+CW/2-115,btnY,230,40,6,6,'F');
+                    doc.setFont('helvetica','bold'); doc.setFontSize(10.5); setTxt('#ffffff');
+                    doc.text('AGENDAR DIAGNÓSTICO ESTRATÉGICO',W/2,btnY+24,{align:'center'});
+
+                    doc.setFont('helvetica','normal'); doc.setFontSize(8.5); setTxt('#aaaacc');
+                    doc.text('Entre em contato:',W/2,376,{align:'center'});
+                    [['WhatsApp','(14) 99140-1406'],['E-mail','neosdigital1406@gmail.com'],['Instagram','@neos.digital_']].forEach(([k,v],i)=>{
+                        doc.setFont('helvetica','bold'); doc.setFontSize(9.5); setTxt('#ddddee');
+                        doc.text(`${k}: ${v}`,W/2,395+i*18,{align:'center'});
+                    });
+
+                    doc.setFont('helvetica','bold'); doc.setFontSize(13); setTxt('#e63355');
+                    doc.text('NEOS DIGITAL',W/2,458,{align:'center'});
+                    doc.setFont('helvetica','normal'); doc.setFontSize(8.5); setTxt('#7777aa');
+                    doc.text('Estratégia • Criatividade • Resultados',W/2,472,{align:'center'});
+                    doc.setFontSize(7); setTxt('#444466');
+                    doc.text(`Análise gerada em ${today} — Score: ${score}/100 (${si.label})`,W/2,H-20,{align:'center'});
+
+                    /* ══ SALVAR ════════════════════════════════════════ */
+                    const cleanNm=(fd.companyName||'Empresa').replace(/[^a-zA-Z0-9\s]/g,'').replace(/\s+/g,'_');
+                    doc.save(`Analise_Estrategica_${cleanNm}_${new Date().toISOString().slice(0,10)}.pdf`);
+                    onClose();
+                } catch(err) {
+                    console.error('[Neos] Análise estratégica erro:',err);
+                    alert('Erro ao gerar PDF: '+err.message);
+                } finally {
+                    setGenerating(false); setProgress(''); setPct(0);
+                }
+            };
+
+            const score = calcScore();
+            const si = scoreInfo(score);
+            const STEPS = 4;
+
+            return (
+                <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.84)', zIndex:3500, display:'flex', alignItems:'center', justifyContent:'center', padding:16, overflowY:'auto' }}>
+                    <div className="glass" style={{ width:640, maxHeight:'92vh', overflowY:'auto', borderRadius:16, padding:'26px 30px', position:'relative' }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:18 }}>
+                            <div>
+                                <h2 style={{ fontSize:18, fontWeight:700 }}>✦ Análise Estratégica</h2>
+                                <p style={{ fontSize:11.5, color:'rgba(255,255,255,.38)', marginTop:3 }}>Diagnóstico de posicionamento digital — {lead?.company||lead?.name||'Lead'}</p>
+                            </div>
+                            <button onClick={onClose} style={{ background:'none', border:'none', color:'rgba(255,255,255,.4)', cursor:'pointer', fontSize:22, lineHeight:1, padding:'2px 4px' }}>×</button>
+                        </div>
+
+                        {/* Step bar */}
+                        <div style={{ display:'flex', marginBottom:22, background:'rgba(255,255,255,.04)', borderRadius:8, overflow:'hidden' }}>
+                            {_SA_STEP_LABELS.map((lbl,i)=>(
+                                <button key={i} onClick={()=>setStep(i+1)}
+                                    style={{ flex:1, padding:'8px 4px', fontSize:10.5, background:step===i+1?'rgba(255,0,64,.18)':'transparent', color:step>i?step===i+1?'#ff4060':'rgba(255,255,255,.65)':'rgba(255,255,255,.25)', border:'none', cursor:'pointer', fontWeight:step===i+1?700:400, borderBottom:step===i+1?'2px solid #ff0040':'2px solid transparent', borderRight:i<STEPS-1?'1px solid rgba(255,255,255,.06)':'none', transition:'all .2s' }}>
+                                    <span style={{ fontSize:8.5, display:'block', opacity:.6, marginBottom:1 }}>{i+1}/{STEPS}</span>
+                                    {lbl}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Step 1 */}
+                        {step===1 && (
+                            <div style={{ display:'flex', flexDirection:'column', gap:11 }}>
+                                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                                    <FRow label="Nome da Empresa *"><input className="input-field" value={fd.companyName} onChange={e=>sf('companyName',e.target.value)} placeholder="Razão social ou nome fantasia" /></FRow>
+                                    <FRow label="Responsável"><input className="input-field" value={fd.responsible} onChange={e=>sf('responsible',e.target.value)} placeholder="Nome do responsável" /></FRow>
+                                    <FRow label="Segmento"><input className="input-field" value={fd.segment} onChange={e=>sf('segment',e.target.value)} placeholder="Ex: Imobiliária, Clínica, Restaurante..." /></FRow>
+                                    <FRow label="Cidade / Estado"><input className="input-field" value={fd.cityState} onChange={e=>sf('cityState',e.target.value)} placeholder="Ex: Bauru, SP" /></FRow>
+                                </div>
+                                <FRow label="Site"><input className="input-field" value={fd.website} onChange={e=>sf('website',e.target.value)} placeholder="https://www.seusite.com.br" /></FRow>
+                                <div style={{ fontSize:10.5, fontWeight:700, color:'rgba(255,255,255,.38)', textTransform:'uppercase', letterSpacing:.5, marginTop:4 }}>Redes Sociais</div>
+                                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                                    <FRow label="Instagram"><input className="input-field" value={fd.instagram} onChange={e=>sf('instagram',e.target.value)} placeholder="@perfil" /></FRow>
+                                    <FRow label="Facebook"><input className="input-field" value={fd.facebook} onChange={e=>sf('facebook',e.target.value)} placeholder="facebook.com/..." /></FRow>
+                                    <FRow label="LinkedIn"><input className="input-field" value={fd.linkedin} onChange={e=>sf('linkedin',e.target.value)} placeholder="linkedin.com/in/..." /></FRow>
+                                    <FRow label="TikTok"><input className="input-field" value={fd.tiktok} onChange={e=>sf('tiktok',e.target.value)} placeholder="@perfil" /></FRow>
+                                    <FRow label="YouTube"><input className="input-field" value={fd.youtube} onChange={e=>sf('youtube',e.target.value)} placeholder="youtube.com/@canal" /></FRow>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Step 2 */}
+                        {step===2 && (
+                            <div style={{ display:'flex', flexDirection:'column', gap:11 }}>
+                                <FRow label="Descreva sua empresa"><textarea className="input-field" style={{ minHeight:68, resize:'vertical' }} value={fd.companyDesc} onChange={e=>sf('companyDesc',e.target.value)} placeholder="O que faz, há quanto tempo existe, valores e missão..." /></FRow>
+                                <FRow label="Proposta de Valor"><textarea className="input-field" style={{ minHeight:54, resize:'vertical' }} value={fd.valueProposition} onChange={e=>sf('valueProposition',e.target.value)} placeholder="Por que clientes te escolhem ao invés da concorrência?" /></FRow>
+                                <FRow label="Diferenciais Competitivos"><textarea className="input-field" style={{ minHeight:54, resize:'vertical' }} value={fd.differentials} onChange={e=>sf('differentials',e.target.value)} placeholder="O que torna sua empresa única no mercado?" /></FRow>
+                                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                                    <FRow label="Público-Alvo"><textarea className="input-field" style={{ minHeight:54, resize:'vertical' }} value={fd.targetAudience} onChange={e=>sf('targetAudience',e.target.value)} placeholder="Quem é o seu cliente ideal?" /></FRow>
+                                    <FRow label="Produtos / Serviços"><textarea className="input-field" style={{ minHeight:54, resize:'vertical' }} value={fd.productsServices} onChange={e=>sf('productsServices',e.target.value)} placeholder="O que você vende?" /></FRow>
+                                </div>
+                                <FRow label="Principais Concorrentes (separados por vírgula)"><input className="input-field" value={fd.competitors} onChange={e=>sf('competitors',e.target.value)} placeholder="Ex: Empresa A, Empresa B, Empresa C" /></FRow>
+                            </div>
+                        )}
+
+                        {/* Step 3 */}
+                        {step===3 && (
+                            <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+                                <div style={{ fontSize:12.5, color:'rgba(255,255,255,.6)', marginBottom:4 }}>Selecione todos os objetivos relevantes:</div>
+                                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                                    {_SA_OBJECTIVES.map(o=>(
+                                        <div key={o} onClick={()=>togObj(o)} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderRadius:9, background:fd.objectives.includes(o)?'rgba(255,0,64,.12)':'rgba(255,255,255,.04)', border:'1px solid '+(fd.objectives.includes(o)?'rgba(255,0,64,.45)':'rgba(255,255,255,.08)'), cursor:'pointer', transition:'all .15s' }}>
+                                            <div style={{ width:16, height:16, borderRadius:4, border:'2px solid '+(fd.objectives.includes(o)?'#ff0040':'rgba(255,255,255,.3)'), background:fd.objectives.includes(o)?'#ff0040':'transparent', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, transition:'all .15s' }}>
+                                                {fd.objectives.includes(o) && <svg width="9" height="9" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                                            </div>
+                                            <span style={{ fontSize:12, fontWeight:fd.objectives.includes(o)?600:400, color:fd.objectives.includes(o)?'#ff6070':'rgba(255,255,255,.72)' }}>{o}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div style={{ fontSize:11, color:'rgba(255,255,255,.3)', marginTop:4 }}>{fd.objectives.length===0?'Nenhum objetivo selecionado.':`${fd.objectives.length} objetivo${fd.objectives.length>1?'s':''} selecionado${fd.objectives.length>1?'s':''}.`}</div>
+                            </div>
+                        )}
+
+                        {/* Step 4 */}
+                        {step===4 && (
+                            <div style={{ display:'flex', flexDirection:'column', gap:13 }}>
+                                <FRow label={`Publicações por semana — média: ${fd.postsPerWeek}×`}>
+                                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                                        <input type="range" min="0" max="14" value={fd.postsPerWeek} onChange={e=>sf('postsPerWeek',e.target.value)} style={{ flex:1, accentColor:'#ff0040' }} />
+                                        <span style={{ fontSize:15, fontWeight:800, color:'#ff4060', minWidth:28, textAlign:'center' }}>{fd.postsPerWeek}</span>
+                                    </div>
+                                </FRow>
+
+                                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                                    {[['paidTraffic','Investe em tráfego pago?'],['marketingTeam','Possui equipe de marketing?'],['visualIdentity','Possui identidade visual definida?'],['contentStrategy','Possui estratégia de conteúdo?'],['hasCRM','Utiliza CRM?'],['hasAutomations','Possui automações?']].map(([k,lbl])=>(
+                                        <div key={k} onClick={()=>togBool(k)} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 13px', borderRadius:8, background:fd[k]?'rgba(0,200,100,.08)':'rgba(255,255,255,.04)', border:'1px solid '+(fd[k]?'rgba(0,200,100,.35)':'rgba(255,255,255,.08)'), cursor:'pointer', transition:'all .15s' }}>
+                                            <div style={{ width:16, height:16, borderRadius:'50%', border:'2px solid '+(fd[k]?'#00c864':'rgba(255,255,255,.3)'), background:fd[k]?'#00c864':'transparent', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, transition:'all .15s' }}>
+                                                {fd[k] && <svg width="8" height="8" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                                            </div>
+                                            <span style={{ fontSize:11.5, color:fd[k]?'#00c864':'rgba(255,255,255,.62)', fontWeight:fd[k]?600:400 }}>{lbl}</span>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {/* Score preview */}
+                                <div style={{ background:'rgba(255,255,255,.04)', borderRadius:10, padding:'12px 16px', border:'1px solid rgba(255,255,255,.08)' }}>
+                                    <div style={{ fontSize:10, fontWeight:700, color:'rgba(255,255,255,.38)', marginBottom:8, textTransform:'uppercase', letterSpacing:.5 }}>Score de Presença Digital (pré-visualização)</div>
+                                    <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                                        <div style={{ fontSize:28, fontWeight:800, color:si.color }}>{score}</div>
+                                        <div><div style={{ fontSize:13, fontWeight:700, color:si.color }}>{si.label}</div><div style={{ fontSize:10, color:'rgba(255,255,255,.3)' }}>/ 100 pontos</div></div>
+                                        <div style={{ flex:1, height:8, background:'rgba(255,255,255,.07)', borderRadius:4, overflow:'hidden' }}>
+                                            <div style={{ height:'100%', width:score+'%', background:si.color, borderRadius:4, transition:'width .4s' }} />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Logo upload */}
+                                <FRow label="Logo da Empresa (aparece na capa do PDF)">
+                                    <label style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', borderRadius:8, background:'rgba(255,255,255,.04)', border:'1px dashed rgba(255,255,255,.2)', cursor:'pointer' }}>
+                                        {fd.logoData
+                                            ? <><img src={fd.logoData} style={{ height:32, maxWidth:80, objectFit:'contain', borderRadius:4 }} alt="logo" /><span style={{ fontSize:11.5, color:'rgba(255,255,255,.7)', flex:1 }}>{fd.logoName}</span><span onClick={e=>{e.preventDefault();sf('logoData',null);sf('logoName','');}} style={{ color:'#ff6060', fontSize:14, cursor:'pointer', flexShrink:0 }}>✕</span></>
+                                            : <><span style={{ fontSize:20 }}>🖼</span><span style={{ fontSize:12, color:'rgba(255,255,255,.4)' }}>Clique para enviar logo (PNG, JPG, SVG)</span></>
+                                        }
+                                        <input type="file" accept="image/*" style={{ display:'none' }} onChange={handleLogo} />
+                                    </label>
+                                </FRow>
+
+                                <FRow label="Observações adicionais"><textarea className="input-field" style={{ minHeight:60, resize:'vertical' }} value={fd.observations} onChange={e=>sf('observations',e.target.value)} placeholder="Informações relevantes para a análise..." /></FRow>
+                            </div>
+                        )}
+
+                        {/* Footer navigation */}
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:22, paddingTop:16, borderTop:'1px solid rgba(255,255,255,.07)' }}>
+                            <div style={{ display:'flex', gap:8 }}>
+                                {step>1 && <button onClick={()=>setStep(s=>s-1)} className="btn-secondary" disabled={generating}>← Anterior</button>}
+                                <button onClick={onClose} className="btn-secondary" disabled={generating} style={{ opacity:generating?.5:1 }}>Cancelar</button>
+                            </div>
+                            <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                                {step<STEPS && <button onClick={()=>setStep(s=>s+1)} style={{ padding:'9px 20px', borderRadius:8, background:'rgba(255,0,64,.16)', border:'1px solid rgba(255,0,64,.4)', color:'#ff4060', fontWeight:700, fontSize:12.5, cursor:'pointer' }}>Próximo →</button>}
+                                {step===STEPS && (
+                                    <button onClick={generatePDF} disabled={generating||!fd.companyName.trim()}
+                                        style={{ padding:'10px 22px', borderRadius:8, background:generating?'rgba(255,0,64,.06)':!fd.companyName.trim()?'rgba(255,255,255,.04)':'rgba(255,0,64,.2)', border:'1px solid '+(fd.companyName.trim()?'rgba(255,0,64,.5)':'rgba(255,255,255,.1)'), color:generating?'rgba(255,255,255,.3)':!fd.companyName.trim()?'rgba(255,255,255,.25)':'#ff4060', fontWeight:700, fontSize:12.5, cursor:generating||!fd.companyName.trim()?'default':'pointer', display:'flex', alignItems:'center', gap:8, minWidth:200, justifyContent:'center', transition:'all .2s' }}>
+                                        {generating
+                                            ? <><span style={{ display:'inline-block', width:13, height:13, border:'2px solid rgba(255,64,96,.25)', borderTopColor:'#ff4060', borderRadius:'50%', animation:'spin 0.8s linear infinite' }} />{progress||'Gerando...'}</>
+                                            : '📊 Gerar Relatório Estratégico'
+                                        }
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Progress bar */}
+                        {generating && (
+                            <div style={{ marginTop:12 }}>
+                                <div style={{ height:4, background:'rgba(255,255,255,.07)', borderRadius:2, overflow:'hidden' }}>
+                                    <div style={{ height:'100%', width:pct+'%', background:'linear-gradient(90deg,#ff0040,#ff6060)', borderRadius:2, transition:'width .6s ease' }} />
+                                </div>
+                                <div style={{ fontSize:10.5, color:'rgba(255,255,255,.35)', marginTop:5, textAlign:'center' }}>{progress}</div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
         function LeadDetailPanel({ lead, interactions, onClose }) {
             const { editLead, deleteLead, moveLead, addLeadInteraction, addCalEvent, notify } = useApp();
             const [editing, setEditing] = useState(false);
+            const [showAnalysis, setShowAnalysis] = useState(false);
             const [tab, setTab] = useState('info');
             const [intF, setIntF] = useState({ type:'Nota', content:'', date: new Date().toISOString().slice(0,10) });
             const clr = LEAD_CLR[lead.status] || '#4090ff';
@@ -6783,7 +7574,14 @@
                                         <Ic n="cal" s={12} />{action.label}
                                     </button>
                                 ))}
-                                <div style={{ marginTop:8, paddingTop:12, borderTop:'1px solid rgba(255,255,255,.06)' }}>
+                                <div style={{ marginTop:8, paddingTop:12, borderTop:'1px solid rgba(255,255,255,.06)', display:'flex', flexDirection:'column', gap:8 }}>
+                                    <button onClick={()=>setShowAnalysis(true)}
+                                        style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 14px', borderRadius:8, background:'linear-gradient(135deg,rgba(230,51,85,.18),rgba(160,80,255,.14))', border:'1px solid rgba(230,51,85,.45)', color:'#ff6080', fontWeight:700, fontSize:12.5, cursor:'pointer', justifyContent:'center', transition:'all .2s', width:'100%' }}
+                                        onMouseEnter={e=>e.currentTarget.style.background='linear-gradient(135deg,rgba(230,51,85,.28),rgba(160,80,255,.22))'}
+                                        onMouseLeave={e=>e.currentTarget.style.background='linear-gradient(135deg,rgba(230,51,85,.18),rgba(160,80,255,.14))'}>
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                                        Gerar Análise Estratégica
+                                    </button>
                                     <button className="btn-danger" onClick={()=>{ if(confirm(`Excluir lead "${lead.name}"?`)){deleteLead(lead.id);onClose();} }} style={{ fontSize:12 }}>
                                         <Ic n="trash" s={12} />Excluir Lead
                                     </button>
@@ -6791,6 +7589,7 @@
                             </div>
                         )}
                         {editing && <LeadModal lead={lead} onClose={()=>setEditing(false)} />}
+                        {showAnalysis && <StrategicAnalysisModal lead={lead} onClose={()=>setShowAnalysis(false)} />}
                     </div>
                 </div>
             );
