@@ -451,6 +451,7 @@
         db.version(6).stores({ goals: 'id, category, responsible, createdAt' });
         db.version(7).stores({ notifications: 'id, userId, read, createdAt', taskTimers: 'id, taskId, userId, startedAt, createdAt' });
         db.version(8).stores({ flowgramProjects: 'id, clientId, type, createdAt', flowgramTemplates: 'id, type, category, createdAt', flowgramAssets: 'id, clientId, type, createdAt' });
+        db.version(9).stores({ dailyLogs: 'id, userId, date, createdAt', timerMeta: 'id, userId, createdAt' });
         const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [], goals: [], notifications: [], taskTimers: [] };
 
         /* ── SUPABASE HELPERS ───────────────────────────────── */
@@ -5184,9 +5185,479 @@
         }
 
         /* ── PERFORMANCE ─────────────────────────────────────── */
+        /* ══ MÓDULOS DE GESTÃO OPERACIONAL ══════════════════════ */
+        const _USER_MAP = { 'Arthur Lemos':'arthur','Lavinia Wallery':'lavinia','Miguel Lemos':'miguel','Caio':'caio','Funcionário':'funcionario' };
+        const _toUserId = n => _USER_MAP[n] || (n||'').toLowerCase().split(' ')[0] || '';
+        const _ADMIN_IDS = ['arthur'];
+
+        const _calcIPC = (client, store) => {
+            const cId = client.id, cNm = (client.name||'').toLowerCase();
+            const calItms = (store.calEvents||[]).filter(ev => ev.clientId===cId || (ev.clientName||'').toLowerCase()===cNm);
+            const clLeads = (store.leads||[]).filter(l => l.clientId===cId || (l.company||'').toLowerCase()===cNm);
+            const liIds = clLeads.map(l=>l.id);
+            const liacts = (store.leadInteractions||[]).filter(li => liIds.includes(li.leadId));
+            const clTasks = (store.tasks||[]).filter(t => t.clientId===cId && t.status==='Concluído');
+            const allMs = [
+                ...liacts.map(i => new Date(i.createdAt||i.date+'T12:00').getTime()),
+                ...calItms.map(e => new Date(e.date+'T12:00').getTime()),
+                ...clTasks.map(t => new Date(t.modifiedAt||t.createdAt).getTime()),
+            ].filter(n => n && !isNaN(n));
+            const lastMs = allMs.length ? Math.max(...allMs) : 0;
+            const daysSince = lastMs ? Math.floor((Date.now()-lastMs)/86400000) : 999;
+            let s = 0;
+            if (daysSince<=3) s+=20; else if (daysSince<=7) s+=10;
+            const mtgMs = calItms.filter(e=>e.type==='Reunião'||(e.title||'').toLowerCase().includes('reuni')).map(e=>new Date(e.date+'T12:00').getTime()).filter(n=>!isNaN(n));
+            const lastMtg = mtgMs.length ? Math.max(...mtgMs) : 0;
+            const daysMtg = lastMtg ? Math.floor((Date.now()-lastMtg)/86400000) : 999;
+            if (daysMtg<=30) s+=20; else if (daysMtg<=60) s+=10;
+            if (daysSince<=7) s+=10; else if (daysSince>30) s-=10;
+            const fin = (store.financials||[]).filter(f=>f.clientId===cId);
+            if (fin.some(f=>f.status==='Atrasado')) s-=20; else if (fin.some(f=>f.status==='Pago')) s+=20;
+            if (clLeads.some(l=>l.status==='Fechado Ganho')) s+=10;
+            return { score: Math.max(0,Math.min(100,s)), daysSince };
+        };
+        const _ipcClass = s => s>=90?{label:'Embaixador',color:'#4090ff'}:s>=70?{label:'Saudável',color:'#00c864'}:s>=50?{label:'Atenção',color:'#ffcc00'}:{label:'Risco',color:'#ff4060'};
+
+        const _calcPerfScore = (uName, store) => {
+            const tasks = (store.tasks||[]).filter(t=>t.assignee===uName);
+            if (!tasks.length) return 50;
+            let s = 50;
+            const now = Date.now();
+            tasks.forEach(t => {
+                if (t.status==='Concluído') {
+                    if (t.dueDate) { const due=new Date(t.dueDate+'T23:59:59').getTime(), done=new Date(t.modifiedAt||t.createdAt).getTime(); if (due-done>86400000) s+=15; else if (done<=due) s+=10; else s-=15; }
+                    else s+=10;
+                } else if (t.dueDate && now>new Date(t.dueDate+'T23:59:59').getTime()) s-=15;
+            });
+            if (!(store.taskTimers||[]).some(t=>t.userName===uName&&t.totalMs>0)) s-=20;
+            return Math.max(0,Math.min(100,Math.round(s)));
+        };
+        const _perfClass = s => s>=90?{label:'Excelente 🏆',color:'#4090ff'}:s>=70?{label:'Bom 🟢',color:'#00c864'}:s>=50?{label:'Regular 🟡',color:'#ffcc00'}:{label:'Abaixo do Esperado 🔴',color:'#ff4060'};
+
+        const _calcReliability = (uName, store) => {
+            let pts = 0;
+            const tasks=(store.tasks||[]).filter(t=>t.assignee===uName);
+            const done=tasks.filter(t=>t.status==='Concluído');
+            const onTime=done.filter(t=>!t.dueDate||new Date(t.modifiedAt||Date.now())<=new Date(t.dueDate+'T23:59:59'));
+            if (tasks.length) pts+=Math.round((onTime.length/tasks.length)*40);
+            if ((store.taskTimers||[]).some(t=>t.userName===uName&&t.totalMs>0)) pts+=25;
+            const recent=tasks.filter(t=>(Date.now()-new Date(t.modifiedAt||t.createdAt).getTime())<7*86400000);
+            if (tasks.length) pts+=Math.round((recent.length/tasks.length)*20);
+            if ((store.leadInteractions||[]).some(li=>(li.modifiedBy||'')==uName)) pts+=15;
+            return Math.min(100,pts);
+        };
+        const _relClass = s => s>=90?{label:'Extremamente Confiável',color:'#4090ff'}:s>=80?{label:'Confiável',color:'#00c864'}:s>=60?{label:'Atenção',color:'#ffcc00'}:{label:'Necessita Gestão',color:'#ff4060'};
+
+        /* ── Daily Log Modal ── */
+        function DailyLogModal({ onClose, existingLog, userId }) {
+            const [whatDone,setWhatDone]=useState(existingLog?.whatDone||'');
+            const [deliveries,setDeliveries]=useState(existingLog?.deliveries||'');
+            const [blockers,setBlockers]=useState(existingLog?.blockers||'');
+            const [planTmrw,setPlanTmrw]=useState(existingLog?.planTomorrow||'');
+            const [saving,setSaving]=useState(false);
+            const save = async () => {
+                if (!whatDone.trim()||!planTmrw.trim()) return;
+                setSaving(true);
+                const log = { id:existingLog?.id||genId(), userId, date:new Date().toISOString().slice(0,10), whatDone, deliveries, blockers, planTomorrow:planTmrw, createdAt:existingLog?.createdAt||new Date().toISOString(), updatedAt:new Date().toISOString() };
+                await db.dailyLogs.put(log);
+                setSaving(false); onClose(log);
+            };
+            return (
+                <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose(null)}>
+                    <div className="modal-box fade-in" style={{ width:540, maxHeight:'88vh', overflowY:'auto' }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+                            <div><h2 style={{ fontSize:17, fontWeight:700 }}>📓 Diário Operacional</h2><p style={{ fontSize:11.5, color:'rgba(255,255,255,.38)', marginTop:2 }}>{new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'})}</p></div>
+                            <button className="btn-secondary" onClick={()=>onClose(null)} style={{ padding:'5px 9px' }}><Ic n="x" s={14} /></button>
+                        </div>
+                        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                            <FRow label="O que foi realizado hoje? *"><textarea className="input-field" style={{ minHeight:80, resize:'vertical' }} value={whatDone} onChange={e=>setWhatDone(e.target.value)} placeholder="Descreva as principais atividades realizadas..." /></FRow>
+                            <FRow label="Quais entregas foram concluídas?"><textarea className="input-field" style={{ minHeight:58, resize:'vertical' }} value={deliveries} onChange={e=>setDeliveries(e.target.value)} placeholder="Liste as entregas finalizadas hoje..." /></FRow>
+                            <FRow label="Houve bloqueios?"><textarea className="input-field" style={{ minHeight:58, resize:'vertical' }} value={blockers} onChange={e=>setBlockers(e.target.value)} placeholder="Dificuldades, bloqueios ou impedimentos..." /></FRow>
+                            <FRow label="Qual o plano para amanhã? *"><textarea className="input-field" style={{ minHeight:70, resize:'vertical' }} value={planTmrw} onChange={e=>setPlanTmrw(e.target.value)} placeholder="O que pretende realizar amanhã..." /></FRow>
+                        </div>
+                        <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:20, paddingTop:16, borderTop:'1px solid rgba(255,255,255,.07)' }}>
+                            <button className="btn-secondary" onClick={()=>onClose(null)}>Cancelar</button>
+                            <button className="btn-primary" onClick={save} disabled={saving||!whatDone.trim()||!planTmrw.trim()} style={{ opacity:(!whatDone.trim()||!planTmrw.trim())?.5:1 }}>{saving?'Salvando...':'✓ Registrar Diário'}</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        /* ── Timer Meta Modal ── */
+        function TimerMetaModal({ onClose, currentMeta, userId }) {
+            const [daily,setDaily]=useState(String(currentMeta?.dailyGoalHours||6));
+            const [weekly,setWeekly]=useState(String(currentMeta?.weeklyGoalHours||30));
+            const [saving,setSaving]=useState(false);
+            const save = async () => {
+                setSaving(true);
+                const meta = { id:currentMeta?.id||genId(), userId, dailyGoalHours:parseFloat(daily)||6, weeklyGoalHours:parseFloat(weekly)||30, createdAt:currentMeta?.createdAt||new Date().toISOString(), updatedAt:new Date().toISOString() };
+                await db.timerMeta.put(meta);
+                setSaving(false); onClose(meta);
+            };
+            return (
+                <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose(null)}>
+                    <div className="modal-box fade-in" style={{ width:420 }}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:20 }}>
+                            <h2 style={{ fontSize:17, fontWeight:700 }}>⏱ Meta de Apontamento</h2>
+                            <button className="btn-secondary" onClick={()=>onClose(null)} style={{ padding:'5px 9px' }}><Ic n="x" s={14} /></button>
+                        </div>
+                        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                            <FRow label="Meta diária (horas)"><input className="input-field" type="number" min="1" max="24" value={daily} onChange={e=>setDaily(e.target.value)} /></FRow>
+                            <FRow label="Meta semanal (horas)"><input className="input-field" type="number" min="1" max="168" value={weekly} onChange={e=>setWeekly(e.target.value)} /></FRow>
+                            <div style={{ fontSize:11, color:'rgba(255,255,255,.38)', background:'rgba(255,255,255,.03)', borderRadius:7, padding:'8px 12px' }}>Não atingir a meta diária aplica -20 pts no Score de Performance.</div>
+                        </div>
+                        <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:20, paddingTop:16, borderTop:'1px solid rgba(255,255,255,.07)' }}>
+                            <button className="btn-secondary" onClick={()=>onClose(null)}>Cancelar</button>
+                            <button className="btn-primary" onClick={save} disabled={saving}>{saving?'Salvando...':'✓ Salvar Meta'}</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        /* ── Operational Dashboard (todos os 10 módulos) ── */
+        function OperationalDashboard() {
+            const { store } = useApp();
+            const me = JSON.parse(sessionStorage.getItem('neos_auth')||'null');
+            const myId = me?.username||'';
+            const isAdmin = me?.role==='admin';
+            const [dailyLogs, setDailyLogs] = useState([]);
+            const [timerMetas, setTimerMetas] = useState([]);
+            const [showLog, setShowLog] = useState(false);
+            const [showMeta, setShowMeta] = useState(false);
+            const [sec, setSec] = useState('executive');
+
+            const loadLocal = () => {
+                db.dailyLogs.toArray().then(r=>setDailyLogs(r.sort((a,b)=>b.date.localeCompare(a.date))));
+                db.timerMeta.toArray().then(r=>setTimerMetas(r));
+            };
+            useEffect(()=>{ loadLocal(); },[]);
+
+            const today = new Date().toISOString().slice(0,10);
+            const myMeta = timerMetas.find(m=>m.userId===myId)||{ dailyGoalHours:6, weeklyGoalHours:30 };
+            const todayLog = dailyLogs.find(l=>l.userId===myId&&l.date===today);
+            const fmtMs = ms => { const h=Math.floor(ms/3600000),m=Math.floor((ms%3600000)/60000); return h>0?`${h}h ${m}m`:`${m}m`; };
+
+            // Timer stats today
+            const todayMs = (store.taskTimers||[]).filter(t=>t.userId===myId&&t.endedAt&&(t.startedAt||'').slice(0,10)===today).reduce((s,t)=>s+(t.totalMs||0),0);
+            const goalPct = Math.min(100,(todayMs/3600000/myMeta.dailyGoalHours)*100);
+
+            // IPC for all active clients
+            const activeClients = (store.clients||[]).filter(c=>c.status==='Ativo');
+            const clientsIPC = activeClients.map(c=>{ const r=_calcIPC(c,store); return {...c,ipcScore:r.score,daysSince:r.daysSince,ipcCl:_ipcClass(r.score)}; }).sort((a,b)=>a.ipcScore-b.ipcScore);
+            const riskC = clientsIPC.filter(c=>c.ipcScore<50);
+            const attnC = clientsIPC.filter(c=>c.ipcScore>=50&&c.ipcScore<70);
+
+            // Team scores
+            const teamScores = TEAM.map(name=>{
+                const uId=_toUserId(name);
+                const ps=_calcPerfScore(name,store), rs=_calcReliability(name,store);
+                const myTms=(store.taskTimers||[]).filter(t=>t.userName===name&&t.endedAt&&(t.startedAt||'').slice(0,10)===today).reduce((s,t)=>s+(t.totalMs||0),0);
+                return { name, uId, ps, rs, psCl:_perfClass(ps), rsCl:_relClass(rs),
+                    tasks:(store.tasks||[]).filter(t=>t.assignee===name).length,
+                    done:(store.tasks||[]).filter(t=>t.assignee===name&&t.status==='Concluído').length,
+                    ovd:(store.tasks||[]).filter(t=>t.assignee===name&&t.dueDate&&isOverdue(t.dueDate)&&t.status!=='Concluído').length,
+                    todayMs:myTms, hasLog:dailyLogs.some(l=>l.userId===uId&&l.date===today) };
+            });
+
+            const overdueTasks=(store.tasks||[]).filter(t=>t.dueDate&&isOverdue(t.dueDate)&&t.status!=='Concluído').sort((a,b)=>new Date(a.dueDate)-new Date(b.dueDate));
+            const nearTasks=(store.tasks||[]).filter(t=>{const d=daysLeft(t.dueDate);return d!==null&&d>=0&&d<=7&&t.status!=='Concluído';}).sort((a,b)=>new Date(a.dueDate)-new Date(b.dueDate));
+
+            const SECS=[{id:'executive',l:'📊 Executivo'},{id:'ipc',l:'🤝 Proximidade'},{id:'team',l:'👥 Equipe'},{id:'diary',l:'📓 Diário'},{id:'timer',l:'⏱ Timer Meta'}];
+
+            return (
+                <div className="fade-in">
+                    {/* Section nav */}
+                    <div style={{ display:'flex', gap:0, marginBottom:22, background:'rgba(255,255,255,.04)', borderRadius:10, overflow:'hidden' }}>
+                        {SECS.map(s=>(
+                            <button key={s.id} onClick={()=>setSec(s.id)}
+                                style={{ flex:1, padding:'9px 6px', fontSize:11, background:sec===s.id?'rgba(255,0,64,.18)':'transparent', color:sec===s.id?'#ff4060':'rgba(255,255,255,.5)', border:'none', cursor:'pointer', fontWeight:sec===s.id?700:400, borderBottom:sec===s.id?'2px solid #ff0040':'2px solid transparent', transition:'all .2s' }}>
+                                {s.l}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* ── EXECUTIVE ── */}
+                    {sec==='executive' && (
+                        <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+                            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:10 }}>
+                                {[
+                                    {l:'Clientes em Risco',v:riskC.length,c:'#ff4060',i:'🚨'},
+                                    {l:'Com Atenção',v:attnC.length,c:'#ffcc00',i:'⚠️'},
+                                    {l:'Tarefas Atrasadas',v:overdueTasks.length,c:'#ff6030',i:'🔴'},
+                                    {l:'Vencem em 7d',v:nearTasks.length,c:'#ffcc00',i:'⏰'},
+                                    {l:'Sem Diário Hoje',v:isAdmin?teamScores.filter(u=>!u.hasLog).length:(todayLog?0:1),c:'#a060ff',i:'📓'},
+                                    {l:'Sem Timer Hoje',v:isAdmin?teamScores.filter(u=>u.todayMs===0).length:(todayMs>0?0:1),c:'#4090ff',i:'⏱'},
+                                ].map(m=>(
+                                    <div key={m.l} className="glass glass-hover" style={{ padding:'12px 14px', textAlign:'center', borderTop:'2px solid '+m.c+'55' }}>
+                                        <div style={{ fontSize:18, marginBottom:3 }}>{m.i}</div>
+                                        <div style={{ fontSize:22, fontWeight:800, color:m.c }}>{m.v}</div>
+                                        <div style={{ fontSize:10, color:'rgba(255,255,255,.38)', marginTop:3 }}>{m.l}</div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {riskC.length>0&&(
+                                <div className="glass" style={{ padding:16 }}>
+                                    <div style={{ fontSize:12, fontWeight:700, color:'#ff4060', marginBottom:12 }}>🚨 Clientes em Risco ({riskC.length})</div>
+                                    {riskC.slice(0,5).map(c=>(
+                                        <div key={c.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'7px 10px', background:'rgba(255,64,96,.06)', borderRadius:7, marginBottom:5, border:'1px solid rgba(255,64,96,.15)' }}>
+                                            <div style={{ width:7, height:7, borderRadius:'50%', background:'#ff4060', flexShrink:0 }} />
+                                            <span style={{ flex:1, fontSize:12, fontWeight:600 }}>{c.name}</span>
+                                            <span style={{ fontSize:10.5, color:'rgba(255,255,255,.4)' }}>{c.daysSince<999?c.daysSince+'d sem contato':'Sem interação'}</span>
+                                            <span style={{ fontSize:10, fontWeight:700, color:'#ff4060', background:'rgba(255,64,96,.15)', borderRadius:5, padding:'2px 7px' }}>{c.ipcScore}/100</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {overdueTasks.length>0&&(
+                                <div className="glass" style={{ padding:16 }}>
+                                    <div style={{ fontSize:12, fontWeight:700, color:'#ff6030', marginBottom:12 }}>🔴 Tarefas Atrasadas ({overdueTasks.length})</div>
+                                    {overdueTasks.slice(0,6).map(t=>{
+                                        const dl2=Math.abs(daysLeft(t.dueDate)||0);
+                                        return(
+                                            <div key={t.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'6px 10px', background:'rgba(255,96,48,.06)', borderRadius:7, marginBottom:4, border:'1px solid rgba(255,96,48,.15)' }}>
+                                                <span style={{ flex:1, fontSize:11.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.title}</span>
+                                                <span style={{ fontSize:10, color:'rgba(255,255,255,.4)', flexShrink:0 }}>{(t.assignee||'').split(' ')[0]}</span>
+                                                <span style={{ fontSize:10, fontWeight:700, color:'#ff6030', flexShrink:0 }}>{dl2}d atraso</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14 }}>
+                                <div className="glass" style={{ padding:16 }}>
+                                    <div style={{ fontSize:12, fontWeight:700, color:'rgba(255,255,255,.7)', marginBottom:12 }}>🏆 Ranking Performance</div>
+                                    {[...teamScores].sort((a,b)=>b.ps-a.ps).map((u,i)=>(
+                                        <div key={u.name} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
+                                            <span style={{ fontSize:11, fontWeight:700, color:i===0?'#ffd700':i===1?'#c0c0c0':i===2?'#cd7f32':'rgba(255,255,255,.3)', width:18, textAlign:'center' }}>{i+1}°</span>
+                                            <span style={{ fontSize:12, flex:1 }}>{u.name.split(' ')[0]}</span>
+                                            <div style={{ flex:2, height:5, background:'rgba(255,255,255,.06)', borderRadius:3, overflow:'hidden' }}>
+                                                <div style={{ height:'100%', width:u.ps+'%', background:u.psCl.color, borderRadius:3 }} />
+                                            </div>
+                                            <span style={{ fontSize:11, fontWeight:700, color:u.psCl.color, minWidth:30, textAlign:'right' }}>{u.ps}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="glass" style={{ padding:16 }}>
+                                    <div style={{ fontSize:12, fontWeight:700, color:'rgba(255,255,255,.7)', marginBottom:12 }}>🛡 Ranking Confiabilidade</div>
+                                    {[...teamScores].sort((a,b)=>b.rs-a.rs).map((u,i)=>(
+                                        <div key={u.name} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
+                                            <span style={{ fontSize:11, fontWeight:700, color:i===0?'#ffd700':i===1?'#c0c0c0':i===2?'#cd7f32':'rgba(255,255,255,.3)', width:18, textAlign:'center' }}>{i+1}°</span>
+                                            <span style={{ fontSize:12, flex:1 }}>{u.name.split(' ')[0]}</span>
+                                            <div style={{ flex:2, height:5, background:'rgba(255,255,255,.06)', borderRadius:3, overflow:'hidden' }}>
+                                                <div style={{ height:'100%', width:u.rs+'%', background:u.rsCl.color, borderRadius:3 }} />
+                                            </div>
+                                            <span style={{ fontSize:11, fontWeight:700, color:u.rsCl.color, minWidth:30, textAlign:'right' }}>{u.rs}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {nearTasks.length>0&&(
+                                <div className="glass" style={{ padding:16 }}>
+                                    <div style={{ fontSize:12, fontWeight:700, color:'#ffcc00', marginBottom:12 }}>⏰ Próximas ao Vencimento (7d)</div>
+                                    {nearTasks.slice(0,6).map(t=>{
+                                        const dl3=daysLeft(t.dueDate);
+                                        return(
+                                            <div key={t.id} style={{ display:'flex', alignItems:'center', gap:10, padding:'6px 10px', background:'rgba(255,204,0,.05)', borderRadius:7, marginBottom:4, border:'1px solid rgba(255,204,0,.15)' }}>
+                                                <span style={{ flex:1, fontSize:11.5, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{t.title}</span>
+                                                <span style={{ fontSize:10, color:'rgba(255,255,255,.4)', flexShrink:0 }}>{(t.assignee||'').split(' ')[0]}</span>
+                                                <span style={{ fontSize:10, fontWeight:700, color:dl3===0?'#ff4060':'#ffcc00', flexShrink:0 }}>{dl3===0?'Hoje':dl3+'d'}</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ── IPC ── */}
+                    {sec==='ipc' && (
+                        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))', gap:10 }}>
+                                {[{l:'Embaixadores',v:clientsIPC.filter(c=>c.ipcScore>=90).length,c:'#4090ff'},{l:'Saudáveis',v:clientsIPC.filter(c=>c.ipcScore>=70&&c.ipcScore<90).length,c:'#00c864'},{l:'Atenção',v:clientsIPC.filter(c=>c.ipcScore>=50&&c.ipcScore<70).length,c:'#ffcc00'},{l:'Risco',v:clientsIPC.filter(c=>c.ipcScore<50).length,c:'#ff4060'}].map(m=>(
+                                    <div key={m.l} className="glass" style={{ padding:'12px 14px', textAlign:'center', borderTop:'2px solid '+m.c+'55' }}>
+                                        <div style={{ fontSize:22, fontWeight:800, color:m.c }}>{m.v}</div>
+                                        <div style={{ fontSize:10.5, color:'rgba(255,255,255,.45)', marginTop:2 }}>{m.l}</div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="glass" style={{ padding:16, overflowX:'auto' }}>
+                                <div style={{ fontSize:11, fontWeight:700, color:'rgba(255,255,255,.5)', marginBottom:12, textTransform:'uppercase', letterSpacing:.5 }}>Índice de Proximidade do Cliente (IPC)</div>
+                                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+                                    <thead><tr style={{ borderBottom:'1px solid rgba(255,255,255,.08)' }}>
+                                        {['Cliente','Dias s/ contato','Score IPC','Status'].map(h=><th key={h} style={{ padding:'7px 10px', textAlign:'left', fontSize:10, fontWeight:700, color:'rgba(255,255,255,.35)', textTransform:'uppercase', letterSpacing:.5 }}>{h}</th>)}
+                                    </tr></thead>
+                                    <tbody>
+                                        {clientsIPC.map((c,i)=>(
+                                            <tr key={c.id} style={{ borderBottom:'1px solid rgba(255,255,255,.04)', background:i%2===0?'rgba(255,255,255,.02)':'transparent' }}>
+                                                <td style={{ padding:'8px 10px', fontWeight:600 }}>{c.name}</td>
+                                                <td style={{ padding:'8px 10px', color:c.daysSince>7?'#ff8030':'rgba(255,255,255,.55)' }}>{c.daysSince<999?c.daysSince+'d':'—'}</td>
+                                                <td style={{ padding:'8px 10px' }}>
+                                                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                                                        <div style={{ flex:1, height:5, background:'rgba(255,255,255,.06)', borderRadius:3, overflow:'hidden' }}>
+                                                            <div style={{ height:'100%', width:c.ipcScore+'%', background:c.ipcCl.color, borderRadius:3 }} />
+                                                        </div>
+                                                        <span style={{ fontSize:11, fontWeight:700, color:c.ipcCl.color, minWidth:26 }}>{c.ipcScore}</span>
+                                                    </div>
+                                                </td>
+                                                <td style={{ padding:'8px 10px' }}><span style={{ fontSize:10, fontWeight:700, color:c.ipcCl.color, background:c.ipcCl.color+'20', borderRadius:5, padding:'2px 8px' }}>{c.ipcCl.label}</span></td>
+                                            </tr>
+                                        ))}
+                                        {!clientsIPC.length&&<tr><td colSpan="4" style={{ padding:'30px 0', textAlign:'center', color:'rgba(255,255,255,.3)', fontSize:13 }}>Nenhum cliente ativo.</td></tr>}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── TEAM ── */}
+                    {sec==='team' && (
+                        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                            {teamScores.map(u=>(
+                                <div key={u.name} className="glass" style={{ padding:18 }}>
+                                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:14 }}>
+                                        <div>
+                                            <div style={{ fontSize:15, fontWeight:700 }}>{u.name}</div>
+                                            <div style={{ fontSize:11, color:'rgba(255,255,255,.38)', marginTop:2 }}>{u.tasks} tarefas · {u.done} concluídas · {u.ovd} atrasadas</div>
+                                        </div>
+                                        <div style={{ textAlign:'right' }}>
+                                            <div style={{ fontSize:10, color:'rgba(255,255,255,.38)', marginBottom:2 }}>Performance Mensal</div>
+                                            <span style={{ fontSize:12, fontWeight:700, color:u.psCl.color }}>{u.psCl.label}</span>
+                                        </div>
+                                    </div>
+                                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+                                        {[{l:'Score Performance',v:u.ps,cl:u.psCl},{l:'Confiabilidade',v:u.rs,cl:u.rsCl}].map(m=>(
+                                            <div key={m.l} style={{ background:'rgba(255,255,255,.04)', borderRadius:8, padding:'10px 12px' }}>
+                                                <div style={{ fontSize:10, color:'rgba(255,255,255,.35)', marginBottom:5, textTransform:'uppercase', letterSpacing:.5 }}>{m.l}</div>
+                                                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                                                    <div style={{ flex:1, height:5, background:'rgba(255,255,255,.06)', borderRadius:3, overflow:'hidden' }}>
+                                                        <div style={{ height:'100%', width:m.v+'%', background:m.cl.color, borderRadius:3 }} />
+                                                    </div>
+                                                    <span style={{ fontSize:14, fontWeight:800, color:m.cl.color }}>{m.v}</span>
+                                                </div>
+                                                <div style={{ fontSize:10, color:m.cl.color, marginTop:3 }}>{m.cl.label}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div style={{ display:'flex', gap:14, fontSize:11, color:'rgba(255,255,255,.4)', flexWrap:'wrap', paddingTop:10, borderTop:'1px solid rgba(255,255,255,.05)' }}>
+                                        <span>⏱ Hoje: <strong style={{ color:u.todayMs>0?'#00c864':'rgba(255,255,255,.3)' }}>{u.todayMs>0?fmtMs(u.todayMs):'0min'}</strong></span>
+                                        <span>📓 Diário: <strong style={{ color:u.hasLog?'#00c864':'#ff6060' }}>{u.hasLog?'✓ Preenchido':'✗ Pendente'}</strong></span>
+                                        {u.ovd>0&&<span style={{ color:'#ff6060' }}>⚠️ {u.ovd} atrasada{u.ovd>1?'s':''}</span>}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* ── DIARY ── */}
+                    {sec==='diary' && (
+                        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                                <div>
+                                    <div style={{ fontSize:14, fontWeight:700 }}>Diário Operacional</div>
+                                    <div style={{ fontSize:11.5, color:'rgba(255,255,255,.38)', marginTop:2 }}>{new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'})}</div>
+                                </div>
+                                <button className="btn-primary" style={{ fontSize:12 }} onClick={()=>setShowLog(true)}>
+                                    {todayLog?'✏️ Editar Diário':'📓 Preencher Diário Hoje'}
+                                </button>
+                            </div>
+                            {!todayLog?(
+                                <div className="glass" style={{ padding:24, textAlign:'center', border:'1px dashed rgba(255,160,0,.3)', background:'rgba(255,160,0,.04)' }}>
+                                    <div style={{ fontSize:28, marginBottom:8 }}>📓</div>
+                                    <div style={{ fontSize:13, fontWeight:600, color:'#ffcc00' }}>Diário de hoje não preenchido</div>
+                                    <div style={{ fontSize:11.5, color:'rgba(255,255,255,.38)', marginTop:4, marginBottom:14 }}>Registre suas atividades ao final do expediente.</div>
+                                    <button className="btn-primary" onClick={()=>setShowLog(true)}>Preencher agora</button>
+                                </div>
+                            ):(
+                                <div className="glass" style={{ padding:16, border:'1px solid rgba(0,200,100,.2)' }}>
+                                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12 }}>
+                                        <div style={{ fontSize:12, fontWeight:700, color:'#00c864' }}>✓ Diário de hoje registrado</div>
+                                        <button onClick={()=>setShowLog(true)} style={{ background:'none', border:'1px solid rgba(255,255,255,.1)', borderRadius:6, color:'rgba(255,255,255,.5)', fontSize:10.5, padding:'3px 9px', cursor:'pointer' }}>Editar</button>
+                                    </div>
+                                    {[['O que foi realizado',todayLog.whatDone],['Entregas',todayLog.deliveries],['Bloqueios',todayLog.blockers],['Plano para amanhã',todayLog.planTomorrow]].filter(([,v])=>v).map(([k,v])=>(
+                                        <div key={k} style={{ marginBottom:10 }}>
+                                            <div style={{ fontSize:9.5, fontWeight:700, color:'rgba(255,255,255,.32)', textTransform:'uppercase', letterSpacing:.5, marginBottom:3 }}>{k}</div>
+                                            <div style={{ fontSize:12, color:'rgba(255,255,255,.72)', lineHeight:1.6, whiteSpace:'pre-wrap' }}>{v}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            {dailyLogs.filter(l=>l.userId===myId&&l.date!==today).slice(0,5).map(log=>(
+                                <div key={log.id} className="glass" style={{ padding:'12px 16px' }}>
+                                    <div style={{ fontSize:11, fontWeight:600, color:'rgba(255,255,255,.4)', marginBottom:6 }}>{new Date(log.date+'T12:00').toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'short'})}</div>
+                                    <div style={{ fontSize:12, color:'rgba(255,255,255,.58)', lineHeight:1.5 }}>{(log.whatDone||'').slice(0,140)}{(log.whatDone||'').length>140?'...':''}</div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* ── TIMER META ── */}
+                    {sec==='timer' && (
+                        <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                                <div>
+                                    <div style={{ fontSize:14, fontWeight:700 }}>Meta de Apontamento</div>
+                                    <div style={{ fontSize:11.5, color:'rgba(255,255,255,.38)', marginTop:2 }}>Horas mínimas obrigatórias por dia</div>
+                                </div>
+                                <button className="btn-secondary" onClick={()=>setShowMeta(true)} style={{ fontSize:12 }}>⚙ Configurar Meta</button>
+                            </div>
+                            <div className="glass" style={{ padding:18 }}>
+                                <div style={{ fontSize:12, fontWeight:700, color:'rgba(255,255,255,.6)', marginBottom:14 }}>Meu Apontamento Hoje</div>
+                                <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(110px,1fr))', gap:10, marginBottom:14 }}>
+                                    {[
+                                        {l:'Meta Diária',v:myMeta.dailyGoalHours+'h',c:'#4090ff'},
+                                        {l:'Apontado',v:todayMs>=3600000?(todayMs/3600000).toFixed(1)+'h':Math.round(todayMs/60000)+'min',c:goalPct>=100?'#00c864':goalPct>=50?'#ffcc00':'#ff4060'},
+                                        {l:'Faltando',v:todayMs/3600000>=myMeta.dailyGoalHours?'0h':(myMeta.dailyGoalHours-todayMs/3600000).toFixed(1)+'h',c:'rgba(255,255,255,.5)'},
+                                        {l:'Progresso',v:goalPct.toFixed(0)+'%',c:goalPct>=100?'#00c864':goalPct>=50?'#ffcc00':'#ff4060'},
+                                    ].map(m=>(
+                                        <div key={m.l} style={{ background:'rgba(255,255,255,.04)', borderRadius:8, padding:'10px 12px', textAlign:'center' }}>
+                                            <div style={{ fontSize:10, color:'rgba(255,255,255,.35)', marginBottom:4 }}>{m.l}</div>
+                                            <div style={{ fontSize:17, fontWeight:800, color:m.c }}>{m.v}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div style={{ height:8, background:'rgba(255,255,255,.07)', borderRadius:4, overflow:'hidden' }}>
+                                    <div style={{ height:'100%', width:Math.min(100,goalPct)+'%', background:goalPct>=100?'#00c864':goalPct>=50?'#ffcc00':'#ff4060', borderRadius:4, transition:'width .4s' }} />
+                                </div>
+                                {goalPct<100&&todayMs===0&&<div style={{ fontSize:11, color:'#ff8030', marginTop:8 }}>⚠️ Nenhum apontamento hoje. Use o cronômetro (▶) nas tarefas do Kanban.</div>}
+                                {goalPct>=100&&<div style={{ fontSize:11, color:'#00c864', marginTop:8 }}>✓ Meta diária atingida! Ótimo trabalho.</div>}
+                            </div>
+                            {isAdmin&&(
+                                <div className="glass" style={{ padding:16 }}>
+                                    <div style={{ fontSize:12, fontWeight:700, color:'rgba(255,255,255,.6)', marginBottom:12 }}>Apontamento da Equipe Hoje</div>
+                                    {teamScores.map(u=>{
+                                        const uMeta=timerMetas.find(m=>m.userId===u.uId)||{dailyGoalHours:6};
+                                        const uPct=Math.min(100,(u.todayMs/3600000/uMeta.dailyGoalHours)*100);
+                                        return(
+                                            <div key={u.name} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
+                                                <span style={{ fontSize:12, fontWeight:600, minWidth:90 }}>{u.name.split(' ')[0]}</span>
+                                                <div style={{ flex:1, height:6, background:'rgba(255,255,255,.06)', borderRadius:3, overflow:'hidden' }}>
+                                                    <div style={{ height:'100%', width:uPct+'%', background:uPct>=100?'#00c864':uPct>=50?'#ffcc00':'#ff4060', borderRadius:3 }} />
+                                                </div>
+                                                <span style={{ fontSize:11, fontWeight:700, color:u.todayMs>0?'rgba(255,255,255,.6)':'#ff6060', minWidth:50, textAlign:'right' }}>{u.todayMs>0?fmtMs(u.todayMs):'0min'}</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {showLog&&<DailyLogModal existingLog={todayLog} userId={myId} onClose={log=>{setShowLog(false);if(log)loadLocal();}} />}
+                    {showMeta&&<TimerMetaModal currentMeta={myMeta.id?myMeta:null} userId={myId} onClose={meta=>{setShowMeta(false);if(meta)loadLocal();}} />}
+                </div>
+            );
+        }
+
         function Performance() {
             const { store, deletePerformance } = useApp();
             const perf = store.performance || [];
+            const [perfTab, setPerfTab] = useState('registros');
             const [showAdd, setShowAdd] = useState(false);
             const [editing, setEditing] = useState(null);
             const [del, setDel] = useState(null);
@@ -5201,6 +5672,19 @@
 
             return (
                 <div className="fade-in">
+                    {/* Performance tab bar */}
+                    <div style={{ display:'flex', gap:0, marginBottom:22, borderBottom:'1px solid rgba(255,255,255,.08)' }}>
+                        {[['registros','📊 Registros'],['gestao','🎯 Gestão Operacional']].map(([k,l])=>(
+                            <button key={k} onClick={()=>setPerfTab(k)}
+                                style={{ padding:'9px 22px', background:'none', border:'none', borderBottom:perfTab===k?'2px solid #ff0040':'2px solid transparent', color:perfTab===k?'#fff':'rgba(255,255,255,.42)', fontWeight:perfTab===k?700:500, fontSize:13.5, cursor:'pointer', transition:'all .2s', marginBottom:-1 }}>
+                                {l}
+                            </button>
+                        ))}
+                    </div>
+
+                    {perfTab==='gestao' && <OperationalDashboard />}
+
+                    {perfTab==='registros' && (<>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
                         <div>
                             <h1 style={{ fontSize: 21, fontWeight: 700 }}>Performance</h1>
@@ -5297,6 +5781,7 @@
                     {showAdd && <PerformanceModal onClose={() => setShowAdd(false)} />}
                     {editing && <PerformanceModal rec={editing} onClose={() => setEditing(null)} />}
                     {del && <Confirm msg={'Excluir registro de "' + (del.clientName || '—') + '" (' + del.platform + ' · ' + MESES_SHORT[(del.month || 1) - 1] + '/' + del.year + ')?'} onOk={() => deletePerformance(del.id)} onClose={() => setDel(null)} />}
+                    </>)}
                 </div>
             );
         }
@@ -8439,6 +8924,73 @@
             );
         }
 
+        /* ── ALERT MONITOR (módulos 03 e 04) ──────────────── */
+        function AlertMonitor() {
+            const { store, addNotif } = useApp();
+            useEffect(() => {
+                const check = () => {
+                    const me = JSON.parse(sessionStorage.getItem('neos_auth')||'null');
+                    if (!me) return;
+                    const today = new Date().toISOString().slice(0,10);
+                    const now = new Date();
+                    const alertKey = k => {
+                        const sent = JSON.parse(localStorage.getItem('neos_alerts')||'{}');
+                        if (sent[k]===today) return false;
+                        sent[k]=today; localStorage.setItem('neos_alerts',JSON.stringify(sent)); return true;
+                    };
+                    const isAdm = me.role==='admin'||_ADMIN_IDS.includes(me.username);
+
+                    /* Módulo 03 — alertas de relacionamento */
+                    if (isAdm) {
+                        (store.clients||[]).filter(c=>c.status==='Ativo').forEach(cl => {
+                            const cId=cl.id, cNm=(cl.name||'').toLowerCase();
+                            const evDts=(store.calEvents||[]).filter(e=>e.clientId===cId||(e.clientName||'').toLowerCase()===cNm).map(e=>new Date(e.date+'T12:00').getTime()).filter(n=>!isNaN(n));
+                            const lastMs=evDts.length?Math.max(...evDts):0;
+                            const days=lastMs?Math.floor((now-lastMs)/86400000):999;
+                            const clTasks=(store.tasks||[]).filter(t=>t.clientId===cId&&t.assignee);
+                            const respId=clTasks.length?_toUserId(clTasks[clTasks.length-1].assignee):me.username;
+                            if (days>=10&&alertKey('rel_'+cId+'_10d')) {
+                                addNotif(respId,'client_risk','🚨 PRIORIDADE MÁXIMA',cl.name+' há '+days+' dias sem contato!',cId,'client');
+                                _ADMIN_IDS.forEach(u=>{if(u!==respId)addNotif(u,'client_risk','🚨 PRIORIDADE MÁXIMA',cl.name+' há '+days+' dias sem contato!',cId,'client');});
+                            } else if (days>=7&&alertKey('rel_'+cId+'_7d')) {
+                                addNotif(respId,'client_risk','⚠️ Cliente em Risco',cl.name+' há '+days+'d sem interação.',cId,'client');
+                                _ADMIN_IDS.forEach(u=>{if(u!==respId)addNotif(u,'client_risk','⚠️ Cliente em Risco',cl.name+' há '+days+'d sem interação.',cId,'client');});
+                            } else if (days>=5&&alertKey('rel_'+cId+'_5d')) {
+                                addNotif(respId,'client_attention','⚠️ Cliente Esfriando',cl.name+' há '+days+'d sem contato.',cId,'client');
+                                _ADMIN_IDS.forEach(u=>{if(u!==respId)addNotif(u,'client_attention','⚠️ Cliente Esfriando',cl.name+' há '+days+'d sem contato.',cId,'client');});
+                            } else if (days>=3&&alertKey('rel_'+cId+'_3d')) {
+                                addNotif(respId,'client_follow','📬 Lembrete de Contato','Entre em contato com '+cl.name+' ('+days+'d sem interação).',cId,'client');
+                            }
+                        });
+                    }
+
+                    /* Módulo 04 — alertas de vencimento de tarefas */
+                    (store.tasks||[]).filter(t=>t.status!=='Concluído'&&t.dueDate&&t.assignee).forEach(task=>{
+                        const due=new Date(task.dueDate+'T23:59:59');
+                        const dl=Math.ceil((due-now)/86400000);
+                        const aId=_toUserId(task.assignee);
+                        if (!aId) return;
+                        if (dl<0&&alertKey('task_'+task.id+'_ov')) {
+                            addNotif(aId,'task_overdue','🔴 Tarefa Atrasada','"'+task.title+'" está '+Math.abs(dl)+'d atrasada.',task.id,'task');
+                            _ADMIN_IDS.forEach(u=>{if(u!==aId)addNotif(u,'task_overdue','🔴 Tarefa Atrasada','"'+task.title+'" ('+task.assignee+') '+Math.abs(dl)+'d atraso.',task.id,'task');});
+                        } else if (dl===0&&alertKey('task_'+task.id+'_0d')) {
+                            addNotif(aId,'task_due','⏰ Vence Hoje!','"'+task.title+'" deve ser entregue hoje.',task.id,'task');
+                        } else if (dl===1&&alertKey('task_'+task.id+'_1d')) {
+                            addNotif(aId,'task_due','📅 Vence Amanhã','"'+task.title+'" vence amanhã.',task.id,'task');
+                        } else if (dl<=3&&dl>1&&alertKey('task_'+task.id+'_3d')) {
+                            addNotif(aId,'task_due','📅 Prazo em '+dl+' Dias','"'+task.title+'" vence em '+dl+' dias.',task.id,'task');
+                        } else if (dl<=7&&dl>3&&alertKey('task_'+task.id+'_7d')) {
+                            addNotif(aId,'task_due','📅 Prazo em '+dl+' Dias','"'+task.title+'" vence em '+dl+' dias.',task.id,'task');
+                        }
+                    });
+                };
+                const t=setTimeout(check,4000);
+                const iv=setInterval(check,30*60*1000);
+                return ()=>{ clearTimeout(t); clearInterval(iv); };
+            }, [store.tasks?.length, store.clients?.length]);
+            return null;
+        }
+
         /* ── INBOX / NOTIFICAÇÕES ──────────────────────────── */
         function InboxBtn() {
             const { store, markNotifRead, markAllNotifsRead } = useApp();
@@ -8535,6 +9087,7 @@
                             <Ic n="plus" s={20} />
                         </button>
                     )}
+                    <AlertMonitor />
                     <InboxBtn />
                     <button onClick={() => setChatOpen(c => !c)} title="Chat Interno"
                         style={{ position: 'fixed', bottom: isEmployee ? 22 : 82, right: 22, zIndex: 200, borderRadius: 50, width: 44, height: 44, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: chatOpen ? '#ff0040' : 'rgba(255,255,255,.08)', border: '1px solid ' + (chatOpen ? '#ff0040' : 'rgba(255,255,255,.15)'), cursor: 'pointer', boxShadow: chatOpen ? '0 0 18px rgba(255,0,64,.4)' : 'none', transition: 'all .2s' }}>
