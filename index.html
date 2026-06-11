@@ -452,6 +452,7 @@
         db.version(7).stores({ notifications: 'id, userId, read, createdAt', taskTimers: 'id, taskId, userId, startedAt, createdAt' });
         db.version(8).stores({ flowgramProjects: 'id, clientId, type, createdAt', flowgramTemplates: 'id, type, category, createdAt', flowgramAssets: 'id, clientId, type, createdAt' });
         db.version(9).stores({ dailyLogs: 'id, userId, date, createdAt', timerMeta: 'id, userId, createdAt' });
+        db.version(10).stores({ finComprovantes: 'id, finId, uploadedAt' });
         const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [], goals: [], notifications: [], taskTimers: [] };
 
         /* ── SUPABASE HELPERS ───────────────────────────────── */
@@ -2646,6 +2647,113 @@
         }
 
         /* ── FINANCIAL ──────────────────────────────────────── */
+        /* ── COMPROVANTES DE PAGAMENTO ─────────────────────── */
+        function ComprovantesModal({ rec, onClose }) {
+            const me = (() => { try { return JSON.parse(sessionStorage.getItem('neos_auth') || 'null'); } catch { return null; } })();
+            const [list, setList] = React.useState([]);
+            const [uploading, setUploading] = React.useState(false);
+            const [lightbox, setLightbox] = React.useState(null);
+            const fileRef = React.useRef();
+
+            const load = async () => {
+                try {
+                    const items = await db.finComprovantes.where('finId').equals(rec.id).sortBy('uploadedAt');
+                    setList(items.map(({ id, finId, name, size, type, uploadedAt, uploadedBy }) => ({ id, finId, name, size, type, uploadedAt, uploadedBy })));
+                } catch (e) { console.error('ComprovantesModal load:', e); }
+            };
+            React.useEffect(() => { load(); }, []);
+
+            const fmtSize = b => b < 1024 * 1024 ? (b / 1024).toFixed(1) + ' KB' : (b / 1024 / 1024).toFixed(2) + ' MB';
+            const fmtTs = iso => { try { return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return iso; } };
+
+            const handleFile = async e => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const allowed = ['application/pdf', 'image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+                if (!allowed.includes(file.type)) { alert('Formato não suportado. Use PDF, JPG, PNG ou WEBP.'); return; }
+                if (file.size > 10 * 1024 * 1024) { alert('Arquivo muito grande. Máximo 10 MB.'); return; }
+                setUploading(true);
+                try {
+                    const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = ev => res(ev.target.result); r.onerror = rej; r.readAsDataURL(file); });
+                    await db.finComprovantes.put({ id: genId(), finId: rec.id, name: file.name, size: file.size, type: file.type, uploadedAt: new Date().toISOString(), uploadedBy: me?.name || me?.username || 'Usuário', data });
+                    await load();
+                } catch (err) { console.error(err); alert('Erro ao salvar comprovante.'); }
+                setUploading(false);
+                e.target.value = '';
+            };
+
+            const viewItem = async id => {
+                const item = await db.finComprovantes.get(id);
+                if (!item) return;
+                if (item.type.startsWith('image/')) { setLightbox({ src: item.data, name: item.name }); }
+                else {
+                    const byteStr = atob(item.data.split(',')[1]);
+                    const ab = new Uint8Array(byteStr.length);
+                    for (let i = 0; i < byteStr.length; i++) ab[i] = byteStr.charCodeAt(i);
+                    window.open(URL.createObjectURL(new Blob([ab], { type: item.type })), '_blank');
+                }
+            };
+
+            const downloadItem = async id => {
+                const item = await db.finComprovantes.get(id);
+                if (!item) return;
+                const a = document.createElement('a'); a.href = item.data; a.download = item.name; a.click();
+            };
+
+            const removeItem = async id => {
+                if (!confirm('Remover este comprovante?')) return;
+                await db.finComprovantes.delete(id);
+                await load();
+            };
+
+            return (
+                <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+                    <div className="modal-box fade-in" style={{ maxWidth: 560 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18 }}>
+                            <div>
+                                <h2 style={{ fontSize: 16, fontWeight: 700 }}>Comprovantes de Pagamento</h2>
+                                <p style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', marginTop: 3 }}>{rec.clientName || '—'} · {fmtD(rec.date)} · {fmt(rec.amount || 0)}</p>
+                            </div>
+                            <button className="btn-secondary" onClick={onClose} style={{ padding: '5px 9px' }}><Ic n="x" s={14} /></button>
+                        </div>
+                        <div style={{ marginBottom: 16 }}>
+                            <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" style={{ display: 'none' }} onChange={handleFile} />
+                            <button className="btn-primary" style={{ width: '100%', justifyContent: 'center' }} onClick={() => fileRef.current?.click()} disabled={uploading}>
+                                {uploading ? 'Enviando...' : '+ Anexar Comprovante'}
+                            </button>
+                            <p style={{ fontSize: 11, color: 'rgba(255,255,255,.3)', marginTop: 6, textAlign: 'center' }}>PDF, JPG, PNG ou WEBP · Máx. 10 MB</p>
+                        </div>
+                        {list.length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '28px 0', color: 'rgba(255,255,255,.3)', fontSize: 13 }}>Nenhum comprovante anexado ainda</div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                {list.map(item => (
+                                    <div key={item.id} style={{ background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 10, padding: '12px 14px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                                    {item.type.startsWith('image/') ? '🖼 ' : '📄 '}{item.name}
+                                                </div>
+                                                <div style={{ fontSize: 11, color: 'rgba(255,255,255,.38)', marginTop: 4 }}>
+                                                    {fmtSize(item.size)} · {fmtTs(item.uploadedAt)} · por {item.uploadedBy}
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                                                <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => viewItem(item.id)}>Visualizar</button>
+                                                <button className="btn-secondary" style={{ padding: '4px 10px', fontSize: 11 }} onClick={() => downloadItem(item.id)}>Baixar</button>
+                                                <button className="btn-danger" style={{ padding: '4px 8px' }} onClick={() => removeItem(item.id)}><Ic n="trash" s={11} /></button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {lightbox && <ImageLightbox src={lightbox.src} onClose={() => setLightbox(null)} />}
+                    </div>
+                </div>
+            );
+        }
+
         function Financial() {
             const { store, deleteFin, editFin, deleteCost } = useApp();
             const [showAdd, setShowAdd] = useState(false);
@@ -2655,6 +2763,7 @@
             const [showCost, setShowCost] = useState(false);
             const [editingCost, setEditingCost] = useState(null);
             const [delCost2, setDelCost2] = useState(null);
+            const [showComp, setShowComp] = useState(null);
             const { financials } = store;
             const costs = store.costs || [];
             const rows = filt === 'Todos' ? financials : financials.filter(f => f.status === filt);
@@ -2708,7 +2817,7 @@
                                                 {['Pago', 'Pendente', 'Atrasado'].map(s => <option key={s}>{s}</option>)}
                                             </select>
                                         </td>
-                                        <td><div style={{ display: 'flex', gap: 7 }}><button className="btn-secondary" style={{ padding: '5px 9px' }} onClick={() => setEditing(r)}><Ic n="edit" s={12} /></button><button className="btn-danger" style={{ padding: '5px 9px' }} onClick={() => setDel(r)}><Ic n="trash" s={12} /></button></div></td>
+                                        <td><div style={{ display: 'flex', gap: 7 }}>{r.status === 'Pago' && <button className="btn-secondary" style={{ padding: '5px 9px', color: '#00c864', borderColor: 'rgba(0,200,100,.3)' }} onClick={() => setShowComp(r)} title="Comprovantes de Pagamento">📎</button>}<button className="btn-secondary" style={{ padding: '5px 9px' }} onClick={() => setEditing(r)}><Ic n="edit" s={12} /></button><button className="btn-danger" style={{ padding: '5px 9px' }} onClick={() => setDel(r)}><Ic n="trash" s={12} /></button></div></td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -2742,6 +2851,7 @@
                     {showCost && <CostModal onClose={() => setShowCost(false)} />}
                     {editingCost && <CostModal rec={editingCost} onClose={() => setEditingCost(null)} />}
                     {delCost2 && <Confirm msg={`Excluir custo "${delCost2.name}"?`} onOk={() => { deleteCost(delCost2.id); setDelCost2(null); }} onClose={() => setDelCost2(null)} />}
+                    {showComp && <ComprovantesModal rec={showComp} onClose={() => setShowComp(null)} />}
                 </div>
             );
         }
@@ -2761,6 +2871,7 @@
             const conv = lds > 0 ? (sls / lds) * 100 : 0;
             const rev = sls * cpa;
             const fmtV = v => 'R$ ' + v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const period = MESES_SHORT[(rec.month || 1) - 1] + '/' + (rec.year || new Date().getFullYear());
 
             /* ── dimensões do PDF (pt, 1pt ≈ 1px a 72dpi, formato 16:9) ── */
             /* embed dims em pt — canvas sempre 2× para qualidade */
@@ -2850,21 +2961,24 @@
                 logoEndX = M + 88;
             }
 
-            /* nome do cliente */
-            fnt('bold', 18); tc(255, 255, 255);
-            doc.text(client.name || 'Cliente', logoEndX, 34);
-            fnt('normal', 10); tc(160, 160, 210);
-            const subTxt = [(client.company || ''), (client.service || 'Trafego Pago').toUpperCase()].filter(Boolean).join('  ·  ');
-            doc.text(subTxt, logoEndX, 52);
+            /* campanha + cliente */
+            const campNameDisp = (rec.campaignName || 'Campanha Principal').substring(0, 44);
+            fnt('bold', 16); tc(255, 255, 255);
+            doc.text(campNameDisp, logoEndX, 28);
+            fnt('normal', 10); tc(200, 198, 245);
+            doc.text(client.name || 'Cliente', logoEndX, 44);
+            fnt('normal', 9); tc(150, 148, 195);
+            doc.text(period + '  ·  ' + (client.service || 'Tráfego Pago').toUpperCase(), logoEndX, 60);
 
-            /* 8 chips de métricas (direita) */
+            /* chips de métricas — objetivos, sem análise */
             const chips = [
-                { l: 'Investimento', v: fmtV(bgt) }, { l: 'Receita Est.', v: fmtV(rev) },
-                { l: 'ROAS', v: roas.toFixed(2) + 'x' }, { l: 'CPL', v: fmtV(cpl) },
-                { l: 'Leads', v: lds.toLocaleString() }, { l: 'Vendas', v: sls.toLocaleString() },
-                { l: 'CPA', v: fmtV(cpa) }, { l: 'Conv %', v: conv.toFixed(1) + '%' },
+                { l: 'Investimento', v: fmtV(bgt) },
+                { l: 'Leads Gerados', v: lds > 0 ? lds.toLocaleString() : '—' },
+                { l: 'CPL', v: cpl > 0 ? fmtV(cpl) : '—' },
+                { l: 'Período', v: period },
+                { l: 'Status', v: 'Ativa' },
             ];
-            const chipW = 108, chipH = 48, chipG = 7;
+            const chipW = 118, chipH = 48, chipG = 7;
             const chipX0 = W - M - chips.length * chipW - (chips.length - 1) * chipG;
             chips.forEach((ch, i) => {
                 const cx = chipX0 + i * (chipW + chipG), cy = 12;
@@ -2878,11 +2992,12 @@
             /* ══════════ KPI CARDS (y 80–210) ══════════ */
             const cardY = 80, cardH = 130, cardG = 10;
             const cardW = (W - M * 2 - 3 * cardG) / 4;
+            const cplRgb = cpl <= 0 ? [180,178,220] : cpl <= 50 ? [0,200,100] : cpl <= 100 ? [255,204,0] : [255,64,96];
             const kpis = [
-                { l: 'Investimento', v: fmtV(bgt), sub: 'Budget total investido', rgb: [64, 144, 255], bar: Math.min(bgt / Math.max(bgt, rev, 1), 1) },
-                { l: 'Receita Estimada', v: fmtV(rev), sub: sls + ' conversoes x R$' + cpa.toFixed(2), rgb: [0, 200, 100], bar: bgt > 0 ? Math.min(rev / (bgt * 5), 1) : 0 },
-                { l: 'ROAS', v: roas.toFixed(2) + 'x', sub: roas >= 3 ? 'Acima da meta (3x)' : 'Meta: >= 3x', rgb: roas >= 3 ? [0, 200, 100] : roas >= 1 ? [255, 204, 0] : [255, 64, 96], bar: Math.min(roas / 10, 1) },
-                { l: 'Taxa de Conversao', v: conv.toFixed(1) + '%', sub: lds + ' leads  ->  ' + sls + ' vendas', rgb: conv >= 10 ? [0, 200, 100] : conv >= 3 ? [255, 204, 0] : [255, 64, 96], bar: Math.min(conv / 20, 1) },
+                { l: 'Investimento Total', v: fmtV(bgt), sub: 'Budget da campanha', rgb: [64, 144, 255], bar: 1 },
+                { l: 'Leads Gerados', v: lds > 0 ? lds.toLocaleString() : '—', sub: 'Total capturado na campanha', rgb: [160, 96, 255], bar: lds > 0 ? 1 : 0 },
+                { l: 'CPL — Custo por Lead', v: cpl > 0 ? fmtV(cpl) : '—', sub: bgt > 0 && lds > 0 ? 'R$' + bgt.toFixed(0) + ' ÷ ' + lds + ' leads' : 'Aguardando dados', rgb: cplRgb, bar: cpl > 0 ? Math.max(0, 1 - Math.min(cpl / 200, 1)) : 0 },
+                { l: 'Período', v: period, sub: client.name || '—', rgb: [255, 128, 48], bar: 1 },
             ];
             kpis.forEach((k, i) => {
                 const kx = M + i * (cardW + cardG);
@@ -2931,41 +3046,32 @@
             fnt('bold', 8); tc(...cvRGB);
             doc.text('Conversao: ' + conv.toFixed(1) + '%', RX + RW / 2, funPanY + funPanH - 8, { align: 'center' });
 
-            /* ══════════ ANÁLISE (y 500–640) ══════════ */
-            const aY = gY + gH + 10, aH = 160;
-            const insW = (W - M * 2 - 3 * cardG) / 4;
-            const insights = [
-                roas >= 4 ? { t: 'ROAS ' + roas.toFixed(2) + 'x  Campanha altamente lucrativa. Escale o investimento.', s: 1 }
-                    : roas >= 2 ? { t: 'ROAS ' + roas.toFixed(2) + 'x  Campanha lucrativa com margem positiva.', s: 1 }
-                        : roas >= 1 ? { t: 'ROAS ' + roas.toFixed(2) + 'x  No positivo. Ha espaco para otimizacao.', s: 0 }
-                            : { t: 'ROAS ' + roas.toFixed(2) + 'x  Abaixo do equilibrio. Revisar criativos urgente.', s: -1 },
-                cpl < 30 ? { t: 'CPL R$' + cpl.toFixed(2) + '  Excelente custo por lead para o mercado.', s: 1 }
-                    : cpl < 80 ? { t: 'CPL R$' + cpl.toFixed(2) + '  Dentro da media do mercado.', s: 0 }
-                        : { t: 'CPL R$' + cpl.toFixed(2) + '  Elevado. Revisar segmentacao e criativos.', s: -1 },
-                conv >= 10 ? { t: conv.toFixed(1) + '% conversao  Acima da media. Excelente qualificacao de leads.', s: 1 }
-                    : conv >= 3 ? { t: conv.toFixed(1) + '% conversao  Dentro da media do mercado (2-8%).', s: 0 }
-                        : { t: conv.toFixed(1) + '% conversao  Abaixo da media. Revisar oferta e processo.', s: -1 },
-                rev > bgt ? { t: 'ROI positivo  Receita ' + fmtV(rev) + ' supera investimento de ' + fmtV(bgt) + '.', s: 1 }
-                    : { t: 'ROI negativo  Receita ' + fmtV(rev) + ' abaixo do investimento ' + fmtV(bgt) + '.', s: -1 },
+            /* ══════════ RESUMO DE RESULTADOS ══════════ */
+            const aY = gY + gH + 10, aH = 140;
+            const rMetrics = [
+                { l: 'CAMPANHA', v: (rec.campaignName || 'Campanha Principal').substring(0, 30), c: [200, 198, 255] },
+                { l: 'PERÍODO', v: period, c: [255, 200, 80] },
+                { l: 'INVESTIMENTO', v: fmtV(bgt), c: [64, 144, 255] },
+                { l: 'LEADS GERADOS', v: lds > 0 ? lds.toLocaleString() : '—', c: [160, 96, 255] },
+                { l: 'CPL', v: cpl > 0 ? fmtV(cpl) : '—', c: cpl <= 0 ? [180,178,220] : cpl <= 50 ? [0,200,100] : cpl <= 100 ? [255,204,0] : [255,64,96] },
             ];
-            insights.forEach((ins, i) => {
-                const ix = M + i * (insW + cardG);
-                const bg3 = ins.s === 1 ? [0, 40, 20] : ins.s === -1 ? [50, 5, 14] : [36, 34, 5];
-                const fg3 = ins.s === 1 ? [0, 200, 100] : ins.s === -1 ? [255, 80, 100] : [255, 210, 50];
-                const ic = ins.s === 1 ? '+' : ins.s === -1 ? '!' : '>';
-                fill(...bg3); doc.roundedRect(ix, aY, insW, aH, 6, 6, 'F');
-                dc2(...fg3); doc.setLineWidth(1.5); doc.roundedRect(ix, aY, insW, aH, 6, 6, 'S');
-                fill(...fg3); doc.circle(ix + 24, aY + 30, 13, 'F');
-                fnt('bold', 14); tc(10, 9, 28); doc.text(ic, ix + 24, aY + 35, { align: 'center' });
-                fnt('bold', 10); tc(...fg3);
-                const lines = doc.splitTextToSize(ins.t, insW - 50);
-                doc.text(lines, ix + 44, aY + 24);
-                const lbl = ins.s === 1 ? 'POSITIVO' : ins.s === -1 ? 'ATENCAO' : 'NEUTRO';
-                fill(...fg3); doc.roundedRect(ix + 14, aY + aH - 28, insW - 28, 18, 4, 4, 'F');
-                fnt('bold', 9); tc(10, 9, 28); doc.text(lbl, ix + insW / 2, aY + aH - 15, { align: 'center' });
+            const rmW = (W - M * 2 - (rMetrics.length - 1) * 12) / rMetrics.length;
+            rMetrics.forEach((m, i) => {
+                const [cr, cg, cb] = m.c;
+                const mx = M + i * (rmW + 12);
+                fill(16, 15, 48); doc.roundedRect(mx, aY, rmW, aH, 7, 7, 'F');
+                fill(cr, cg, cb); doc.rect(mx, aY, rmW, 5, 'F');
+                doc.roundedRect(mx, aY, rmW, 5, 7, 7, 'F');
+                fnt('normal', 8); tc(130, 128, 178); doc.text(m.l, mx + rmW / 2, aY + 24, { align: 'center' });
+                dc2(cr, cg, cb); doc.setLineWidth(0.5); doc.line(mx + 18, aY + 32, mx + rmW - 18, aY + 32);
+                const vLines = doc.splitTextToSize(m.v, rmW - 20);
+                fnt('bold', vLines.length > 1 ? 15 : 20); tc(cr, cg, cb);
+                doc.text(vLines, mx + rmW / 2, vLines.length > 1 ? aY + 66 : aY + 78, { align: 'center' });
+                fnt('normal', 8); tc(60, 58, 105);
+                doc.text('Neos Digital', mx + rmW / 2, aY + aH - 14, { align: 'center' });
             });
 
-            /* ══════════ FOOTER (y 668–720) ══════════ */
+            /* ══════════ FOOTER ══════════ */
             const fY = aY + aH + 8;
             fill(14, 13, 42); doc.rect(0, fY, W, H - fY, 'F');
             dc2(40, 38, 90); doc.setLineWidth(1); doc.line(M, fY, W - M, fY);
