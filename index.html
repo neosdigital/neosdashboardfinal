@@ -504,7 +504,7 @@
                     onStatus?.('Carregando dados do banco...');
                 }
                 try {
-                    const results = await Promise.all(_DB_TABLES.map(t => supabase.from(t).select('*')));
+                    const results = await Promise.all(_DB_TABLES.map(t => supabase.from(t).select('*').range(0, 9999)));
                     const erroredTables = _DB_TABLES.filter((_, i) => results[i].error);
 
                     // All tables failed → retry if attempts remain
@@ -637,6 +637,13 @@
                         setStore(existing);
                     }
                     setDbReady(true);
+                    /* Falha parcial silenciosa: se há clientes/financeiro mas tarefas vazias,
+                       refaz o sync imediatamente — garante que tarefas nunca ficam invisíveis */
+                    const suspiciouslyEmpty = (existing.clients?.length > 0 || existing.financials?.length > 0) && !(existing.tasks?.length > 0);
+                    if (suspiciouslyEmpty) {
+                        console.warn('[Neos] Tarefas vazias mas outros dados presentes — iniciando sync de segurança...');
+                        setTimeout(() => refreshDataRef.current?.('silent'), 2500);
+                    }
                 })();
             }, []);
 
@@ -694,7 +701,7 @@
                 };
                 document.addEventListener('visibilitychange', onVisibility);
                 window.addEventListener('online', onOnline);
-                const iv = setInterval(() => refreshDataRef.current?.('silent'), 5 * 60 * 1000);
+                const iv = setInterval(() => refreshDataRef.current?.('silent'), 2 * 60 * 1000);
                 return () => {
                     document.removeEventListener('visibilitychange', onVisibility);
                     window.removeEventListener('online', onOnline);
@@ -757,7 +764,7 @@
             const refreshData = async (mode) => {
                 const silent = mode === 'silent';
                 try {
-                    const results = await Promise.all(_DB_TABLES.map(t => supabase.from(t).select('*')));
+                    const results = await Promise.all(_DB_TABLES.map(t => supabase.from(t).select('*').range(0, 9999)));
                     const allFailed = results.every(r => r.error);
                     if (allFailed) throw new Error('Sem conexão com Supabase');
                     setStore(prev => {
