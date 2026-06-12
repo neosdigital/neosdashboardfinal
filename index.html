@@ -498,9 +498,14 @@
            derrubava o canal Realtime inteiro, impedindo sync de calEvents/tasks */
 
         async function loadFromDB(onStatus) {
-            /* ── FASE 1: IndexedDB local — sempre rápido (~50ms) ── */
+            /* ── FASE 1: IndexedDB local — com timeout de segurança (Dexie pode travar) ── */
             let localData = null;
-            try { localData = await loadFromIndexedDB(); } catch {}
+            try {
+                localData = await Promise.race([
+                    loadFromIndexedDB(),
+                    new Promise(resolve => setTimeout(() => resolve(null), 3000))
+                ]);
+            } catch {}
 
             const hasLocal = localData && (
                 (localData.clients?.length || 0) + (localData.tasks?.length || 0) +
@@ -515,25 +520,24 @@
                 return localData;
             }
 
-            /* ── FASE 2: novo usuário/dispositivo — precisa buscar do Supabase ── */
-            for (let attempt = 0; attempt < 3; attempt++) {
+            /* ── FASE 2: sem cache local — busca do Supabase (máx 2 tentativas × 8s) ── */
+            for (let attempt = 0; attempt < 2; attempt++) {
                 if (attempt > 0) {
-                    onStatus?.(`Reconectando... (tentativa ${attempt + 1}/3)`);
+                    onStatus?.('Reconectando...');
                     await new Promise(r => setTimeout(r, 1500));
                 } else {
                     onStatus?.('Conectando ao banco de dados...');
                 }
                 try {
-                    /* Timeout de 12s por tentativa para nunca travar a tela indefinidamente */
                     const fetchPromise = Promise.all(_DB_TABLES.map(t => supabase.from(t).select('*')));
                     const results = await Promise.race([
                         fetchPromise,
-                        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 12000))
+                        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
                     ]);
 
                     const erroredTables = _DB_TABLES.filter((_, i) => results[i].error);
-                    if (erroredTables.length === _DB_TABLES.length && attempt < 2) {
-                        console.warn(`[Neos] Todas as tabelas falharam (tentativa ${attempt + 1}/3)`);
+                    if (erroredTables.length === _DB_TABLES.length && attempt < 1) {
+                        console.warn('[Neos] Todas as tabelas falharam — tentando novamente...');
                         continue;
                     }
 
@@ -544,14 +548,11 @@
                     try { store.notifications = (await db.notifications.toArray()) || []; } catch { store.notifications = []; }
                     return store;
                 } catch (e) {
-                    console.error(`[Neos] loadFromDB tentativa ${attempt + 1}/3:`, e.message);
-                    if (attempt === 2) {
-                        onStatus?.('Sem conexão — usando dados locais...');
-                        return localData || { ..._EMPTY_STORE() };
-                    }
+                    console.error(`[Neos] loadFromDB tentativa ${attempt + 1}/2:`, e.message);
                 }
             }
-            onStatus?.('Sem conexão — usando dados locais...');
+            /* Sem conexão e sem cache — abre com store vazio; Realtime sincroniza ao conectar */
+            onStatus?.('Sem conexão...');
             return localData || { ..._EMPTY_STORE() };
         }
 
