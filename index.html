@@ -646,6 +646,31 @@
                         console.warn('[Neos] Tarefas vazias mas outros dados presentes — iniciando sync de segurança...');
                         setTimeout(() => refreshDataRef.current?.('silent'), 2500);
                     }
+                    /* ── MIGRAÇÃO ÚNICA: strip de imagens base64 do Supabase (calEvents) ──
+                       Roda em background após boot. Tracked por localStorage para não repetir.
+                       Usa a API REST (não SQL direto) — funciona mesmo com SQL Editor travado. */
+                    setTimeout(async () => {
+                        const DONE_KEY = 'neos_calev_img_strip_v1';
+                        if (localStorage.getItem(DONE_KEY)) return;
+                        try {
+                            const { data: eventsWithImgs } = await supabase
+                                .from('calEvents')
+                                .select('id')
+                                .not('images', 'is', null)
+                                .neq('images', '')
+                                .neq('images', '[]');
+                            if (!eventsWithImgs?.length) { localStorage.setItem(DONE_KEY, '1'); return; }
+                            let cleaned = 0;
+                            for (const ev of eventsWithImgs) {
+                                const { error } = await supabase.from('calEvents').update({ images: null }).eq('id', ev.id);
+                                if (!error) cleaned++;
+                            }
+                            console.log(`[Neos] Migração calEvents: ${cleaned}/${eventsWithImgs.length} imagens removidas do Supabase ✓`);
+                            if (cleaned === eventsWithImgs.length) localStorage.setItem(DONE_KEY, '1');
+                        } catch (e) {
+                            console.warn('[Neos] Migração calEvents falhou (tenta na próxima sessão):', e.message);
+                        }
+                    }, 5000);
                 })();
             }, []);
 
