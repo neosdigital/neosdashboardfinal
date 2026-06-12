@@ -19,7 +19,181 @@
         };
     </script>
     <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- Railway backend shim — substitui supabase-js -->
+    <script>
+    /* createNeosClient: client compatível com supabase-js que fala com o backend Railway.
+       Implementa: from().select/insert/upsert/update/delete/eq/not/neq/maybeSingle
+                   channel().on(postgres_changes|broadcast|presence).subscribe/send/track
+                   removeChannel */
+    window._createNeosClient = function(apiUrl) {
+        const wsUrl = apiUrl.replace(/^https/, 'wss').replace(/^http/, 'ws');
+        let _ws = null, _wsReady = false;
+        const _pending = [], _channels = new Map();
+
+        function getWs() {
+            if (_ws && (_ws.readyState === 0 || _ws.readyState === 1)) return _ws;
+            _ws = new WebSocket(wsUrl);
+            _ws.onopen = () => {
+                _wsReady = true;
+                _pending.splice(0).forEach(m => _ws.send(m));
+            };
+            _ws.onmessage = ({ data }) => {
+                try {
+                    const msg = JSON.parse(data);
+                    _channels.forEach(ch => ch._handle(msg));
+                } catch {}
+            };
+            _ws.onclose = () => { _wsReady = false; setTimeout(getWs, 3000); };
+            _ws.onerror = () => {};
+            return _ws;
+        }
+
+        function wsSend(obj) {
+            const s = JSON.stringify(obj);
+            if (_wsReady && _ws.readyState === 1) _ws.send(s);
+            else { getWs(); _pending.push(s); }
+        }
+
+        /* ── QueryBuilder ── */
+        class QB {
+            constructor(table) {
+                this._t = table; this._op = 'select'; this._f = {};
+                this._notF = []; this._neqF = []; this._body = null;
+                this._single = false; this._head = false;
+            }
+            select(_, opts) { this._op = 'select'; if (opts && opts.head) this._head = true; return this; }
+            insert(d)  { this._op = 'insert';  this._body = Array.isArray(d) ? d[0] : d; return this; }
+            upsert(d)  { this._op = 'upsert';  this._body = Array.isArray(d) ? d[0] : d; return this; }
+            update(d)  { this._op = 'update';  this._body = d; return this; }
+            delete()   { this._op = 'delete';  return this; }
+            eq(c, v)   { this._f[c] = v; return this; }
+            not(c, op, v) { this._notF.push({ c, op, v }); return this; }
+            neq(c, v)  { this._neqF.push({ c, v }); return this; }
+            maybeSingle() { this._single = true; return this; }
+            then(ok, fail) { return this._run().then(ok, fail); }
+
+            async _run() {
+                const { _t, _op, _f, _notF, _neqF, _body, _single, _head } = this;
+                try {
+                    if (_op === 'select') {
+                        if (_head) {
+                            const r = await fetch(`${apiUrl}/health`);
+                            return r.ok ? { count: 0, error: null } : { count: null, error: { message: 'offline' } };
+                        }
+                        const hasFilters = Object.keys(_f).length || _notF.length || _neqF.length;
+                        let url;
+                        if (hasFilters) {
+                            const p = new URLSearchParams();
+                            for (const [k, v] of Object.entries(_f)) p.append(`eq_${k}`, v);
+                            for (const { c } of _notF) p.append('not_null', c);
+                            for (const { c, v } of _neqF) p.append(`neq_${c}`, v ?? '');
+                            url = `${apiUrl}/api/${_t}/filter?${p}`;
+                        } else {
+                            url = `${apiUrl}/api/${_t}`;
+                        }
+                        const r = await fetch(url);
+                        const j = await r.json();
+                        if (!r.ok) return { data: null, error: j };
+                        if (_single) return { data: j.data?.[0] ?? null, error: null };
+                        return { data: j.data || [], error: null };
+                    }
+                    if (_op === 'insert') {
+                        const r = await fetch(`${apiUrl}/api/${_t}`, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(_body)
+                        });
+                        const j = await r.json();
+                        return { data: j.data, error: j.error || null };
+                    }
+                    if (_op === 'upsert') {
+                        const r = await fetch(`${apiUrl}/api/${_t}`, {
+                            method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(_body)
+                        });
+                        const j = await r.json();
+                        return { data: j.data, error: j.error || null };
+                    }
+                    if (_op === 'update') {
+                        const id = _f.id;
+                        const r = await fetch(`${apiUrl}/api/${_t}/${id}`, {
+                            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(_body)
+                        });
+                        const j = await r.json();
+                        return { data: j.data, error: j.error || null };
+                    }
+                    if (_op === 'delete') {
+                        const id = _f.id;
+                        const r = await fetch(`${apiUrl}/api/${_t}/${id}`, { method: 'DELETE' });
+                        const j = await r.json();
+                        return { data: j.data, error: j.error || null };
+                    }
+                } catch (e) {
+                    return { data: null, error: { message: e.message } };
+                }
+            }
+        }
+
+        /* ── Channel (Realtime + Chat + Presence) ── */
+        class Channel {
+            constructor(name) {
+                this._name = name; this._dbListeners = []; this._bcastListeners = [];
+                this._presenceCbs = []; this._statusCb = null; this._presenceKey = null;
+            }
+            on(event, filter, cb) {
+                if (event === 'postgres_changes') this._dbListeners.push({ table: filter.table, cb });
+                else if (event === 'broadcast') this._bcastListeners.push({ event: filter.event, cb });
+                else if (event === 'presence') this._presenceCbs.push({ event: filter.event, cb });
+                return this;
+            }
+            subscribe(statusCb) {
+                this._statusCb = statusCb;
+                const ws = getWs();
+                const check = () => {
+                    if (ws.readyState === 1) statusCb?.('SUBSCRIBED');
+                    else if (ws.readyState === 0) setTimeout(check, 300);
+                    else statusCb?.('CHANNEL_ERROR');
+                };
+                setTimeout(check, 150);
+                return this;
+            }
+            send({ type, event, payload }) {
+                wsSend({ type: 'broadcast', channel: this._name, event, payload });
+            }
+            track(data) {
+                if (!this._presenceKey) this._presenceKey = data.username || Math.random().toString(36).slice(2);
+                wsSend({ type: 'presence_track', channel: this._name, key: this._presenceKey, data });
+            }
+            presenceState() { return this._lastPresenceState || {}; }
+            _handle(msg) {
+                /* DB change */
+                if (msg.eventType && msg.table) {
+                    this._dbListeners.forEach(l => {
+                        if (!l.table || l.table === msg.table)
+                            l.cb({ eventType: msg.eventType, new: msg.new || {}, old: msg.old || {} });
+                    });
+                }
+                /* Broadcast (chat / cursores) */
+                if (msg.type === 'broadcast') {
+                    this._bcastListeners.forEach(l => {
+                        if (l.event === msg.event) l.cb({ payload: msg.payload });
+                    });
+                }
+                /* Presence sync */
+                if (msg.type === 'presence_sync' && msg.channel === this._name) {
+                    this._lastPresenceState = msg.state || {};
+                    this._presenceCbs.forEach(l => { if (l.event === 'sync') l.cb(); });
+                }
+            }
+        }
+
+        return {
+            from: t => new QB(t),
+            channel: name => { const ch = new Channel(name); _channels.set(name, ch); return ch; },
+            removeChannel: ch => { if (ch?._name) _channels.delete(ch._name); }
+        };
+    };
+    </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
     <style>
         * {
@@ -392,17 +566,17 @@
     <div id="root"></div>
     <script type="text/babel">
 
-        if (!window.supabase || !window.supabase.createClient) {
-            console.error('[Neos] ERRO: biblioteca Supabase não carregou. Verifique a CDN.');
-        }
-        const supabase = window.supabase.createClient(
-            'https://edlusjxoalqjkieugwce.supabase.co',
-            'sb_publishable_OfZfNYJUrtOqVUpv8bvU4Q_HyGHHIyx'
-        )
+        /* ── RAILWAY BACKEND ─────────────────────────────────────
+           Substitua NEOS_API_URL pela URL do seu serviço Railway.
+           Exemplo: 'https://neos-dashboard-api-production.up.railway.app'
+        ────────────────────────────────────────────────────────── */
+        const NEOS_API_URL = 'COLE_AQUI_A_URL_DO_RAILWAY';
+        const supabase = window._createNeosClient(NEOS_API_URL);
+
         /* teste de conectividade no boot */
         supabase.from('clients').select('id', { count: 'exact', head: true }).then(({ count, error }) => {
-            if (error) console.error('[Neos] Supabase ERRO de conexão:', error.message, error.code);
-            else console.log('[Neos] Supabase conectado ✓ — clients:', count);
+            if (error) console.error('[Neos] Railway ERRO de conexão:', error.message);
+            else console.log('[Neos] Railway conectado ✓');
         });
 
         const { useState, useEffect, useContext, useRef } = React;
