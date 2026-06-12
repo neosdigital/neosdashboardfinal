@@ -656,7 +656,7 @@
 
             /* ── SUPABASE REALTIME ── */
             useEffect(() => {
-                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions', 'goals'];
+                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'leads', 'leadInteractions', 'goals'];
                 const channel = supabase.channel('neos-db-changes');
                 TABLES.forEach(tbl => {
                     channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, ({ eventType, new: n, old: o }) => {
@@ -766,12 +766,15 @@
             const refreshData = async (mode) => {
                 const silent = mode === 'silent';
                 try {
-                    const results = await Promise.all(_DB_TABLES.map(t => supabase.from(t).select('*')));
+                    /* clientImages excluído do refresh automático — base64 gera egress massivo.
+                       Imagens são carregadas uma vez no boot e sincronizadas pelo Realtime de adição/deleção. */
+                    const REFRESH_TABLES = _DB_TABLES.filter(t => t !== 'clientImages');
+                    const results = await Promise.all(REFRESH_TABLES.map(t => supabase.from(t).select('*')));
                     const allFailed = results.every(r => r.error);
                     if (allFailed) throw new Error('Sem conexão com Supabase');
                     setStore(prev => {
                         const next = { ...prev };
-                        _DB_TABLES.forEach((t, i) => {
+                        REFRESH_TABLES.forEach((t, i) => {
                             if (!results[i].error && results[i].data) {
                                 next[t] = results[i].data;
                             }
@@ -937,11 +940,21 @@
                     category: data.category || '', fromCalendar: true,
                 };
                 upd(p => ({ calEvents: [...(p.calEvents || []), e], tasks: [...p.tasks, task] }));
-                supaSave('calEvents', e);
+                /* Strip images base64 antes do Supabase — imagens ficam só no IndexedDB local
+                   para evitar egress massivo (cada imagem pode ter 200-800KB de base64) */
+                const { images: _imgs, ...eForSupabase } = e;
+                supaSave('calEvents', eForSupabase);
                 supaSave('tasks', task);
                 if (!silent) notify('Evento criado ✓ — tarefa adicionada ao Kanban');
             };
-            const editCalEvent = (id, data) => { const m = getModUser(); upd(p => ({ calEvents: (p.calEvents || []).map(e => e.id === id ? { ...e, ...data, ...m } : e) })); supaUpdate('calEvents', id, { ...data, ...m }); notify('Evento atualizado ✓'); };
+            const editCalEvent = (id, data) => {
+                const m = getModUser();
+                upd(p => ({ calEvents: (p.calEvents || []).map(e => e.id === id ? { ...e, ...data, ...m } : e) }));
+                /* Strip images antes do Supabase */
+                const { images: _imgs, ...dataForSupabase } = data;
+                supaUpdate('calEvents', id, { ...dataForSupabase, ...m });
+                notify('Evento atualizado ✓');
+            };
             const deleteCalEvent = id => { upd(p => ({ calEvents: (p.calEvents || []).filter(e => e.id !== id) })); supaDelete('calEvents', id); notify('Evento excluído', 'warn'); };
 
             /* ── CLIENT IMAGES ── */
@@ -4155,7 +4168,7 @@
             const addFont = () => { const f = newFont.trim(); if (!f || fonts.includes(f)) return; setFonts(p => [...p, f]); setNewFont(''); };
             const addColor = () => setColors(p => [...p, '#6366f1']);
             const updateColor = (i, v) => setColors(p => p.map((c, idx) => idx === i ? v : c));
-            const compressImg = file => new Promise(resolve => { const r = new FileReader(); r.onload = e => { const img = new Image(); img.onload = () => { const MAX = 500; let w = img.naturalWidth, h = img.naturalHeight; if (w > MAX || h > MAX) { if (w > h) { h = Math.round(h * MAX / w); w = MAX; } else { w = Math.round(w * MAX / h); h = MAX; } } const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h); resolve(c.toDataURL('image/jpeg', 0.75)); }; img.src = e.target.result; }; r.readAsDataURL(file); });
+            const compressImg = file => new Promise(resolve => { const r = new FileReader(); r.onload = e => { const img = new Image(); img.onload = () => { const MAX = 400; let w = img.naturalWidth, h = img.naturalHeight; if (w > MAX || h > MAX) { if (w > h) { h = Math.round(h * MAX / w); w = MAX; } else { w = Math.round(w * MAX / h); h = MAX; } } const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h); resolve(c.toDataURL('image/jpeg', 0.65)); }; img.src = e.target.result; }; r.readAsDataURL(file); });
             const addRefImage = async file => { const data = await compressImg(file); addClientImage(selId, { name: file.name, data, type: 'ref' }); };
             const addPessoaImage = async file => { const data = await compressImg(file); addClientImage(selId, { name: file.name, data, type: 'pessoa' }); };
             return (
@@ -5948,7 +5961,7 @@
             const [imgUploading, setImgUploading] = useState(false);
             const s = (k, v) => setF(p => ({ ...p, [k]: v }));
 
-            const compressCalImg = (file, maxDim = 1920, quality = 0.88) => new Promise(resolve => {
+            const compressCalImg = (file, maxDim = 800, quality = 0.70) => new Promise(resolve => {
                 const r = new FileReader();
                 r.onload = e => {
                     const img = new Image();
