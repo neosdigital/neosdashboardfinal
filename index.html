@@ -6913,22 +6913,33 @@
                 setError('');
                 try {
                     const hash = await hashPassword(password);
-                    const { data } = await supabase
-                        .from('login_users')
-                        .select('id, name, username, role')
-                        .eq('username', username.trim().toLowerCase())
-                        .eq('password_hash', hash)
-                        .maybeSingle();
-                    if (!data) {
+                    const timeout = new Promise((_, rej) =>
+                        setTimeout(() => rej(new Error('timeout')), 10000)
+                    );
+                    const { data, error } = await Promise.race([
+                        supabase
+                            .from('login_users')
+                            .select('id, name, username, role')
+                            .eq('username', username.trim().toLowerCase())
+                            .eq('password_hash', hash)
+                            .maybeSingle(),
+                        timeout
+                    ]);
+                    if (error || !data) {
                         setError('Usuário ou senha inválidos.');
                     } else {
                         sessionStorage.setItem('neos_auth', JSON.stringify({ id: data.id, name: data.name, username: data.username, role: data.role }));
                         onLogin(data);
                     }
                 } catch (err) {
-                    setError('Erro de conexão. Verifique sua internet.');
+                    if (err.message === 'timeout') {
+                        setError('Servidor demorando para responder — tente novamente em alguns segundos.');
+                    } else {
+                        setError('Erro de conexão. Verifique sua internet.');
+                    }
+                } finally {
+                    setLoading(false);
                 }
-                setLoading(false);
             };
 
             return (
