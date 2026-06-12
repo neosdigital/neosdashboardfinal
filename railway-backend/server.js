@@ -135,17 +135,18 @@ app.put('/api/:table', async (req, res) => {
     }
 });
 
-/* PATCH /api/:table/:id → update parcial */
+/* PATCH /api/:table/:id → update parcial — retorna doc completo para broadcast correto */
 app.patch('/api/:table/:id', async (req, res) => {
     if (!tableOk(req.params.table)) return res.status(400).json({ error: 'Tabela inválida' });
     try {
         const { table, id } = req.params;
-        await pool.query(
-            `UPDATE "${table}" SET _doc = _doc || $1::jsonb WHERE _doc->>'id' = $2`,
+        const { rows } = await pool.query(
+            `UPDATE "${table}" SET _doc = _doc || $1::jsonb WHERE _doc->>'id' = $2 RETURNING _doc`,
             [JSON.stringify(req.body), id]
         );
-        broadcast({ eventType: 'UPDATE', table, new: { id, ...req.body } });
-        res.json({ data: { id, ...req.body }, error: null });
+        const doc = rows[0]?._doc || { id, ...req.body };
+        broadcast({ eventType: 'UPDATE', table, new: doc });
+        res.json({ data: doc, error: null });
     } catch (e) {
         res.status(500).json({ data: null, error: { message: e.message } });
     }

@@ -904,7 +904,7 @@
                                 if (arr.some(r => r.id === n.id)) return p;
                                 return { ...p, [tbl]: [...arr, n] };
                             }
-                            if (eventType === 'UPDATE') return { ...p, [tbl]: arr.map(r => r.id === n.id ? n : r) };
+                            if (eventType === 'UPDATE') return { ...p, [tbl]: arr.map(r => r.id === n.id ? { ...r, ...n } : r) };
                             if (eventType === 'DELETE') return { ...p, [tbl]: arr.filter(r => r.id !== o?.id) };
                             return p;
                         });
