@@ -498,62 +498,47 @@
            derrubava o canal Realtime inteiro, impedindo sync de calEvents/tasks */
 
         async function loadFromDB(onStatus) {
-            /* ── FASE 1: IndexedDB local — com timeout de segurança (Dexie pode travar) ── */
-            let localData = null;
-            try {
-                localData = await Promise.race([
-                    loadFromIndexedDB(),
-                    new Promise(resolve => setTimeout(() => resolve(null), 3000))
-                ]);
-            } catch {}
-
-            const hasLocal = localData && (
-                (localData.clients?.length || 0) + (localData.tasks?.length || 0) +
-                (localData.financials?.length || 0) + (localData.performance?.length || 0) +
-                (localData.calEvents?.length || 0) > 0
-            );
-
-            /* Usuário recorrente: usa cache local imediatamente — sem tela de carregamento.
-               O Realtime e refreshData sincronizam o Supabase em segundo plano. */
-            if (hasLocal) {
-                try { localData.notifications = (await db.notifications.toArray()) || []; } catch {}
-                return localData;
-            }
-
-            /* ── FASE 2: sem cache local — busca do Supabase (máx 2 tentativas × 8s) ── */
-            for (let attempt = 0; attempt < 2; attempt++) {
+            for (let attempt = 0; attempt < 3; attempt++) {
                 if (attempt > 0) {
-                    onStatus?.('Reconectando...');
-                    await new Promise(r => setTimeout(r, 1500));
+                    onStatus?.(`Reconectando... (tentativa ${attempt + 1}/3)`);
+                    await new Promise(r => setTimeout(r, 2000 * attempt));
                 } else {
-                    onStatus?.('Conectando ao banco de dados...');
+                    onStatus?.('Carregando dados do banco...');
                 }
                 try {
-                    const fetchPromise = Promise.all(_DB_TABLES.map(t => supabase.from(t).select('*')));
-                    const results = await Promise.race([
-                        fetchPromise,
-                        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
-                    ]);
-
+                    const results = await Promise.all(_DB_TABLES.map(t => supabase.from(t).select('*')));
                     const erroredTables = _DB_TABLES.filter((_, i) => results[i].error);
-                    if (erroredTables.length === _DB_TABLES.length && attempt < 1) {
-                        console.warn('[Neos] Todas as tabelas falharam — tentando novamente...');
+
+                    if (erroredTables.length === _DB_TABLES.length && attempt < 2) {
+                        console.warn(`[Neos] Todas as tabelas falharam (tentativa ${attempt + 1}/3), aguardando...`);
                         continue;
+                    }
+
+                    let localCache = null;
+                    if (erroredTables.length > 0) {
+                        console.warn('[Neos] Tabelas com erro, usando cache local para:', erroredTables.join(', '));
+                        localCache = await loadFromIndexedDB();
                     }
 
                     const store = { taskTimers: [] };
                     _DB_TABLES.forEach((t, i) => {
-                        store[t] = results[i].error ? [] : (results[i].data || []);
+                        store[t] = results[i].error ? (localCache?.[t] || []) : (results[i].data || []);
                     });
-                    try { store.notifications = (await db.notifications.toArray()) || []; } catch { store.notifications = []; }
+                    /* Notifications são Dexie-only — não existe tabela no Supabase */
+                    try { store.notifications = (await db.notifications.toArray()) || []; } catch { store.notifications = localCache?.notifications || []; }
                     return store;
                 } catch (e) {
-                    console.error(`[Neos] loadFromDB tentativa ${attempt + 1}/2:`, e.message);
+                    console.error(`[Neos] loadFromDB tentativa ${attempt + 1}/3 falhou:`, e.message);
+                    if (attempt === 2) {
+                        onStatus?.('Usando cache local...');
+                        const local = await loadFromIndexedDB();
+                        return local || { ..._EMPTY_STORE() };
+                    }
                 }
             }
-            /* Sem conexão e sem cache — abre com store vazio; Realtime sincroniza ao conectar */
-            onStatus?.('Sem conexão...');
-            return localData || { ..._EMPTY_STORE() };
+            onStatus?.('Usando cache local...');
+            const local = await loadFromIndexedDB();
+            return local || { ..._EMPTY_STORE() };
         }
 
         function _EMPTY_STORE() {
