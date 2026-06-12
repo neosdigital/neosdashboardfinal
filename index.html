@@ -74,10 +74,14 @@
 
             async _run() {
                 const { _t, _op, _f, _notF, _neqF, _body, _single, _head } = this;
+                /* AbortController: cada request tem timeout de 8s — evita loading infinito */
+                const ctrl = new AbortController();
+                const tid = setTimeout(() => ctrl.abort(), 8000);
+                const _f2 = (url, opts = {}) => fetch(url, { signal: ctrl.signal, ...opts });
                 try {
                     if (_op === 'select') {
                         if (_head) {
-                            const r = await fetch(`${apiUrl}/health`);
+                            const r = await _f2(`${apiUrl}/health`);
                             return r.ok ? { count: 0, error: null } : { count: null, error: { message: 'offline' } };
                         }
                         const hasFilters = Object.keys(_f).length || _notF.length || _neqF.length;
@@ -91,14 +95,14 @@
                         } else {
                             url = `${apiUrl}/api/${_t}`;
                         }
-                        const r = await fetch(url);
+                        const r = await _f2(url);
                         const j = await r.json();
                         if (!r.ok) return { data: null, error: j };
                         if (_single) return { data: j.data?.[0] ?? null, error: null };
                         return { data: j.data || [], error: null };
                     }
                     if (_op === 'insert') {
-                        const r = await fetch(`${apiUrl}/api/${_t}`, {
+                        const r = await _f2(`${apiUrl}/api/${_t}`, {
                             method: 'POST', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(_body)
                         });
@@ -106,7 +110,7 @@
                         return { data: j.data, error: j.error || null };
                     }
                     if (_op === 'upsert') {
-                        const r = await fetch(`${apiUrl}/api/${_t}`, {
+                        const r = await _f2(`${apiUrl}/api/${_t}`, {
                             method: 'PUT', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(_body)
                         });
@@ -115,7 +119,7 @@
                     }
                     if (_op === 'update') {
                         const id = _f.id;
-                        const r = await fetch(`${apiUrl}/api/${_t}/${id}`, {
+                        const r = await _f2(`${apiUrl}/api/${_t}/${id}`, {
                             method: 'PATCH', headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(_body)
                         });
@@ -124,12 +128,15 @@
                     }
                     if (_op === 'delete') {
                         const id = _f.id;
-                        const r = await fetch(`${apiUrl}/api/${_t}/${id}`, { method: 'DELETE' });
+                        const r = await _f2(`${apiUrl}/api/${_t}/${id}`, { method: 'DELETE' });
                         const j = await r.json();
                         return { data: j.data, error: j.error || null };
                     }
                 } catch (e) {
+                    if (e.name === 'AbortError') return { data: null, error: { message: 'timeout' } };
                     return { data: null, error: { message: e.message } };
+                } finally {
+                    clearTimeout(tid);
                 }
             }
         }
@@ -801,7 +808,7 @@
             }, []);
 
             useEffect(() => {
-                (async () => {
+                (async () => { try {
                     const existing = await loadFromDB(setLoadMsg);
                     const hasData = (existing.clients?.length || 0) + (existing.tasks?.length || 0) + (existing.financials?.length || 0) + (existing.trafficData?.length || 0) + (existing.designReqs?.length || 0) + (existing.performance?.length || 0) > 0;
                     if (!hasData) {
@@ -873,7 +880,11 @@
                             console.warn('[Neos] Migração calEvents falhou (tenta na próxima sessão):', e.message);
                         }
                     }, 5000);
-                })();
+                } catch (e) {
+                    console.error('[Neos] Erro fatal no boot:', e);
+                    setStore(EMPTY_STORE);
+                    setDbReady(true);
+                } })();
             }, []);
 
             useEffect(() => {
@@ -9568,13 +9579,30 @@
             );
         }
 
+        class ErrorBoundary extends React.Component {
+            constructor(p) { super(p); this.state = { err: null }; }
+            static getDerivedStateFromError(e) { return { err: e }; }
+            componentDidCatch(e, i) { console.error('[Neos] Render error:', e, i); }
+            render() {
+                if (this.state.err) return (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#07070f', gap: 14 }}>
+                        <div style={{ width: 36, height: 36, border: '3px solid rgba(255,0,64,.4)', borderTopColor: '#ff0040', borderRadius: '50%' }} />
+                        <span style={{ fontSize: 13, color: 'rgba(255,80,80,.85)', fontWeight: 600 }}>Erro ao carregar o dashboard</span>
+                        <span style={{ fontSize: 11, color: 'rgba(255,255,255,.35)', maxWidth: 320, textAlign: 'center' }}>{this.state.err.message}</span>
+                        <button onClick={() => window.location.reload()} style={{ marginTop: 4, padding: '8px 20px', background: 'rgba(255,0,64,.12)', border: '1px solid rgba(255,0,64,.3)', borderRadius: 8, color: 'rgba(255,80,80,.85)', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>Recarregar</button>
+                    </div>
+                );
+                return this.props.children;
+            }
+        }
+
         function Root() {
             const [authed, setAuthed] = useState(() => {
                 try { return JSON.parse(sessionStorage.getItem('neos_auth') || 'null'); }
                 catch { return null; }
             });
             if (!authed) return <LoginScreen onLogin={setAuthed} />;
-            return <AppProvider authed={authed}><App /></AppProvider>;
+            return <ErrorBoundary><AppProvider authed={authed}><App /></AppProvider></ErrorBoundary>;
         }
 
         ReactDOM.createRoot(document.getElementById('root')).render(<Root />);
