@@ -493,7 +493,9 @@
             return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
         }
 
-        const _DB_TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions', 'goals', 'notifications'];
+        const _DB_TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions', 'goals'];
+        /* notifications é Dexie-only — a tabela não existe no Supabase e sua subscrição
+           derrubava o canal Realtime inteiro, impedindo sync de calEvents/tasks */
 
         async function loadFromDB(onStatus) {
             for (let attempt = 0; attempt < 3; attempt++) {
@@ -524,6 +526,8 @@
                     _DB_TABLES.forEach((t, i) => {
                         store[t] = results[i].error ? (localCache?.[t] || []) : (results[i].data || []);
                     });
+                    /* Notifications são Dexie-only — carrega do cache local para não perder histórico */
+                    try { store.notifications = (await db.notifications.toArray()) || []; } catch { store.notifications = localCache?.notifications || []; }
                     return store;
                 } catch (e) {
                     console.error(`[Neos] loadFromDB tentativa ${attempt + 1}/3 falhou:`, e.message);
@@ -654,7 +658,7 @@
 
             /* ── SUPABASE REALTIME ── */
             useEffect(() => {
-                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions', 'goals', 'notifications'];
+                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions', 'goals'];
                 const channel = supabase.channel('neos-db-changes');
                 TABLES.forEach(tbl => {
                     channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, ({ eventType, new: n, old: o }) => {
@@ -1026,8 +1030,8 @@
             const deleteGoal = id => { upd(p => ({ goals: (p.goals || []).filter(g => g.id !== id) })); supaDelete('goals', id); notify('Meta excluída', 'warn'); };
 
             /* ── NOTIFICAÇÕES ── */
-            const addNotif = (toUser, type, title, body, relatedId, relatedType) => { if (!toUser) return; const notif = { id: genId(), userId: toUser, type: type || 'info', title: title || '', body: body || '', relatedId: relatedId || '', relatedType: relatedType || '', read: false, createdAt: new Date().toISOString() }; upd(p => ({ notifications: [...(p.notifications || []), notif] })); supaSave('notifications', notif); };
-            const markNotifRead = id => { upd(p => ({ notifications: (p.notifications || []).map(n => n.id === id ? { ...n, read: true } : n) })); supaUpdate('notifications', id, { read: true }); };
+            const addNotif = (toUser, type, title, body, relatedId, relatedType) => { if (!toUser) return; const notif = { id: genId(), userId: toUser, type: type || 'info', title: title || '', body: body || '', relatedId: relatedId || '', relatedType: relatedType || '', read: false, createdAt: new Date().toISOString() }; upd(p => ({ notifications: [...(p.notifications || []), notif] })); };
+            const markNotifRead = id => { upd(p => ({ notifications: (p.notifications || []).map(n => n.id === id ? { ...n, read: true } : n) })); };
             const markAllNotifsRead = userId => { upd(p => ({ notifications: (p.notifications || []).map(n => n.userId === userId ? { ...n, read: true } : n) })); };
 
             /* ── TIMERS DE PRODUÇÃO ── */
