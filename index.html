@@ -805,6 +805,34 @@
                     const existing = await loadFromDB(setLoadMsg);
                     const hasData = (existing.clients?.length || 0) + (existing.tasks?.length || 0) + (existing.financials?.length || 0) + (existing.trafficData?.length || 0) + (existing.designReqs?.length || 0) + (existing.performance?.length || 0) > 0;
                     if (!hasData) {
+                        /* Verifica se IndexedDB local tem dados para restaurar automaticamente */
+                        const localData = await loadFromIndexedDB();
+                        const localTotal = localData ? _DB_TABLES.reduce((s, t) => s + (localData[t]?.length || 0), 0) : 0;
+                        if (localTotal > 0) {
+                            setLoadMsg(`Restaurando ${localTotal} registros locais...`);
+                            setStore({ ...EMPTY_STORE, ...localData, taskTimers: localData.taskTimers || [], notifications: localData.notifications || [] });
+                            setDbReady(true);
+                            /* Migra para Railway em background via bulk upsert */
+                            (async () => {
+                                let saved = 0;
+                                const bulkTables = _DB_TABLES.filter(t => t !== 'clientImages');
+                                for (const table of bulkTables) {
+                                    const recs = (localData[table] || []);
+                                    if (!recs.length) continue;
+                                    try {
+                                        const r = await fetch(`${NEOS_API_URL}/api/${table}/bulk`, {
+                                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify(recs)
+                                        });
+                                        saved += r.ok ? recs.length : 0;
+                                        if (!r.ok) for (const rec of recs) { try { await supaSave(table, rec); saved++; } catch {} }
+                                    } catch { for (const rec of recs) { try { await supaSave(table, rec); saved++; } catch {} } }
+                                }
+                                for (const rec of (localData.clientImages || [])) { try { await supaSave('clientImages', rec); saved++; } catch {} }
+                                console.log(`[Neos] Migração automática: ${saved}/${localTotal} registros → Railway ✓`);
+                            })();
+                            return;
+                        }
                         setLoadMsg('Verificando migração de dados...');
                         const migrated = await migrateFromLocalStorage();
                         if (migrated) { setStore({ clients: migrated.clients || [], tasks: migrated.tasks || [], financials: migrated.financials || [], trafficData: migrated.trafficData || [], designReqs: migrated.designReqs || [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [], goals: [], notifications: [], taskTimers: [] }); }

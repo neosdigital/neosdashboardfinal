@@ -92,6 +92,32 @@ app.post('/api/:table', async (req, res) => {
     }
 });
 
+/* POST /api/:table/bulk → upsert múltiplos registros em uma transação */
+app.post('/api/:table/bulk', async (req, res) => {
+    if (!tableOk(req.params.table)) return res.status(400).json({ error: 'Tabela inválida' });
+    const docs = req.body;
+    if (!Array.isArray(docs) || docs.length === 0) return res.json({ data: [], error: null });
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        for (const doc of docs) {
+            await client.query(
+                `INSERT INTO "${req.params.table}" (_doc) VALUES ($1::jsonb)
+                 ON CONFLICT ((_doc->>'id')) DO UPDATE SET _doc = EXCLUDED._doc`,
+                [JSON.stringify(doc)]
+            );
+        }
+        await client.query('COMMIT');
+        broadcast({ eventType: 'UPDATE', table: req.params.table, count: docs.length });
+        res.json({ data: docs, error: null });
+    } catch (e) {
+        await client.query('ROLLBACK').catch(() => {});
+        res.status(500).json({ data: null, error: { message: e.message } });
+    } finally {
+        client.release();
+    }
+});
+
 /* PUT /api/:table → upsert (insert or update) */
 app.put('/api/:table', async (req, res) => {
     if (!tableOk(req.params.table)) return res.status(400).json({ error: 'Tabela inválida' });
