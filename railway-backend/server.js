@@ -23,15 +23,11 @@ const TABLES = [
     'leadInteractions', 'goals', 'login_users', 'meta_connections'
 ];
 
-/* ── INIT DB ── cria tabelas automaticamente no primeiro boot */
+/* ── INIT DB ── cria tabelas e índices automaticamente no primeiro boot */
 async function initDB() {
     for (const t of TABLES) {
-        await pool.query(`
-            CREATE TABLE IF NOT EXISTS "${t}" (
-                _doc JSONB NOT NULL,
-                CONSTRAINT "${t}_pk" UNIQUE ((_doc->>'id'))
-            )
-        `);
+        await pool.query(`CREATE TABLE IF NOT EXISTS "${t}" (_doc JSONB NOT NULL)`);
+        await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS "${t}_id_idx" ON "${t}" ((_doc->>'id'))`);
     }
     console.log('[Neos] Banco inicializado ✓ —', TABLES.length, 'tabelas');
 }
