@@ -6519,6 +6519,32 @@
             doc.save('calendario-' + (clientName || 'geral').replace(/[^a-z0-9]/gi, '-') + '-' + MESES_SHORT[month] + year + '.pdf');
         }
 
+        function exportExcelCalendario(evs, tasks, month, year, clientName) {
+            const DOW = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
+            const rows = [...evs.map(e => ({ ...e, _task: false })), ...tasks.map(t => ({ ...t, _task: true }))]
+                .sort((a, b) => (a.date || a.dueDate || '').localeCompare(b.date || b.dueDate || ''));
+            const header = ['Data', 'Dia da Semana', 'Tipo', 'Título', 'Cliente', 'Responsável', 'Horário Início', 'Horário Fim', 'Dia Todo', 'Status', 'Descrição'];
+            const csvEsc = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+            const lines = [header.map(csvEsc).join(',')];
+            rows.forEach(r => {
+                const ds = r.date || r.dueDate || '';
+                const d = ds ? new Date(ds + 'T12:00') : null;
+                const tipo = r._task ? 'Tarefa' : (r.type === 'event' ? 'Evento' : (r.type || 'Evento'));
+                const status = r._task ? (r.status || '') : (r.done ? 'Concluído' : 'Pendente');
+                lines.push([
+                    ds, d ? DOW[d.getDay()] : '', tipo, r.title || '', r.clientName || '',
+                    r.responsavel || r.assignee || '', r._task ? '' : (r.startTime || ''), r._task ? '' : (r.endTime || ''),
+                    r._task ? '' : (r.allDay ? 'Sim' : 'Não'), status, r.desc || r.description || ''
+                ].map(csvEsc).join(','));
+            });
+            const csv = String.fromCharCode(0xFEFF) + lines.join('\r\n');
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+            a.download = 'calendario-' + (clientName || 'geral').replace(/[^a-z0-9]/gi, '-') + '-' + MESES_SHORT[month] + year + '.csv';
+            document.body.appendChild(a); a.click();
+            document.body.removeChild(a); URL.revokeObjectURL(a.href);
+        }
+
         /* ── CALENDAR PAGE ───────────────────────────────────── */
         function CalendarPage() {
             const { store, calFocusDate, setCalFocusDate, addCalEvent, editCalEvent, deleteCalEvent, deleteTask, notify, moveTask, editTask } = useApp();
@@ -6535,6 +6561,8 @@
             const [filtClient, setFiltClient] = useState('');
             const [filtResp, setFiltResp] = useState('');
             const [pdfLoad, setPdfLoad] = useState(false);
+            const [xlsLoad, setXlsLoad] = useState(false);
+            const [exportMenu, setExportMenu] = useState(null);
             const [gcClientId, setGcClientId] = useState(() => localStorage.getItem('gcClientId') || '');
             const [gcToken, setGcToken] = useState(null);
             const [gcSync, setGcSync] = useState(false);
@@ -6597,6 +6625,12 @@
             const fEvs = evs => { let r = filtClient ? evs.filter(e => e.clientId === filtClient) : evs; return filtResp ? r.filter(e => e.responsavel === filtResp) : r; };
             const fTks = tks => filtClient ? tks.filter(t => t.clientId === filtClient) : tks;
             const getAll = ds => [...fEvs(calEvs.filter(e => e.date === ds)), ...fTks(kTasks.filter(t => t.dueDate === ds)).map(t => ({ ...t, _task: true, color: '#a060ff' }))];
+            const getMonthExportData = () => {
+                const cl = store.clients.find(c => c.id === filtClient);
+                const mEvs = fEvs(calEvs.filter(e => { const d = new Date(e.date + 'T12:00'); return d.getMonth() === focus.getMonth() && d.getFullYear() === focus.getFullYear(); }));
+                const mTks = fTks(kTasks.filter(t => { const d = new Date(t.dueDate + 'T12:00'); return d.getMonth() === focus.getMonth() && d.getFullYear() === focus.getFullYear(); }));
+                return { mEvs, mTks, clientName: cl && cl.name ? cl.name : null };
+            };
 
             const connectGCal = () => { if (!gcClientId) { setGcSetup(true); return; } if (window.google && window.google.accounts && window.google.accounts.oauth2) { const cl = window.google.accounts.oauth2.initTokenClient({ client_id: gcClientId, scope: 'https://www.googleapis.com/auth/calendar', callback: r => { if (!r.error) setGcToken(r.access_token); } }); cl.requestAccessToken(); } else { alert('Google Identity Services ainda não carregado. Aguarde e tente novamente.'); } };
             const syncGCal = async () => { if (!gcToken) return; setGcSync(true); try { const tMin = new Date(); tMin.setMonth(tMin.getMonth() - 1); const tMax = new Date(); tMax.setMonth(tMax.getMonth() + 3); const res = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${tMin.toISOString()}&timeMax=${tMax.toISOString()}&singleEvents=true&orderBy=startTime`, { headers: { Authorization: 'Bearer ' + gcToken } }); const data = await res.json(); (data.items || []).forEach(item => { const ds = item.start && (item.start.date || (item.start.dateTime && item.start.dateTime.split('T')[0])); if (!ds) return; const ex = calEvs.find(e => e.googleEventId === item.id); const ed = { title: item.summary || '(sem título)', date: ds, startTime: item.start && item.start.dateTime ? item.start.dateTime.split('T')[1].slice(0, 5) : '', endTime: item.end && item.end.dateTime ? item.end.dateTime.split('T')[1].slice(0, 5) : '', allDay: !!(item.start && item.start.date), type: 'event', color: '#4090ff', desc: item.description || '', source: 'google', googleEventId: item.id }; ex ? editCalEvent(ex.id, { ...ed, id: ex.id }) : addCalEvent(ed); }); } catch (e) { console.error('[GCal]', e); } setGcSync(false); };
@@ -6809,15 +6843,10 @@
                                 <option value="">Todos os responsáveis</option>
                                 {RESPONSAVEIS.map(r => <option key={r} value={r}>{r}</option>)}
                             </select>
-                            <button className="btn-secondary" disabled={pdfLoad} onClick={async () => {
-                                setPdfLoad(true);
-                                const cl = store.clients.find(c => c.id === filtClient);
-                                const mEvs = fEvs(calEvs.filter(e => { const d = new Date(e.date + 'T12:00'); return d.getMonth() === focus.getMonth() && d.getFullYear() === focus.getFullYear(); }));
-                                const mTks = fTks(kTasks.filter(t => { const d = new Date(t.dueDate + 'T12:00'); return d.getMonth() === focus.getMonth() && d.getFullYear() === focus.getFullYear(); }));
-                                await gerarPDFCalendario(mEvs, mTks, focus.getMonth(), focus.getFullYear(), cl && cl.name ? cl.name : null);
-                                setPdfLoad(false);
-                            }} style={{ fontSize: 12, gap: 5 }}>
-                                {pdfLoad ? <><span style={{ width: 10, height: 10, border: '2px solid rgba(255,255,255,.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />PDF...</> : <><Ic n="cal" s={11} />Extrair PDF</>}
+                            <button className="btn-secondary" disabled={pdfLoad || xlsLoad} onClick={e => { const r = e.currentTarget.getBoundingClientRect(); setExportMenu(exportMenu ? null : { x: r.right, y: r.bottom }); }} style={{ fontSize: 12, gap: 5 }}>
+                                {pdfLoad ? <><span style={{ width: 10, height: 10, border: '2px solid rgba(255,255,255,.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />PDF...</>
+                                    : xlsLoad ? <><span style={{ width: 10, height: 10, border: '2px solid rgba(255,255,255,.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin .7s linear infinite' }} />Excel...</>
+                                    : <><Ic n="cal" s={11} />Extrair ▾</>}
                             </button>
                             {gcToken ? (
                                 <button className="btn-secondary" onClick={syncGCal} disabled={gcSync} style={{ fontSize: 12, gap: 5, borderColor: 'rgba(66,133,244,.35)', color: 'rgba(140,180,255,.8)' }}>
@@ -6913,6 +6942,15 @@
                     {editEv && <EventModal ev={editEv} onClose={() => setEditEv(null)} />}
                     {delEv && <Confirm msg={`Excluir "${delEv.title}"?`} onOk={() => { deleteCalEvent(delEv.id); setDelEv(null); }} onClose={() => setDelEv(null)} />}
                     {delTask && <Confirm msg={`Excluir tarefa "${delTask.title}"?`} onOk={() => { deleteTask(delTask.id); setDelTask(null); }} onClose={() => setDelTask(null)} />}
+                    {exportMenu && (
+                        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 998 }} onClick={() => setExportMenu(null)}>
+                            <div style={{ position: 'fixed', top: exportMenu.y + 4, left: exportMenu.x - 120, background: '#1a1a2e', border: '1px solid rgba(255,255,255,.14)', borderRadius: 8, zIndex: 999, minWidth: 120, padding: '5px 0', boxShadow: '0 8px 28px rgba(0,0,0,.55)' }} onClick={e => e.stopPropagation()}>
+                                <button onClick={async () => { setExportMenu(null); setPdfLoad(true); const { mEvs, mTks, clientName } = getMonthExportData(); await gerarPDFCalendario(mEvs, mTks, focus.getMonth(), focus.getFullYear(), clientName); setPdfLoad(false); }} style={{ display: 'block', width: '100%', padding: '8px 14px', background: 'none', border: 'none', color: 'rgba(255,255,255,.8)', cursor: 'pointer', textAlign: 'left', fontSize: 12 }}>📄 PDF</button>
+                                <div style={{ height: 1, background: 'rgba(255,255,255,.07)', margin: '3px 0' }} />
+                                <button onClick={() => { setExportMenu(null); setXlsLoad(true); const { mEvs, mTks, clientName } = getMonthExportData(); exportExcelCalendario(mEvs, mTks, focus.getMonth(), focus.getFullYear(), clientName); setXlsLoad(false); }} style={{ display: 'block', width: '100%', padding: '8px 14px', background: 'none', border: 'none', color: 'rgba(255,255,255,.8)', cursor: 'pointer', textAlign: 'left', fontSize: 12 }}>📊 EXCEL</button>
+                            </div>
+                        </div>
+                    )}
                     {dayMenu && (
                         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 998 }} onClick={() => setDayMenu(null)}>
                             <div style={{ position: 'fixed', top: dayMenu.y + 4, left: dayMenu.x, background: '#1a1a2e', border: '1px solid rgba(255,255,255,.14)', borderRadius: 8, zIndex: 999, minWidth: 190, padding: '5px 0', boxShadow: '0 8px 28px rgba(0,0,0,.55)' }} onClick={e => e.stopPropagation()}>
