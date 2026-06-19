@@ -42,6 +42,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://unpkg.com/dexie@3.2.7/dist/dexie.min.js"></script>
     <script src="https://unpkg.com/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+    <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script>
         window.fbAsyncInit = function() {
@@ -6520,29 +6521,28 @@
         }
 
         function exportExcelCalendario(evs, tasks, month, year, clientName) {
+            if (typeof XLSX === 'undefined') { alert('Biblioteca de Excel não carregada. Verifique sua conexão e recarregue a página.'); return; }
             const DOW = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
             const rows = [...evs.map(e => ({ ...e, _task: false })), ...tasks.map(t => ({ ...t, _task: true }))]
                 .sort((a, b) => (a.date || a.dueDate || '').localeCompare(b.date || b.dueDate || ''));
             const header = ['Data', 'Dia da Semana', 'Tipo', 'Título', 'Cliente', 'Responsável', 'Horário Início', 'Horário Fim', 'Dia Todo', 'Status', 'Descrição'];
-            const csvEsc = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-            const lines = [header.map(csvEsc).join(',')];
+            const aoa = [header];
             rows.forEach(r => {
                 const ds = r.date || r.dueDate || '';
                 const d = ds ? new Date(ds + 'T12:00') : null;
                 const tipo = r._task ? 'Tarefa' : (r.type === 'event' ? 'Evento' : (r.type || 'Evento'));
                 const status = r._task ? (r.status || '') : (r.done ? 'Concluído' : 'Pendente');
-                lines.push([
+                aoa.push([
                     ds, d ? DOW[d.getDay()] : '', tipo, r.title || '', r.clientName || '',
                     r.responsavel || r.assignee || '', r._task ? '' : (r.startTime || ''), r._task ? '' : (r.endTime || ''),
                     r._task ? '' : (r.allDay ? 'Sim' : 'Não'), status, r.desc || r.description || ''
-                ].map(csvEsc).join(','));
+                ]);
             });
-            const csv = String.fromCharCode(0xFEFF) + lines.join('\r\n');
-            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-            const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-            a.download = 'calendario-' + (clientName || 'geral').replace(/[^a-z0-9]/gi, '-') + '-' + MESES_SHORT[month] + year + '.csv';
-            document.body.appendChild(a); a.click();
-            document.body.removeChild(a); URL.revokeObjectURL(a.href);
+            const ws = XLSX.utils.aoa_to_sheet(aoa);
+            ws['!cols'] = [{ wch: 11 }, { wch: 11 }, { wch: 9 }, { wch: 36 }, { wch: 22 }, { wch: 16 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 11 }, { wch: 50 }];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Calendário');
+            XLSX.writeFile(wb, 'calendario-' + (clientName || 'geral').replace(/[^a-z0-9]/gi, '-') + '-' + MESES_SHORT[month] + year + '.xlsx');
         }
 
         /* ── CALENDAR PAGE ───────────────────────────────────── */
