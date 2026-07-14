@@ -5734,7 +5734,7 @@
         /* ══ MÓDULOS DE GESTÃO OPERACIONAL ══════════════════════ */
         const _USER_MAP = { 'Arthur Lemos':'arthur','Lavinia Wallery':'lavinia','Miguel Lemos':'miguel','Caio':'caio','Funcionário':'funcionario' };
         const _toUserId = n => _USER_MAP[n] || (n||'').toLowerCase().split(' ')[0] || '';
-        const _ADMIN_IDS = ['arthur'];
+        const _ADMIN_IDS = ['arthur', 'lavinia'];
 
         const _calcIPC = (client, store) => {
             const cId = client.id, cNm = (client.name||'').toLowerCase();
