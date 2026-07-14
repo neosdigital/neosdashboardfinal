@@ -20,7 +20,8 @@ const pool = new Pool({
 const TABLES = [
     'clients', 'tasks', 'financials', 'trafficData', 'designReqs',
     'performance', 'calEvents', 'costs', 'clientImages', 'leads',
-    'leadInteractions', 'goals', 'login_users', 'meta_connections'
+    'leadInteractions', 'goals', 'login_users', 'meta_connections',
+    'dailyTasks', 'dailyTaskComments', 'dailyTaskChecklists', 'dailyTaskLinks'
 ];
 
 /* ── INIT DB ── cria tabelas e índices automaticamente no primeiro boot */

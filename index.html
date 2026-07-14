@@ -665,7 +665,8 @@
         db.version(8).stores({ flowgramProjects: 'id, clientId, type, createdAt', flowgramTemplates: 'id, type, category, createdAt', flowgramAssets: 'id, clientId, type, createdAt' });
         db.version(9).stores({ dailyLogs: 'id, userId, date, createdAt', timerMeta: 'id, userId, createdAt' });
         db.version(10).stores({ finComprovantes: 'id, finId, uploadedAt' });
-        const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [], goals: [], notifications: [], taskTimers: [] };
+        db.version(11).stores({ dailyTasks: 'id, assignee, status, priority, dueDate, clientId, createdAt', dailyTaskComments: 'id, taskId, createdAt', dailyTaskChecklists: 'id, taskId, createdAt', dailyTaskLinks: 'id, daily_task_id, calendar_event_id', dailyTaskAttachments: 'id, taskId, uploadedAt' });
+        const EMPTY_STORE = { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [], goals: [], notifications: [], taskTimers: [], dailyTasks: [], dailyTaskComments: [], dailyTaskChecklists: [], dailyTaskLinks: [] };
 
         /* ── SUPABASE HELPERS ───────────────────────────────── */
         const _stripCol = (err, obj) => {
@@ -705,7 +706,7 @@
             return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
         }
 
-        const _DB_TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions', 'goals'];
+        const _DB_TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'clientImages', 'leads', 'leadInteractions', 'goals', 'dailyTasks', 'dailyTaskComments', 'dailyTaskChecklists', 'dailyTaskLinks'];
         /* notifications é Dexie-only — a tabela não existe no Supabase e sua subscrição
            derrubava o canal Realtime inteiro, impedindo sync de calEvents/tasks */
 
@@ -754,23 +755,24 @@
         }
 
         function _EMPTY_STORE() {
-            return { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [], goals: [], notifications: [], taskTimers: [] };
+            return { clients: [], tasks: [], financials: [], trafficData: [], designReqs: [], performance: [], calEvents: [], costs: [], clientImages: [], leads: [], leadInteractions: [], goals: [], notifications: [], taskTimers: [], dailyTasks: [], dailyTaskComments: [], dailyTaskChecklists: [], dailyTaskLinks: [] };
         }
 
         async function loadFromIndexedDB() {
             try {
-                const [clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages, leads, leadInteractions, goals, notifications, taskTimers] = await Promise.all([
+                const [clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages, leads, leadInteractions, goals, notifications, taskTimers, dailyTasks, dailyTaskComments, dailyTaskChecklists, dailyTaskLinks] = await Promise.all([
                     db.clients.toArray(), db.tasks.toArray(), db.financials.toArray(),
                     db.trafficData.toArray(), db.designReqs.toArray(),
                     db.performance.toArray(), db.calEvents.toArray(), db.costs.toArray(),
                     db.clientImages.toArray(), db.leads.toArray(), db.leadInteractions.toArray(),
-                    db.goals.toArray(), db.notifications.toArray(), db.taskTimers.toArray()
+                    db.goals.toArray(), db.notifications.toArray(), db.taskTimers.toArray(),
+                    db.dailyTasks.toArray(), db.dailyTaskComments.toArray(), db.dailyTaskChecklists.toArray(), db.dailyTaskLinks.toArray()
                 ]);
-                return { clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages, leads, leadInteractions, goals, notifications, taskTimers };
+                return { clients, tasks, financials, trafficData, designReqs, performance, calEvents, costs, clientImages, leads, leadInteractions, goals, notifications, taskTimers, dailyTasks, dailyTaskComments, dailyTaskChecklists, dailyTaskLinks };
             } catch (e) { return null; }
         }
         async function saveToDB(store) {
-            await db.transaction('rw', db.clients, db.tasks, db.financials, db.trafficData, db.designReqs, db.performance, db.calEvents, db.costs, db.clientImages, db.leads, db.leadInteractions, db.goals, db.notifications, db.taskTimers, async () => {
+            await db.transaction('rw', db.clients, db.tasks, db.financials, db.trafficData, db.designReqs, db.performance, db.calEvents, db.costs, db.clientImages, db.leads, db.leadInteractions, db.goals, db.notifications, db.taskTimers, db.dailyTasks, db.dailyTaskComments, db.dailyTaskChecklists, db.dailyTaskLinks, async () => {
                 await db.clients.clear(); await db.clients.bulkPut(store.clients);
                 await db.tasks.clear(); await db.tasks.bulkPut(store.tasks);
                 await db.financials.clear(); await db.financials.bulkPut(store.financials);
@@ -785,6 +787,10 @@
                 await db.goals.clear(); await db.goals.bulkPut(store.goals || []);
                 await db.notifications.clear(); await db.notifications.bulkPut(store.notifications || []);
                 await db.taskTimers.clear(); await db.taskTimers.bulkPut(store.taskTimers || []);
+                await db.dailyTasks.clear(); await db.dailyTasks.bulkPut(store.dailyTasks || []);
+                await db.dailyTaskComments.clear(); await db.dailyTaskComments.bulkPut(store.dailyTaskComments || []);
+                await db.dailyTaskChecklists.clear(); await db.dailyTaskChecklists.bulkPut(store.dailyTaskChecklists || []);
+                await db.dailyTaskLinks.clear(); await db.dailyTaskLinks.bulkPut(store.dailyTaskLinks || []);
             });
         }
         async function migrateFromLocalStorage() {
@@ -925,7 +931,7 @@
 
             /* ── SUPABASE REALTIME ── */
             useEffect(() => {
-                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'leads', 'leadInteractions', 'goals'];
+                const TABLES = ['clients', 'tasks', 'financials', 'trafficData', 'designReqs', 'performance', 'calEvents', 'costs', 'leads', 'leadInteractions', 'goals', 'dailyTasks', 'dailyTaskComments', 'dailyTaskChecklists', 'dailyTaskLinks'];
                 const channel = supabase.channel('neos-db-changes');
                 TABLES.forEach(tbl => {
                     channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, ({ eventType, new: n, old: o }) => {
@@ -1117,6 +1123,10 @@
                         performance: Array.isArray(data.performance) ? data.performance : [],
                         calEvents: Array.isArray(data.calEvents) ? data.calEvents : [],
                         costs: Array.isArray(data.costs) ? data.costs : [],
+                        dailyTasks: Array.isArray(data.dailyTasks) ? data.dailyTasks : [],
+                        dailyTaskComments: Array.isArray(data.dailyTaskComments) ? data.dailyTaskComments : [],
+                        dailyTaskChecklists: Array.isArray(data.dailyTaskChecklists) ? data.dailyTaskChecklists : [],
+                        dailyTaskLinks: Array.isArray(data.dailyTaskLinks) ? data.dailyTaskLinks : [],
                     };
                     await saveToDB(newStore);
                     setStore(newStore);
@@ -1225,6 +1235,51 @@
                 notify('Evento atualizado ✓');
             };
             const deleteCalEvent = id => { upd(p => ({ calEvents: (p.calEvents || []).filter(e => e.id !== id) })); supaDelete('calEvents', id); notify('Evento excluído', 'warn'); };
+
+            /* ── CARGA DIÁRIA (independente do Calendário — vínculo apenas por referência) ── */
+            const addDailyTask = data => {
+                const me = getModUser();
+                const t = { id: genId(), createdAt: new Date().toISOString(), createdBy: me.modifiedBy, status: 'Não iniciada', priority: 'Média', assignee: '', ...data };
+                upd(p => ({ dailyTasks: [...(p.dailyTasks || []), t] }));
+                supaSave('dailyTasks', t);
+                notify('Tarefa criada ✓');
+                return t;
+            };
+            const editDailyTask = (id, data) => { const m = getModUser(); upd(p => ({ dailyTasks: (p.dailyTasks || []).map(t => t.id === id ? { ...t, ...data, ...m } : t) })); supaUpdate('dailyTasks', id, { ...data, ...m }); };
+            const deleteDailyTask = id => {
+                upd(p => ({
+                    dailyTasks: (p.dailyTasks || []).filter(t => t.id !== id),
+                    dailyTaskComments: (p.dailyTaskComments || []).filter(c => c.taskId !== id),
+                    dailyTaskChecklists: (p.dailyTaskChecklists || []).filter(c => c.taskId !== id),
+                    dailyTaskLinks: (p.dailyTaskLinks || []).filter(l => l.daily_task_id !== id),
+                }));
+                supaDelete('dailyTasks', id);
+                notify('Tarefa excluída', 'warn');
+            };
+            const addDailyComment = (taskId, text) => {
+                const me = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
+                const c = { id: genId(), taskId, userName: me?.name || '?', text, createdAt: new Date().toISOString() };
+                upd(p => ({ dailyTaskComments: [...(p.dailyTaskComments || []), c] }));
+                supaSave('dailyTaskComments', c);
+            };
+            const deleteDailyComment = id => { upd(p => ({ dailyTaskComments: (p.dailyTaskComments || []).filter(c => c.id !== id) })); supaDelete('dailyTaskComments', id); };
+            const addDailyChecklistItem = (taskId, text) => {
+                const it = { id: genId(), taskId, text, done: false, createdAt: new Date().toISOString() };
+                upd(p => ({ dailyTaskChecklists: [...(p.dailyTaskChecklists || []), it] }));
+                supaSave('dailyTaskChecklists', it);
+            };
+            const toggleDailyChecklistItem = id => {
+                upd(p => ({ dailyTaskChecklists: (p.dailyTaskChecklists || []).map(c => c.id === id ? { ...c, done: !c.done } : c) }));
+                const it = (store.dailyTaskChecklists || []).find(c => c.id === id);
+                if (it) supaUpdate('dailyTaskChecklists', id, { done: !it.done });
+            };
+            const deleteDailyChecklistItem = id => { upd(p => ({ dailyTaskChecklists: (p.dailyTaskChecklists || []).filter(c => c.id !== id) })); supaDelete('dailyTaskChecklists', id); };
+            const linkDailyTaskToEvent = (taskId, eventId) => {
+                const l = { id: genId(), daily_task_id: taskId, calendar_event_id: eventId, createdAt: new Date().toISOString() };
+                upd(p => ({ dailyTaskLinks: [...(p.dailyTaskLinks || []), l] }));
+                supaSave('dailyTaskLinks', l);
+            };
+            const unlinkDailyTask = linkId => { upd(p => ({ dailyTaskLinks: (p.dailyTaskLinks || []).filter(l => l.id !== linkId) })); supaDelete('dailyTaskLinks', linkId); notify('Vínculo removido', 'warn'); };
 
             /* ── CLIENT IMAGES ── */
             const addClientImage = (clientId, imgData) => { const img = { id: genId(), clientId, ...imgData, createdAt: new Date().toISOString() }; upd(p => ({ clientImages: [...(p.clientImages || []), img] })); supaSave('clientImages', img); };
@@ -1373,7 +1428,7 @@
             );
 
             return (
-                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage, metaConns, saveMetaConn, deleteMetaConn, loadMetaConns, addLead, editLead, deleteLead, moveLead, syncLeads, addLeadInteraction, deleteLeadInteraction, addGoal, editGoal, deleteGoal, addNotif, markNotifRead, markAllNotifsRead, startTimer, stopTimer }}>
+                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addDailyTask, editDailyTask, deleteDailyTask, addDailyComment, deleteDailyComment, addDailyChecklistItem, toggleDailyChecklistItem, deleteDailyChecklistItem, linkDailyTaskToEvent, unlinkDailyTask, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage, metaConns, saveMetaConn, deleteMetaConn, loadMetaConns, addLead, editLead, deleteLead, moveLead, syncLeads, addLeadInteraction, deleteLeadInteraction, addGoal, editGoal, deleteGoal, addNotif, markNotifRead, markAllNotifsRead, startTimer, stopTimer }}>
                     {children}
                 </Ctx.Provider>
             );
@@ -1411,6 +1466,10 @@
             phone: <><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.6 19.79 19.79 0 0 1 1.6 5.06 2 2 0 0 1 3.57 2.94h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L7.91 10.2a16 16 0 0 0 6 6l.91-1.36a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" /></>,
             mail: <><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" /></>,
             funnel: <><path d="M4 6h16M7 12h10M10 18h4" /></>,
+            comment: <><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></>,
+            paperclip: <><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></>,
+            listCheck: <><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><polyline points="8 12 11 15 16 9" /></>,
+            download: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" /></>,
         };
         function Ic({ n, s = 16, c = '' }) {
             return <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={c}>{icPaths[n] || null}</svg>;
@@ -7012,6 +7071,639 @@
             );
         }
 
+        /* ══ CARGA DIÁRIA (subaba do Calendário) ══════════════════════
+           Módulo isolado: nunca cria/duplica eventos do Calendário.
+           Vínculo com eventos existentes acontece só via dailyTaskLinks. ── */
+        const DAILY_STATUS = ['Não iniciada', 'Em andamento', 'Aguardando revisão', 'Concluída'];
+        const DAILY_PCOL = { Baixa: '#4090ff', Média: '#ffcc00', Alta: '#ff8020', Urgente: '#ff0040' };
+        const DAILY_SCOL = { 'Não iniciada': '#999', 'Em andamento': '#4090ff', 'Aguardando revisão': '#c060ff', 'Concluída': '#00c864' };
+        const dailyGreeting = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
+        const _dailyIsOverdue = t => !!t.dueDate && t.dueDate < new Date().toISOString().slice(0, 10) && t.status !== 'Concluída';
+        const _dailyInScope = (t, scope) => {
+            if (scope === 'todos') return true;
+            if (!t.dueDate) return false;
+            const today = new Date().toISOString().slice(0, 10);
+            if (scope === 'hoje') return t.dueDate === today;
+            const now = new Date();
+            const d = new Date(t.dueDate + 'T12:00');
+            if (scope === 'semana') {
+                const ws = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+                const we = new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() + 6, 23, 59, 59);
+                return d >= ws && d <= we;
+            }
+            if (scope === 'mes') return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+            return true;
+        };
+
+        /* ── NOVA/EDITAR TAREFA ── */
+        function DailyTaskModal({ task, defaultAssignee, defaultDate, onClose }) {
+            const { addDailyTask, editDailyTask, store, addNotif } = useApp();
+            const [f, setF] = useState(task || { title: '', desc: '', clientId: '', clientName: '', assignee: defaultAssignee || '', priority: 'Média', status: 'Não iniciada', dueDate: defaultDate || '', dueTime: '', estimatedHours: '', spentHours: '' });
+            const s = (k, v) => setF(p => ({ ...p, [k]: v }));
+            const sub = e => {
+                e.preventDefault();
+                if (!f.title.trim()) return;
+                const cl = store.clients.find(c => c.id === f.clientId);
+                const data = { ...f, clientName: cl?.name || f.clientName };
+                const prevAssignee = task?.assignee;
+                task ? editDailyTask(task.id, data) : addDailyTask(data);
+                if (f.assignee && f.assignee !== prevAssignee) addNotif(_toUserId(f.assignee), 'task_assigned', 'Nova tarefa na Carga Diária', `Você foi definido como responsável por "${f.title}"`, '', 'task');
+                onClose();
+            };
+            return (
+                <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+                    <div className="modal-box fade-in">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
+                            <h2 style={{ fontSize: 18, fontWeight: 700 }}>{task ? 'Editar Tarefa' : '+ Nova Tarefa'}</h2>
+                            <button className="btn-secondary" onClick={onClose} style={{ padding: '5px 9px' }}><Ic n="x" s={14} /></button>
+                        </div>
+                        <form onSubmit={sub}>
+                            <div style={{ marginBottom: 14 }}><L>Título *</L><input className="input-field" value={f.title} onChange={e => s('title', e.target.value)} required autoFocus /></div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                                <div><L>Cliente</L>
+                                    <select className="input-field" value={f.clientId} onChange={e => s('clientId', e.target.value)}>
+                                        <option value="">Sem cliente</option>
+                                        {store.clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                    </select>
+                                </div>
+                                <div><L>Responsável</L>
+                                    <select className="input-field" value={f.assignee} onChange={e => s('assignee', e.target.value)}>
+                                        <option value="">Sem responsável</option>
+                                        {TEAM.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                </div>
+                                <div><L>Prioridade</L>
+                                    <select className="input-field" value={f.priority} onChange={e => s('priority', e.target.value)}>
+                                        {Object.keys(DAILY_PCOL).map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                </div>
+                                <div><L>Status</L>
+                                    <select className="input-field" value={f.status} onChange={e => s('status', e.target.value)}>
+                                        {DAILY_STATUS.map(v => <option key={v}>{v}</option>)}
+                                    </select>
+                                </div>
+                                <div><L>Prazo</L><input className="input-field" type="date" value={f.dueDate} onChange={e => s('dueDate', e.target.value)} /></div>
+                                <div><L>Hora (opcional)</L><input className="input-field" type="time" value={f.dueTime} onChange={e => s('dueTime', e.target.value)} /></div>
+                                <div><L>Tempo previsto (h)</L><input className="input-field" type="number" step="0.5" min="0" value={f.estimatedHours} onChange={e => s('estimatedHours', e.target.value)} placeholder="ex: 2" /></div>
+                                <div><L>Tempo gasto (h)</L><input className="input-field" type="number" step="0.5" min="0" value={f.spentHours} onChange={e => s('spentHours', e.target.value)} placeholder="opcional" /></div>
+                            </div>
+                            <div style={{ marginTop: 14 }}><L>Descrição</L><textarea className="input-field" rows={3} value={f.desc} onChange={e => s('desc', e.target.value)} style={{ resize: 'vertical' }} /></div>
+                            <div style={{ display: 'flex', gap: 10, marginTop: 22, justifyContent: 'flex-end' }}>
+                                <button type="button" className="btn-secondary" onClick={onClose}>Cancelar</button>
+                                <button type="submit" className="btn-primary">{task ? 'Salvar Alterações' : '+ Adicionar Tarefa'}</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        }
+
+        /* ── ANEXOS (IndexedDB local — mesmo padrão de finComprovantes, evita egress de binários) ── */
+        function DailyTaskAttachments({ taskId }) {
+            const me = (() => { try { return JSON.parse(sessionStorage.getItem('neos_auth') || 'null'); } catch { return null; } })();
+            const [list, setList] = useState([]);
+            const [uploading, setUploading] = useState(false);
+            const fileRef = useRef();
+            const load = () => { db.dailyTaskAttachments.where('taskId').equals(taskId).toArray().then(r => setList(r.sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt)))); };
+            useEffect(() => { load(); }, [taskId]);
+            const fmtSize = b => b < 1024 * 1024 ? (b / 1024).toFixed(1) + ' KB' : (b / 1024 / 1024).toFixed(2) + ' MB';
+            const handleFile = async e => {
+                const file = e.target.files[0];
+                if (!file) return;
+                if (file.size > 25 * 1024 * 1024) { alert('Arquivo muito grande. Máximo 25 MB.'); return; }
+                setUploading(true);
+                try {
+                    const data = await new Promise((res, rej) => { const r = new FileReader(); r.onload = ev => res(ev.target.result); r.onerror = rej; r.readAsDataURL(file); });
+                    await db.dailyTaskAttachments.put({ id: genId(), taskId, name: file.name, size: file.size, type: file.type, uploadedAt: new Date().toISOString(), uploadedBy: me?.name || 'Usuário', data });
+                    load();
+                } catch (err) { alert('Erro ao anexar arquivo.'); }
+                setUploading(false);
+                e.target.value = '';
+            };
+            const downloadItem = item => { const a = document.createElement('a'); a.href = item.data; a.download = item.name; a.click(); };
+            const removeItem = async id => { if (!confirm('Remover este anexo?')) return; await db.dailyTaskAttachments.delete(id); load(); };
+            return (
+                <div>
+                    <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={handleFile} />
+                    <button type="button" className="btn-secondary" onClick={() => fileRef.current?.click()} disabled={uploading} style={{ marginBottom: 10 }}>
+                        <Ic n="paperclip" s={13} /> {uploading ? 'Enviando...' : 'Anexar Arquivo'}
+                    </button>
+                    {list.length === 0 ? (
+                        <div style={{ fontSize: 12, color: 'rgba(255,255,255,.3)', padding: '4px 0 8px' }}>Nenhum anexo ainda.</div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {list.map(item => (
+                                <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)', borderRadius: 7, padding: '7px 10px' }}>
+                                    <span style={{ flex: 1, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</span>
+                                    <span style={{ fontSize: 10, color: 'rgba(255,255,255,.35)', flexShrink: 0 }}>{fmtSize(item.size)}</span>
+                                    <button type="button" onClick={() => downloadItem(item)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.5)', cursor: 'pointer', padding: 2 }}><Ic n="download" s={12} /></button>
+                                    <button type="button" onClick={() => removeItem(item.id)} style={{ background: 'none', border: 'none', color: '#ff6070', cursor: 'pointer', padding: 2 }}><Ic n="trash" s={12} /></button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        /* ── DETALHE DA TAREFA (checklist, comentários, anexos, vínculo) ── */
+        function DailyTaskDetail({ task, onClose, onEdit, onOpenCalendarEvent }) {
+            const { store, deleteDailyTask, addDailyComment, deleteDailyComment, addDailyChecklistItem, toggleDailyChecklistItem, deleteDailyChecklistItem, unlinkDailyTask, editDailyTask } = useApp();
+            const [commentText, setCommentText] = useState('');
+            const [checkText, setCheckText] = useState('');
+            const [del, setDel] = useState(false);
+            const me = (() => { try { return JSON.parse(sessionStorage.getItem('neos_auth') || 'null'); } catch { return null; } })();
+            const checklist = (store.dailyTaskChecklists || []).filter(c => c.taskId === task.id);
+            const comments = (store.dailyTaskComments || []).filter(c => c.taskId === task.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+            const link = (store.dailyTaskLinks || []).find(l => l.daily_task_id === task.id);
+            const linkedEvent = link ? (store.calEvents || []).find(e => e.id === link.calendar_event_id) : null;
+            const pct = checklist.length ? Math.round((checklist.filter(c => c.done).length / checklist.length) * 100) : null;
+            const over = _dailyIsOverdue(task);
+            const fmtTs = iso => { try { return new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return iso; } };
+            const submitComment = e => { e.preventDefault(); if (!commentText.trim()) return; addDailyComment(task.id, commentText.trim()); setCommentText(''); };
+            const submitCheck = e => { e.preventDefault(); if (!checkText.trim()) return; addDailyChecklistItem(task.id, checkText.trim()); setCheckText(''); };
+            return (
+                <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+                    <div className="modal-box fade-in" style={{ maxWidth: 620 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 18, gap: 10 }}>
+                            <div style={{ minWidth: 0 }}>
+                                <h2 style={{ fontSize: 17, fontWeight: 700, lineHeight: 1.3 }}>{task.title}</h2>
+                                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                                    <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: (DAILY_PCOL[task.priority] || '#666') + '22', color: DAILY_PCOL[task.priority] || '#aaa', fontWeight: 700 }}>{task.priority}</span>
+                                    <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: (DAILY_SCOL[task.status] || '#666') + '22', color: DAILY_SCOL[task.status] || '#aaa', fontWeight: 700 }}>{task.status}</span>
+                                    {over && <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 10, background: 'rgba(255,0,64,.18)', color: '#ff4060', fontWeight: 700 }}>Atrasada</span>}
+                                </div>
+                            </div>
+                            <button className="btn-secondary" onClick={onClose} style={{ padding: '5px 9px', flexShrink: 0 }}><Ic n="x" s={14} /></button>
+                        </div>
+
+                        {linkedEvent ? (
+                            <div onClick={() => onOpenCalendarEvent(linkedEvent.date)} style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(64,144,255,.08)', border: '1px solid rgba(64,144,255,.25)', borderRadius: 8, padding: '8px 12px', marginBottom: 14, cursor: 'pointer', fontSize: 12, color: '#78b4ff' }}>
+                                <Ic n="cal" s={13} /> Vinculado ao Calendário — {linkedEvent.title} ({fmtD(linkedEvent.date)})
+                                <button type="button" onClick={e => { e.stopPropagation(); unlinkDailyTask(link.id); }} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'rgba(255,255,255,.4)', cursor: 'pointer' }}><Ic n="x" s={12} /></button>
+                            </div>
+                        ) : link ? (
+                            <div style={{ fontSize: 11.5, color: 'rgba(255,180,60,.8)', background: 'rgba(255,180,60,.06)', border: '1px solid rgba(255,180,60,.2)', borderRadius: 8, padding: '8px 12px', marginBottom: 14 }}>⚠ Evento removido do Calendário — histórico mantido</div>
+                        ) : null}
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 16 }}>
+                            <div><L>Responsável</L>
+                                <select className="input-field" value={task.assignee || ''} onChange={e => editDailyTask(task.id, { assignee: e.target.value })}>
+                                    <option value="">Sem responsável</option>
+                                    {TEAM.map(v => <option key={v}>{v}</option>)}
+                                </select>
+                            </div>
+                            <div><L>Status</L>
+                                <select className="input-field" value={task.status} onChange={e => editDailyTask(task.id, { status: e.target.value })}>
+                                    {DAILY_STATUS.map(v => <option key={v}>{v}</option>)}
+                                </select>
+                            </div>
+                        </div>
+
+                        {task.clientName && <div style={{ fontSize: 12, color: 'rgba(255,255,255,.45)', marginBottom: 10 }}>👤 {task.clientName}</div>}
+                        {task.desc && <div style={{ fontSize: 13, color: 'rgba(255,255,255,.65)', lineHeight: 1.6, marginBottom: 16, whiteSpace: 'pre-wrap' }}>{task.desc}</div>}
+                        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 11.5, color: 'rgba(255,255,255,.4)', marginBottom: 18 }}>
+                            {task.dueDate && <span>{fmtD(task.dueDate)}{task.dueTime ? ' às ' + task.dueTime : ''}</span>}
+                            {task.estimatedHours && <span>Previsto: {task.estimatedHours}h</span>}
+                            {task.spentHours && <span>Gasto: {task.spentHours}h</span>}
+                            <span>Criado por {task.createdBy || '?'}</span>
+                        </div>
+
+                        <div style={{ marginBottom: 18 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,.5)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><Ic n="listCheck" s={12} /> Checklist {pct !== null ? `(${pct}%)` : ''}</div>
+                            {pct !== null && <div style={{ height: 5, background: 'rgba(255,255,255,.06)', borderRadius: 3, overflow: 'hidden', marginBottom: 10 }}><div style={{ height: '100%', width: pct + '%', background: '#00c864', borderRadius: 3 }} /></div>}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 8 }}>
+                                {checklist.map(c => (
+                                    <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                        <span onClick={() => toggleDailyChecklistItem(c.id)} style={{ width: 15, height: 15, borderRadius: 4, border: '1.5px solid ' + (c.done ? '#00c864' : 'rgba(255,255,255,.3)'), background: c.done ? '#00c864' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 9, color: '#fff', flexShrink: 0 }}>{c.done ? '✓' : ''}</span>
+                                        <span style={{ flex: 1, fontSize: 12.5, textDecoration: c.done ? 'line-through' : 'none', opacity: c.done ? .5 : 1 }}>{c.text}</span>
+                                        <button type="button" onClick={() => deleteDailyChecklistItem(c.id)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.25)', cursor: 'pointer' }}><Ic n="x" s={11} /></button>
+                                    </div>
+                                ))}
+                            </div>
+                            <form onSubmit={submitCheck} style={{ display: 'flex', gap: 6 }}>
+                                <input className="input-field" placeholder="Adicionar item..." value={checkText} onChange={e => setCheckText(e.target.value)} style={{ fontSize: 12 }} />
+                                <button type="submit" className="btn-secondary" style={{ flexShrink: 0 }}>+</button>
+                            </form>
+                        </div>
+
+                        <div style={{ marginBottom: 18 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,.5)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><Ic n="paperclip" s={12} /> Anexos</div>
+                            <DailyTaskAttachments taskId={task.id} />
+                        </div>
+
+                        <div style={{ marginBottom: 8 }}>
+                            <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,.5)', textTransform: 'uppercase', letterSpacing: .5, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}><Ic n="comment" s={12} /> Comentários</div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10, maxHeight: 180, overflowY: 'auto' }}>
+                                {comments.length === 0 && <div style={{ fontSize: 12, color: 'rgba(255,255,255,.3)' }}>Nenhum comentário ainda.</div>}
+                                {comments.map(c => (
+                                    <div key={c.id} style={{ background: 'rgba(255,255,255,.04)', borderRadius: 8, padding: '8px 11px' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
+                                            <span style={{ fontSize: 11.5, fontWeight: 700, color: getUserColor(_toUserId(c.userName)) }}>{c.userName}</span>
+                                            <span style={{ fontSize: 10, color: 'rgba(255,255,255,.3)' }}>{fmtTs(c.createdAt)}</span>
+                                        </div>
+                                        <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,.75)', lineHeight: 1.5 }}>{c.text}</div>
+                                        {c.userName === me?.name && <button type="button" onClick={() => deleteDailyComment(c.id)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.25)', cursor: 'pointer', fontSize: 10, marginTop: 3, padding: 0 }}>excluir</button>}
+                                    </div>
+                                ))}
+                            </div>
+                            <form onSubmit={submitComment} style={{ display: 'flex', gap: 6 }}>
+                                <input className="input-field" placeholder="Escrever comentário..." value={commentText} onChange={e => setCommentText(e.target.value)} style={{ fontSize: 12 }} />
+                                <button type="submit" className="btn-primary" style={{ flexShrink: 0 }}>Enviar</button>
+                            </form>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 22, paddingTop: 16, borderTop: '1px solid rgba(255,255,255,.06)' }}>
+                            <button className="btn-danger" onClick={() => setDel(true)}><Ic n="trash" s={12} /> Excluir</button>
+                            <button className="btn-secondary" onClick={onEdit}><Ic n="edit" s={12} /> Editar</button>
+                        </div>
+                        {del && <Confirm msg={`Excluir a tarefa "${task.title}"? O evento do Calendário (se vinculado) não será afetado.`} onOk={() => { deleteDailyTask(task.id); onClose(); }} onClose={() => setDel(false)} />}
+                    </div>
+                </div>
+            );
+        }
+
+        /* ── ADICIONAR DO CALENDÁRIO (vínculo, nunca duplica) ── */
+        function AddFromCalendarModal({ onClose }) {
+            const { store, addDailyTask, linkDailyTaskToEvent, notify } = useApp();
+            const [q, setQ] = useState('');
+            const [filtClient, setFiltClient] = useState('');
+            const [filtResp, setFiltResp] = useState('');
+            const [filtDate, setFiltDate] = useState('');
+            const linkedIds = new Set((store.dailyTaskLinks || []).map(l => l.calendar_event_id));
+            const evs = (store.calEvents || [])
+                .filter(e => !q.trim() || (e.title || '').toLowerCase().includes(q.trim().toLowerCase()))
+                .filter(e => !filtClient || e.clientId === filtClient)
+                .filter(e => !filtResp || e.responsavel === filtResp)
+                .filter(e => !filtDate || e.date === filtDate)
+                .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+            const pick = ev => {
+                const t = addDailyTask({ title: ev.title, desc: ev.desc || '', clientId: ev.clientId || '', clientName: ev.clientName || '', dueDate: ev.date, status: 'Não iniciada', priority: 'Média' });
+                linkDailyTaskToEvent(t.id, ev.id);
+                notify('Tarefa vinculada ao evento ✓');
+                onClose();
+            };
+            return (
+                <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+                    <div className="modal-box fade-in" style={{ maxWidth: 560 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+                            <h2 style={{ fontSize: 16, fontWeight: 700 }}>Adicionar do Calendário</h2>
+                            <button className="btn-secondary" onClick={onClose} style={{ padding: '5px 9px' }}><Ic n="x" s={14} /></button>
+                        </div>
+                        <p style={{ fontSize: 11.5, color: 'rgba(255,255,255,.4)', marginBottom: 14, lineHeight: 1.6 }}>Selecione um evento já existente para vincular à Carga Diária. Nenhum evento novo é criado — apenas uma referência de acompanhamento operacional.</p>
+                        <input className="input-field" placeholder="Buscar evento..." value={q} onChange={e => setQ(e.target.value)} style={{ marginBottom: 10 }} />
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 14 }}>
+                            <select className="input-field" value={filtClient} onChange={e => setFiltClient(e.target.value)} style={{ fontSize: 12 }}>
+                                <option value="">Todos os clientes</option>
+                                {store.clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                            <select className="input-field" value={filtResp} onChange={e => setFiltResp(e.target.value)} style={{ fontSize: 12 }}>
+                                <option value="">Todos os responsáveis</option>
+                                {TEAM.map(v => <option key={v}>{v}</option>)}
+                            </select>
+                            <input className="input-field" type="date" value={filtDate} onChange={e => setFiltDate(e.target.value)} style={{ fontSize: 12 }} />
+                        </div>
+                        <div style={{ maxHeight: 340, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {evs.length === 0 && <div style={{ textAlign: 'center', padding: '24px 0', color: 'rgba(255,255,255,.3)', fontSize: 13 }}>Nenhum evento encontrado.</div>}
+                            {evs.map(ev => {
+                                const already = linkedIds.has(ev.id);
+                                return (
+                                    <div key={ev.id} onClick={() => !already && pick(ev)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderRadius: 8, background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.07)', cursor: already ? 'default' : 'pointer', opacity: already ? .5 : 1 }}>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.title}</div>
+                                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,.4)', marginTop: 2 }}>{fmtD(ev.date)}{ev.clientName ? ' · ' + ev.clientName : ''}</div>
+                                        </div>
+                                        {already && <span style={{ fontSize: 10, color: 'rgba(255,255,255,.3)' }}>já vinculado</span>}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        /* ── LINHA DE TAREFA (reusada em Minha Carga, painel do usuário e Vence Hoje) ── */
+        function DailyTaskRow({ task, onClick, draggable, onDragStart }) {
+            const { store, editDailyTask } = useApp();
+            const linked = (store.dailyTaskLinks || []).some(l => l.daily_task_id === task.id);
+            const checklist = (store.dailyTaskChecklists || []).filter(c => c.taskId === task.id);
+            const pct = checklist.length ? Math.round((checklist.filter(c => c.done).length / checklist.length) * 100) : null;
+            const over = _dailyIsOverdue(task);
+            const done = task.status === 'Concluída';
+            return (
+                <div draggable={draggable} onDragStart={onDragStart} onClick={onClick}
+                    className="task-card" style={{ margin: 0, cursor: draggable ? 'grab' : 'pointer', borderLeft: '3px solid ' + (DAILY_PCOL[task.priority] || '#666'), ...(over ? { borderColor: '#ff0040' } : {}) }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                        <span onClick={e => { e.stopPropagation(); editDailyTask(task.id, { status: done ? 'Não iniciada' : 'Concluída' }); }}
+                            style={{ width: 17, height: 17, borderRadius: 5, border: '1.5px solid ' + (done ? '#00c864' : 'rgba(255,255,255,.3)'), background: done ? '#00c864' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 10, color: '#fff', flexShrink: 0, marginTop: 1 }}>{done ? '✓' : ''}</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontSize: 13, fontWeight: 600, textDecoration: done ? 'line-through' : 'none', opacity: done ? .5 : 1 }}>{task.title}</span>
+                                {linked && <Ic n="cal" s={11} />}
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 5, fontSize: 10.5, color: 'rgba(255,255,255,.4)' }}>
+                                {task.clientName && <span>👤 {task.clientName}</span>}
+                                {task.assignee && <span>→ {task.assignee.split(' ')[0]}</span>}
+                                {task.dueDate && <span style={{ color: over ? '#ff4060' : 'inherit' }}>{over ? 'Atrasada' : fmtD(task.dueDate)}</span>}
+                                {task.estimatedHours && <span>{task.estimatedHours}h prev.</span>}
+                                {pct !== null && <span>✓ {pct}%</span>}
+                            </div>
+                        </div>
+                        <span style={{ fontSize: 9.5, padding: '2px 7px', borderRadius: 10, background: (DAILY_SCOL[task.status] || '#666') + '22', color: DAILY_SCOL[task.status] || '#aaa', fontWeight: 700, flexShrink: 0, whiteSpace: 'nowrap' }}>{task.status}</span>
+                    </div>
+                </div>
+            );
+        }
+
+        /* ── TAREFAS DE UM RESPONSÁVEL ── */
+        function TeamMemberTasksModal({ name, tasks, onClose, onOpenTask }) {
+            return (
+                <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+                    <div className="modal-box fade-in" style={{ maxWidth: 560 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+                            <h2 style={{ fontSize: 16, fontWeight: 700 }}>Tarefas de {name}</h2>
+                            <button className="btn-secondary" onClick={onClose} style={{ padding: '5px 9px' }}><Ic n="x" s={14} /></button>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 480, overflowY: 'auto' }}>
+                            {tasks.length === 0 && <div style={{ textAlign: 'center', padding: '24px 0', color: 'rgba(255,255,255,.3)', fontSize: 13 }}>Nenhuma tarefa.</div>}
+                            {tasks.map(t => <DailyTaskRow key={t.id} task={t} onClick={() => { onOpenTask(t); onClose(); }} />)}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        /* ── VISUALIZAÇÃO SEMANAL ── */
+        function DailyWeeklyView({ tasks, onDayClick }) {
+            const today = new Date();
+            const todayStr = today.toISOString().slice(0, 10);
+            const ws = new Date(today.getFullYear(), today.getMonth(), today.getDate() - today.getDay());
+            const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(ws); d.setDate(ws.getDate() + i); return d; });
+            const labels = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+            return (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 8 }}>
+                    {days.map((d, i) => {
+                        const ds = d.toISOString().slice(0, 10);
+                        const ct = tasks.filter(t => t.dueDate === ds);
+                        const isT = ds === todayStr;
+                        return (
+                            <div key={i} onClick={() => onDayClick(ds, ct)} className="glass glass-hover" style={{ padding: '14px 8px', textAlign: 'center', cursor: 'pointer', borderColor: isT ? 'rgba(255,0,64,.35)' : undefined }}>
+                                <div style={{ fontSize: 10.5, fontWeight: 700, color: isT ? '#ff4060' : 'rgba(255,255,255,.4)', textTransform: 'uppercase', letterSpacing: .5 }}>{labels[i]}</div>
+                                <div style={{ fontSize: 10, color: 'rgba(255,255,255,.3)', marginBottom: 6 }}>{d.getDate()}</div>
+                                <div style={{ fontSize: 22, fontWeight: 800, color: ct.length ? '#fff' : 'rgba(255,255,255,.2)' }}>{ct.length}</div>
+                                <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.3)' }}>tarefa{ct.length !== 1 ? 's' : ''}</div>
+                            </div>
+                        );
+                    })}
+                </div>
+            );
+        }
+
+        /* ── PÁGINA PRINCIPAL DA CARGA DIÁRIA ── */
+        function DailyLoadPage({ goToEvent }) {
+            const { store, editDailyTask } = useApp();
+            const me = (() => { try { return JSON.parse(sessionStorage.getItem('neos_auth') || 'null'); } catch { return null; } })();
+            const myName = me?.name || '';
+            const tasks = store.dailyTasks || [];
+            const [showAdd, setShowAdd] = useState(false);
+            const [showFromCal, setShowFromCal] = useState(false);
+            const [detailTask, setDetailTask] = useState(null);
+            const [editTask, setEditTask] = useState(null);
+            const [viewingUser, setViewingUser] = useState(null);
+            const [mode, setMode] = useState('lista');
+            const [showAllTasks, setShowAllTasks] = useState(false);
+            const [dayModal, setDayModal] = useState(null);
+            const [dragging, setDragging] = useState(null);
+            const [dragOverUser, setDragOverUser] = useState(null);
+
+            const [dateScope, setDateScope] = useState('todos');
+            const [statusQuick, setStatusQuick] = useState('todas');
+            const [filtClient, setFiltClient] = useState('');
+            const [filtResp, setFiltResp] = useState('');
+            const [filtPrior, setFiltPrior] = useState('');
+
+            const today = new Date().toISOString().slice(0, 10);
+            const myTasks = tasks.filter(t => t.assignee === myName);
+            const myStats = {
+                total: myTasks.length,
+                done: myTasks.filter(t => t.status === 'Concluída').length,
+                andamento: myTasks.filter(t => t.status === 'Em andamento').length,
+                revisao: myTasks.filter(t => t.status === 'Aguardando revisão').length,
+                atrasadas: myTasks.filter(t => _dailyIsOverdue(t)).length,
+            };
+            const globalStats = {
+                total: tasks.length,
+                done: tasks.filter(t => t.status === 'Concluída').length,
+                andamento: tasks.filter(t => t.status === 'Em andamento').length,
+                revisao: tasks.filter(t => t.status === 'Aguardando revisão').length,
+                atrasadas: tasks.filter(t => _dailyIsOverdue(t)).length,
+                semResp: tasks.filter(t => !t.assignee).length,
+            };
+
+            const applyFilters = list => list
+                .filter(t => _dailyInScope(t, dateScope))
+                .filter(t => {
+                    if (statusQuick === 'todas') return true;
+                    if (statusQuick === 'atrasadas') return _dailyIsOverdue(t);
+                    if (statusQuick === 'sem_resp') return !t.assignee;
+                    if (statusQuick === 'concluidas') return t.status === 'Concluída';
+                    if (statusQuick === 'andamento') return t.status === 'Em andamento';
+                    if (statusQuick === 'nao_iniciada') return t.status === 'Não iniciada';
+                    if (statusQuick === 'revisao') return t.status === 'Aguardando revisão';
+                    return true;
+                })
+                .filter(t => !filtClient || t.clientId === filtClient)
+                .filter(t => !filtResp || t.assignee === filtResp)
+                .filter(t => !filtPrior || t.priority === filtPrior);
+
+            const minhaCargaList = applyFilters(myTasks).sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
+            const allFilteredList = applyFilters(tasks).sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'));
+            const venceHoje = tasks.filter(t => t.dueDate === today && t.status !== 'Concluída').sort((a, b) => (a.dueTime || '').localeCompare(b.dueTime || ''));
+
+            const teamCards = TEAM.map(name => {
+                const ut = tasks.filter(t => t.assignee === name);
+                const doneCt = ut.filter(t => t.status === 'Concluída').length;
+                return { name, total: ut.length, done: doneCt, pct: ut.length ? Math.round((doneCt / ut.length) * 100) : 0 };
+            });
+
+            const dropOnUser = name => {
+                if (dragging) editDailyTask(dragging.id, { assignee: name });
+                setDragging(null); setDragOverUser(null);
+            };
+
+            return (
+                <div className="fade-in">
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, flexWrap: 'wrap', gap: 10 }}>
+                        <div>
+                            <h1 style={{ fontSize: 21, fontWeight: 700 }}>{dailyGreeting()}, {myName.split(' ')[0] || 'time'}</h1>
+                            <p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>
+                                Hoje você possui: {myStats.total} tarefas · {myStats.done} concluídas · {myStats.andamento} em andamento · {myStats.revisao} aguardando revisão · {myStats.atrasadas} atrasadas
+                            </p>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <button className="btn-secondary" onClick={() => setShowFromCal(true)}><Ic n="cal" s={14} /> Adicionar do Calendário</button>
+                            <button className="btn-primary" onClick={() => setShowAdd(true)}><Ic n="plus" s={15} /> Nova Tarefa</button>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(110px,1fr))', gap: 10, marginBottom: 20 }}>
+                        {[
+                            { l: 'Total', v: globalStats.total, c: '#4090ff' },
+                            { l: 'Concluídas', v: globalStats.done, c: '#00c864' },
+                            { l: 'Em andamento', v: globalStats.andamento, c: '#4090ff' },
+                            { l: 'Aguard. revisão', v: globalStats.revisao, c: '#c060ff' },
+                            { l: 'Atrasadas', v: globalStats.atrasadas, c: '#ff4060' },
+                            { l: 'Sem responsável', v: globalStats.semResp, c: '#ffcc00' },
+                        ].map(m => (
+                            <div key={m.l} className="glass" style={{ padding: '11px 12px', textAlign: 'center', borderTop: '2px solid ' + m.c + '55' }}>
+                                <div style={{ fontSize: 19, fontWeight: 800, color: m.c }}>{m.v}</div>
+                                <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>{m.l}</div>
+                            </div>
+                        ))}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 0, marginBottom: 18, background: 'rgba(255,255,255,.04)', borderRadius: 10, overflow: 'hidden', width: 'fit-content' }}>
+                        {[['lista', 'Lista'], ['semana', 'Semana']].map(([id, l]) => (
+                            <button key={id} onClick={() => setMode(id)} style={{ padding: '8px 22px', fontSize: 12, background: mode === id ? 'rgba(255,0,64,.18)' : 'transparent', color: mode === id ? '#ff4060' : 'rgba(255,255,255,.5)', border: 'none', cursor: 'pointer', fontWeight: mode === id ? 700 : 400 }}>{l}</button>
+                        ))}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+                        <select className="input-field" value={dateScope} onChange={e => setDateScope(e.target.value)} style={{ width: 'auto', fontSize: 12 }}>
+                            {[['todos', 'Todos'], ['hoje', 'Hoje'], ['semana', 'Semana'], ['mes', 'Mês']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                        <select className="input-field" value={statusQuick} onChange={e => setStatusQuick(e.target.value)} style={{ width: 'auto', fontSize: 12 }}>
+                            {[['todas', 'Todos status'], ['atrasadas', 'Atrasadas'], ['concluidas', 'Concluídas'], ['andamento', 'Em andamento'], ['nao_iniciada', 'Não iniciadas'], ['revisao', 'Aguardando revisão'], ['sem_resp', 'Sem responsável']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                        </select>
+                        <select className="input-field" value={filtClient} onChange={e => setFiltClient(e.target.value)} style={{ width: 'auto', fontSize: 12 }}>
+                            <option value="">Todos os clientes</option>
+                            {store.clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                        <select className="input-field" value={filtResp} onChange={e => setFiltResp(e.target.value)} style={{ width: 'auto', fontSize: 12 }}>
+                            <option value="">Todos os responsáveis</option>
+                            {TEAM.map(v => <option key={v}>{v}</option>)}
+                        </select>
+                        <select className="input-field" value={filtPrior} onChange={e => setFiltPrior(e.target.value)} style={{ width: 'auto', fontSize: 12 }}>
+                            <option value="">Todas prioridades</option>
+                            {Object.keys(DAILY_PCOL).map(v => <option key={v}>{v}</option>)}
+                        </select>
+                    </div>
+
+                    {mode === 'semana' ? (
+                        <div style={{ marginBottom: 24 }}>
+                            <DailyWeeklyView tasks={applyFilters(tasks)} onDayClick={(ds, ct) => setDayModal({ ds, items: ct })} />
+                        </div>
+                    ) : (
+                        <>
+                            {venceHoje.length > 0 && (
+                                <div className="glass" style={{ padding: 16, marginBottom: 20, border: '1px solid rgba(255,204,0,.2)' }}>
+                                    <div style={{ fontSize: 12, fontWeight: 700, color: '#ffcc00', marginBottom: 10 }}>⏰ Vence Hoje ({venceHoje.length})</div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                        {venceHoje.map(t => (
+                                            <div key={t.id} onClick={() => setDetailTask(t)} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', background: 'rgba(255,204,0,.05)', borderRadius: 7, border: '1px solid rgba(255,204,0,.12)', cursor: 'pointer' }}>
+                                                <span style={{ flex: 1, fontSize: 12 }}>{t.title}</span>
+                                                {t.dueTime && <span style={{ fontSize: 10.5, color: '#ffcc00', fontWeight: 700 }}>{t.dueTime}</span>}
+                                                <span style={{ fontSize: 10.5, color: 'rgba(255,255,255,.4)' }}>{(t.assignee || 'Sem responsável').split(' ')[0]}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            <div style={{ marginBottom: 26 }}>
+                                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Minha Carga <span style={{ fontWeight: 400, color: 'rgba(255,255,255,.35)', fontSize: 12 }}>({minhaCargaList.length})</span></div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    {minhaCargaList.length === 0 && <div style={{ textAlign: 'center', padding: '24px 0', color: 'rgba(255,255,255,.3)', fontSize: 13 }}>Nenhuma tarefa com os filtros atuais.</div>}
+                                    {minhaCargaList.map(t => (
+                                        <DailyTaskRow key={t.id} task={t} draggable onDragStart={e => { setDragging(t); e.dataTransfer.effectAllowed = 'move'; }} onClick={() => setDetailTask(t)} />
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div>
+                                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 12 }}>Equipe</div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 12 }}>
+                                    {teamCards.map(u => (
+                                        <div key={u.name} onClick={() => setViewingUser(u.name)}
+                                            onDragOver={e => { e.preventDefault(); setDragOverUser(u.name); }}
+                                            onDragLeave={() => setDragOverUser(null)}
+                                            onDrop={e => { e.preventDefault(); dropOnUser(u.name); }}
+                                            className="glass glass-hover" style={{ padding: 16, cursor: 'pointer', borderColor: dragOverUser === u.name ? 'rgba(255,0,64,.5)' : undefined }}>
+                                            <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 3 }}>{u.name}</div>
+                                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,.4)', marginBottom: 10 }}>{u.total} tarefa{u.total !== 1 ? 's' : ''}</div>
+                                            <div style={{ height: 7, background: 'rgba(255,255,255,.06)', borderRadius: 4, overflow: 'hidden', marginBottom: 6 }}>
+                                                <div style={{ height: '100%', width: u.pct + '%', background: u.pct >= 80 ? '#00c864' : u.pct >= 40 ? '#ffcc00' : '#ff8020', borderRadius: 4, transition: 'width .3s' }} />
+                                            </div>
+                                            <div style={{ fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,.5)' }}>{u.pct}% concluído</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div style={{ marginTop: 26 }}>
+                                <div onClick={() => setShowAllTasks(v => !v)} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: showAllTasks ? 12 : 0 }}>
+                                    <div style={{ fontSize: 14, fontWeight: 700 }}>Todas as Tarefas <span style={{ fontWeight: 400, color: 'rgba(255,255,255,.35)', fontSize: 12 }}>({allFilteredList.length})</span></div>
+                                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,.4)' }}>{showAllTasks ? '▲ ocultar' : '▼ mostrar (aplica os filtros acima a toda a equipe)'}</span>
+                                </div>
+                                {showAllTasks && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                        {allFilteredList.length === 0 && <div style={{ textAlign: 'center', padding: '24px 0', color: 'rgba(255,255,255,.3)', fontSize: 13 }}>Nenhuma tarefa com os filtros atuais.</div>}
+                                        {allFilteredList.map(t => (
+                                            <DailyTaskRow key={t.id} task={t} onClick={() => setDetailTask(t)} />
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    )}
+
+                    {showAdd && <DailyTaskModal onClose={() => setShowAdd(false)} />}
+                    {editTask && <DailyTaskModal task={editTask} onClose={() => { setEditTask(null); setDetailTask(null); }} />}
+                    {showFromCal && <AddFromCalendarModal onClose={() => setShowFromCal(false)} />}
+                    {detailTask && !editTask && (
+                        <DailyTaskDetail task={tasks.find(t => t.id === detailTask.id) || detailTask} onClose={() => setDetailTask(null)}
+                            onEdit={() => setEditTask(detailTask)}
+                            onOpenCalendarEvent={ds => { setDetailTask(null); goToEvent(ds); }} />
+                    )}
+                    {viewingUser && (
+                        <TeamMemberTasksModal name={viewingUser} tasks={applyFilters(tasks.filter(t => t.assignee === viewingUser))} onClose={() => setViewingUser(null)} onOpenTask={t => setDetailTask(t)} />
+                    )}
+                    {dayModal && (
+                        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setDayModal(null)}>
+                            <div className="modal-box fade-in" style={{ maxWidth: 480 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                                    <h2 style={{ fontSize: 15, fontWeight: 700 }}>{fmtD(dayModal.ds)}</h2>
+                                    <button className="btn-secondary" onClick={() => setDayModal(null)} style={{ padding: '5px 9px' }}><Ic n="x" s={14} /></button>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    {dayModal.items.length === 0 && <div style={{ textAlign: 'center', padding: '20px 0', color: 'rgba(255,255,255,.3)', fontSize: 13 }}>Nenhuma tarefa neste dia.</div>}
+                                    {dayModal.items.map(t => <DailyTaskRow key={t.id} task={t} onClick={() => { setDetailTask(t); setDayModal(null); }} />)}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        /* ── SUBABA DO CALENDÁRIO: Calendário | Carga Diária (CalendarPage acima permanece intocado) ── */
+        function CalendarModule() {
+            const { setCalFocusDate } = useApp();
+            const [subTab, setSubTab] = useState('calendar');
+            const goToEvent = ds => { if (ds) setCalFocusDate(ds); setSubTab('calendar'); };
+            return (
+                <div>
+                    <div style={{ display: 'flex', gap: 0, marginBottom: 18, background: 'rgba(255,255,255,.04)', borderRadius: 10, overflow: 'hidden', width: 'fit-content' }}>
+                        {[['calendar', 'Calendário'], ['daily', 'Carga Diária']].map(([id, l]) => (
+                            <button key={id} onClick={() => setSubTab(id)} style={{ padding: '9px 26px', fontSize: 12.5, background: subTab === id ? 'rgba(255,0,64,.18)' : 'transparent', color: subTab === id ? '#ff4060' : 'rgba(255,255,255,.5)', border: 'none', cursor: 'pointer', fontWeight: subTab === id ? 700 : 400 }}>{l}</button>
+                        ))}
+                    </div>
+                    {subTab === 'calendar' ? <CalendarPage /> : <DailyLoadPage goToEvent={goToEvent} />}
+                </div>
+            );
+        }
+
         /* ── CAMPAIGN MODAL ──────────────────────────────────── */
         function CampaignModal({ campaign, clientId, clientName, onClose }) {
             const { addCampaign, editCampaign } = useApp();
@@ -9607,7 +10299,7 @@
             const { view, userRole, onlineUsers, chatOpen, setChatOpen } = useApp();
             const [quickAdd, setQuickAdd] = useState(false);
             const isEmployee = userRole !== 'admin';
-            const ViewMap = { dashboard: Dashboard, leads: LeadsPage, goals: GoalsPage, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarPage };
+            const ViewMap = { dashboard: Dashboard, leads: LeadsPage, goals: GoalsPage, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarModule };
             const V = (isEmployee && EMPLOYEE_BLOCKED.includes(view)) ? LockedView : (ViewMap[view] || Dashboard);
             const visible = onlineUsers.filter(c => c.view === view);
             return (
