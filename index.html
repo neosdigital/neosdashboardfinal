@@ -644,6 +644,34 @@
         const getUserColor = u => { let h = 0; for (let c of (u || '')) h = (h * 31 + c.charCodeAt(0)) % CURSOR_COLORS.length; return CURSOR_COLORS[Math.abs(h) % CURSOR_COLORS.length]; };
         const getModUser = () => { try { const s = JSON.parse(sessionStorage.getItem('neos_auth') || 'null'); return { modifiedBy: s?.name || '?', modifiedAt: new Date().toISOString() }; } catch { return { modifiedBy: '?', modifiedAt: new Date().toISOString() }; } };
 
+        /* ── SOM DE NOTIFICAÇÃO (lead novo) ──────────────────
+           Sintetizado via Web Audio, sem depender de nenhum arquivo de
+           áudio externo. Três notas curtas em arpejo ascendente (sino),
+           timbre e melodia diferentes do "doo-doo" do WhatsApp. */
+        let _neosAudioCtx = null;
+        function playNewLeadSound() {
+            try {
+                if (!_neosAudioCtx) _neosAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const ctx = _neosAudioCtx;
+                if (ctx.state === 'suspended') ctx.resume();
+                const now = ctx.currentTime;
+                const notes = [740, 988, 1480]; // F#5, B5, F#6 — arpejo ascendente
+                notes.forEach((freq, i) => {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.type = 'triangle';
+                    osc.frequency.value = freq;
+                    const start = now + i * 0.1;
+                    gain.gain.setValueAtTime(0, start);
+                    gain.gain.linearRampToValueAtTime(0.2, start + 0.015);
+                    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.34);
+                    osc.connect(gain).connect(ctx.destination);
+                    osc.start(start);
+                    osc.stop(start + 0.36);
+                });
+            } catch (e) { /* autoplay bloqueado ou navegador sem suporte — segue sem som */ }
+        }
+
         /* ── DATABASE (IndexedDB via Dexie) ─────────────────── */
         let _backupFileHandle = null;
         const db = new Dexie('NeosDatabase');
@@ -980,8 +1008,7 @@
             useEffect(() => {
                 if (!dbReady) return;
                 const meNow = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
-                const isAdm = meNow && (meNow.role === 'admin' || _ADMIN_IDS.includes(meNow.username));
-                if (!isAdm) return;
+                if (!meNow) return;
                 if (viewRef.current === 'leads') return;
                 const lastSeenAt = localStorage.getItem(_leadsSeenKey()) || '1970-01-01T00:00:00.000Z';
                 const unseen = (store.leads || []).filter(l => l.createdAt > lastSeenAt).map(l => l.id);
@@ -1390,8 +1417,10 @@
                 supaDelete('leadInteractions', id);
             };
 
-            /* ── ALERTA DE LEAD NOVO ── piscar aba, notificação e popup global.
-               Só dispara pra admins, mesma regra usada nos outros alertas. */
+            /* ── ALERTA DE LEAD NOVO ── piscar aba, som, notificação e popup
+               global. Dispara pra qualquer usuário logado nesta sessão —
+               a Leads não é restrita a admin, e a notificação só é visível
+               mesmo pra quem está com a sessão aberta (addNotif é local). */
             const _leadsSeenKey = () => {
                 const meNow = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
                 return `neos_leads_last_seen_${meNow?.username || 'anon'}`;
@@ -1403,13 +1432,13 @@
             const dismissHotLead = id => setHotLeadQueue(p => p.filter(l => l.id !== id));
             const onNewLead = lead => {
                 const meNow = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
-                const isAdm = meNow && (meNow.role === 'admin' || _ADMIN_IDS.includes(meNow.username));
-                if (!isAdm) return;
+                if (!meNow) return;
                 if (viewRef.current !== 'leads') {
                     setNewLeadIds(prev => new Set(prev).add(lead.id));
                 }
                 setHotLeadQueue(prev => [...prev, lead]);
-                _ADMIN_IDS.forEach(u => addNotif(u, 'lead_new', '🎯 Novo Lead', `${lead.name || 'Lead sem nome'} · ${lead.origin || 'Site'}`, lead.id, 'lead'));
+                addNotif(meNow.username, 'lead_new', '🎯 Novo Lead', `${lead.name || 'Lead sem nome'} · ${lead.origin || 'Site'}`, lead.id, 'lead');
+                playNewLeadSound();
             };
 
             /* ── GOALS / KPIs ── */
@@ -8463,6 +8492,38 @@
             );
         }
 
+        /* Timer ao vivo de "há quanto tempo esse lead chegou". Nas primeiras
+           24h atualiza a cada segundo (mm:ss ou Hh MMm); depois disso vira
+           um rótulo estático em dias, sem manter interval rodando à toa. */
+        function LeadAgeTimer({ createdAt }) {
+            const createdMs = createdAt ? new Date(createdAt).getTime() : null;
+            const isRecent = createdMs ? (Date.now() - createdMs) < 24 * 3600 * 1000 : false;
+            const [now, setNow] = useState(Date.now());
+            useEffect(() => {
+                if (!isRecent) return;
+                const iv = setInterval(() => setNow(Date.now()), 1000);
+                return () => clearInterval(iv);
+            }, [isRecent]);
+            if (!createdMs) return null;
+            const diffMs = Math.max(0, (isRecent ? now : Date.now()) - createdMs);
+            const totalSec = Math.floor(diffMs / 1000);
+            const d = Math.floor(totalSec / 86400);
+            const h = Math.floor((totalSec % 86400) / 3600);
+            const m = Math.floor((totalSec % 3600) / 60);
+            const s = totalSec % 60;
+            let label;
+            if (d > 0) label = `há ${d}d`;
+            else if (h > 0) label = `há ${h}h ${String(m).padStart(2, '0')}m`;
+            else label = `há ${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            const urgent = totalSec < 3600;
+            return (
+                <div style={{ fontSize: 9.5, fontWeight: 700, color: urgent ? '#ff4060' : 'rgba(255,255,255,.35)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4, fontVariantNumeric: 'tabular-nums' }}>
+                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 3" strokeLinecap="round" /></svg>
+                    {label}
+                </div>
+            );
+        }
+
         function LeadCard({ lead, clr, onDragStart, onClick, onDelete, lastInt, selected }) {
             const fmtV = v => v >= 1000 ? 'R$'+(v/1000).toFixed(1)+'k' : v > 0 ? 'R$'+v : null;
             const score5 = Math.round((lead.score||0)/20);
@@ -8473,6 +8534,7 @@
                     onMouseLeave={e=>e.currentTarget.style.background= selected ? clr+'18' : 'rgba(255,255,255,.04)'}>
                     <button onClick={e=>{e.stopPropagation();onDelete&&onDelete(lead);}} style={{ position:'absolute', top:5, right:6, background:'none', border:'none', color:'rgba(255,255,255,.28)', cursor:'pointer', fontSize:13, lineHeight:1, padding:'2px 3px', borderRadius:4, transition:'color .12s' }}
                         onMouseEnter={e=>e.currentTarget.style.color='#ff4060'} onMouseLeave={e=>e.currentTarget.style.color='rgba(255,255,255,.28)'}>✕</button>
+                    <LeadAgeTimer createdAt={lead.createdAt} />
                     <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:4, paddingRight:14 }}>
                         <div style={{ fontSize:12.5, fontWeight:600, lineHeight:1.3, flex:1, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', marginRight:6 }}>{lead.name}</div>
                         {lead.priority && <div style={{ width:7, height:7, borderRadius:'50%', background:LEAD_PCOL[lead.priority]||'#666', flexShrink:0, marginTop:3 }} title={lead.priority} />}
