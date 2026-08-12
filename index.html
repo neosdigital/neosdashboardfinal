@@ -829,6 +829,13 @@
             const [hotLeadQueue, setHotLeadQueue] = useState([]);
             const [leadFocusId, setLeadFocusId] = useState(null);
             const viewRef = useRef(view);
+            /* Dedup do alerta de lead novo, independente do merge de store.leads —
+               um refresh silencioso (rodado logo após conectar o realtime, ou a
+               cada 2min) pode buscar o lead via REST antes do broadcast do
+               websocket chegar; nesse caso o merge já marcaria como "não é novo"
+               e o alerta nunca dispararia. Este ref só depende de "já alertei
+               sobre esse id", nunca do conteúdo atual do store. */
+            const alertedLeadIdsRef = useRef(new Set());
             const chatChannelRef = useRef(null);
             const refreshDataRef = useRef(null);
             useEffect(() => { viewRef.current = view; }, [view]);
@@ -938,19 +945,20 @@
                 const channel = supabase.channel('neos-db-changes');
                 TABLES.forEach(tbl => {
                     channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, ({ eventType, new: n, old: o }) => {
-                        let wasNewInsert = false;
                         setStore(p => {
                             const arr = p[tbl] || [];
                             if (eventType === 'INSERT') {
                                 if (arr.some(r => r.id === n.id)) return p;
-                                wasNewInsert = true;
                                 return { ...p, [tbl]: [...arr, n] };
                             }
                             if (eventType === 'UPDATE') return { ...p, [tbl]: arr.map(r => r.id === n.id ? { ...r, ...n } : r) };
                             if (eventType === 'DELETE') return { ...p, [tbl]: arr.filter(r => r.id !== o?.id) };
                             return p;
                         });
-                        if (tbl === 'leads' && eventType === 'INSERT' && wasNewInsert) onNewLead(n);
+                        if (tbl === 'leads' && eventType === 'INSERT' && n?.id && !alertedLeadIdsRef.current.has(n.id)) {
+                            alertedLeadIdsRef.current.add(n.id);
+                            onNewLead(n);
+                        }
                     });
                 });
                 channel.subscribe(status => {
