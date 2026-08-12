@@ -825,6 +825,9 @@
             const [onlineUsers, setOnlineUsers] = useState([]);
             const [chatOpen, setChatOpen] = useState(false);
             const [chatMessages, setChatMessages] = useState([]);
+            const [newLeadIds, setNewLeadIds] = useState(() => new Set());
+            const [hotLeadQueue, setHotLeadQueue] = useState([]);
+            const [leadFocusId, setLeadFocusId] = useState(null);
             const viewRef = useRef(view);
             const chatChannelRef = useRef(null);
             const refreshDataRef = useRef(null);
@@ -935,16 +938,19 @@
                 const channel = supabase.channel('neos-db-changes');
                 TABLES.forEach(tbl => {
                     channel.on('postgres_changes', { event: '*', schema: 'public', table: tbl }, ({ eventType, new: n, old: o }) => {
+                        let wasNewInsert = false;
                         setStore(p => {
                             const arr = p[tbl] || [];
                             if (eventType === 'INSERT') {
                                 if (arr.some(r => r.id === n.id)) return p;
+                                wasNewInsert = true;
                                 return { ...p, [tbl]: [...arr, n] };
                             }
                             if (eventType === 'UPDATE') return { ...p, [tbl]: arr.map(r => r.id === n.id ? { ...r, ...n } : r) };
                             if (eventType === 'DELETE') return { ...p, [tbl]: arr.filter(r => r.id !== o?.id) };
                             return p;
                         });
+                        if (tbl === 'leads' && eventType === 'INSERT' && wasNewInsert) onNewLead(n);
                     });
                 });
                 channel.subscribe(status => {
@@ -959,6 +965,23 @@
                 });
                 return () => { supabase.removeChannel(channel); };
             }, [dbReady]);
+
+            /* ── LEADS NÃO VISTOS ── recalcula ao carregar/sincronizar dados,
+               cobrindo leads que chegaram enquanto o dashboard estava fechado
+               (o realtime acima só cobre quem já estava com a aba aberta). */
+            useEffect(() => {
+                if (!dbReady) return;
+                const meNow = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
+                const isAdm = meNow && (meNow.role === 'admin' || _ADMIN_IDS.includes(meNow.username));
+                if (!isAdm) return;
+                if (viewRef.current === 'leads') return;
+                const lastSeenAt = localStorage.getItem(_leadsSeenKey()) || '1970-01-01T00:00:00.000Z';
+                const unseen = (store.leads || []).filter(l => l.createdAt > lastSeenAt).map(l => l.id);
+                setNewLeadIds(new Set(unseen));
+            }, [dbReady, store.leads]);
+
+            /* Ao abrir a aba Leads, marca tudo como visto e para de piscar. */
+            useEffect(() => { if (view === 'leads') markLeadsSeen(); }, [view]);
 
             /* ── AUTO-REFRESH (visibilidade, online, 5min) ── */
             useEffect(() => {
@@ -1359,6 +1382,28 @@
                 supaDelete('leadInteractions', id);
             };
 
+            /* ── ALERTA DE LEAD NOVO ── piscar aba, notificação e popup global.
+               Só dispara pra admins, mesma regra usada nos outros alertas. */
+            const _leadsSeenKey = () => {
+                const meNow = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
+                return `neos_leads_last_seen_${meNow?.username || 'anon'}`;
+            };
+            const markLeadsSeen = () => {
+                localStorage.setItem(_leadsSeenKey(), new Date().toISOString());
+                setNewLeadIds(new Set());
+            };
+            const dismissHotLead = id => setHotLeadQueue(p => p.filter(l => l.id !== id));
+            const onNewLead = lead => {
+                const meNow = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
+                const isAdm = meNow && (meNow.role === 'admin' || _ADMIN_IDS.includes(meNow.username));
+                if (!isAdm) return;
+                if (viewRef.current !== 'leads') {
+                    setNewLeadIds(prev => new Set(prev).add(lead.id));
+                }
+                setHotLeadQueue(prev => [...prev, lead]);
+                _ADMIN_IDS.forEach(u => addNotif(u, 'lead_new', '🎯 Novo Lead', `${lead.name || 'Lead sem nome'} · ${lead.origin || 'Site'}`, lead.id, 'lead'));
+            };
+
             /* ── GOALS / KPIs ── */
             const addGoal = data => { const g = { id: genId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), current: 0, ...getModUser(), ...data }; upd(p => ({ goals: [...(p.goals || []), g] })); supaSave('goals', g); notify('Meta criada ✓'); };
             const editGoal = (id, data) => { const m = getModUser(); upd(p => ({ goals: (p.goals || []).map(g => g.id === id ? { ...g, ...data, ...m, updatedAt: new Date().toISOString() } : g) })); supaUpdate('goals', id, { ...data, ...m, updatedAt: new Date().toISOString() }); notify('Meta atualizada ✓'); };
@@ -1428,7 +1473,7 @@
             );
 
             return (
-                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addDailyTask, editDailyTask, deleteDailyTask, addDailyComment, deleteDailyComment, addDailyChecklistItem, toggleDailyChecklistItem, deleteDailyChecklistItem, linkDailyTaskToEvent, unlinkDailyTask, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage, metaConns, saveMetaConn, deleteMetaConn, loadMetaConns, addLead, editLead, deleteLead, moveLead, syncLeads, addLeadInteraction, deleteLeadInteraction, addGoal, editGoal, deleteGoal, addNotif, markNotifRead, markAllNotifsRead, startTimer, stopTimer }}>
+                <Ctx.Provider value={{ store, view, setView, toast, dbReady, supaStatus, userRole, onlineUsers, chatOpen, setChatOpen, chatMessages, sendChatMsg, refreshData, exportJSON, importJSON, addClient, editClient, deleteClient, addTask, editTask, deleteTask, moveTask, resetTasks, addFin, editFin, deleteFin, saveTraffic, addDesign, editDesign, deleteDesign, addPerformance, editPerformance, deletePerformance, addCalEvent, editCalEvent, deleteCalEvent, addDailyTask, editDailyTask, deleteDailyTask, addDailyComment, deleteDailyComment, addDailyChecklistItem, toggleDailyChecklistItem, deleteDailyChecklistItem, linkDailyTaskToEvent, unlinkDailyTask, addCost, editCost, deleteCost, addCampaign, editCampaign, deleteCampaign, calFocusDate, setCalFocusDate, notify, addClientImage, deleteClientImage, metaConns, saveMetaConn, deleteMetaConn, loadMetaConns, addLead, editLead, deleteLead, moveLead, syncLeads, addLeadInteraction, deleteLeadInteraction, addGoal, editGoal, deleteGoal, addNotif, markNotifRead, markAllNotifsRead, startTimer, stopTimer, newLeadIds, hotLeadQueue, dismissHotLead, leadFocusId, setLeadFocusId }}>
                     {children}
                 </Ctx.Provider>
             );
@@ -1489,6 +1534,55 @@
             return (
                 <div className="fade-in" style={{ position: 'fixed', top: 20, right: 20, zIndex: 9999, background: ok ? 'rgba(0,200,100,.12)' : 'rgba(255,180,0,.12)', border: '1px solid ' + (ok ? '#00c864' : '#ffb400'), borderRadius: 10, padding: '11px 18px', fontSize: 13, fontWeight: 500, backdropFilter: 'blur(20px)', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 4px 30px rgba(0,0,0,.3)' }}>
                     <Ic n={ok ? 'check' : 'alert'} s={14} />{toast.msg}
+                </div>
+            );
+        }
+
+        /* ── POPUP DE LEAD NOVO ── flutua sobre qualquer página do dashboard
+           assim que um lead chega em tempo real (ver onNewLead/AppProvider). */
+        function NewLeadPopup() {
+            const { hotLeadQueue, dismissHotLead, setView, setLeadFocusId } = useApp();
+            if (!hotLeadQueue.length) return null;
+            const lead = hotLeadQueue[0];
+            const extra = hotLeadQueue.length - 1;
+            const digits = (lead.phone || '').replace(/\D/g, '');
+            const waLink = digits ? `https://wa.me/55${digits}` : null;
+            const igHandle = (lead.instagramHandle || (lead.notes || '').match(/Instagram:\s*(@[\w.]+)/)?.[1] || '').replace(/^@/, '');
+            const prColor = lead.priority === 'Alta' ? '#ff4060' : lead.priority === 'Baixa' ? '#8a8a8a' : '#ffb400';
+            const openLead = () => { setLeadFocusId(lead.id); setView('leads'); dismissHotLead(lead.id); };
+            return (
+                <div className="glass fade-in pulse" style={{ position: 'fixed', bottom: 22, left: 226, zIndex: 9998, width: 320, borderRadius: 14, padding: '16px 18px', boxShadow: '0 8px 40px rgba(0,0,0,.6)', border: '1px solid rgba(255,0,64,.4)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                            <span style={{ fontSize: 16 }}>🎯</span>
+                            <span style={{ fontSize: 12.5, fontWeight: 700, color: '#ff4060', letterSpacing: '.02em', textTransform: 'uppercase' }}>Novo Lead</span>
+                        </div>
+                        <button onClick={() => dismissHotLead(lead.id)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.4)', cursor: 'pointer', fontSize: 18, lineHeight: 1, padding: 0 }}>×</button>
+                    </div>
+                    <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 2 }}>{lead.name}</div>
+                    {lead.company && <div style={{ fontSize: 12, color: 'rgba(255,255,255,.5)', marginBottom: 10 }}>{lead.company}</div>}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+                        {lead.phone && <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,.75)', display: 'flex', gap: 6 }}><span style={{ color: 'rgba(255,255,255,.35)' }}>Tel:</span>{lead.phone}</div>}
+                        {igHandle && <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,.75)', display: 'flex', gap: 6 }}><span style={{ color: 'rgba(255,255,255,.35)' }}>Instagram:</span>@{igHandle}</div>}
+                        {lead.tags && <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,.75)', display: 'flex', gap: 6 }}><span style={{ color: 'rgba(255,255,255,.35)' }}>Faturamento:</span>{lead.tags}</div>}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 9.5, padding: '2px 8px', borderRadius: 10, background: prColor + '22', color: prColor, border: '1px solid ' + prColor + '55', fontWeight: 700 }}>{lead.priority}</span>
+                            {lead.origin && <span style={{ fontSize: 9.5, color: 'rgba(255,255,255,.35)' }}>{lead.origin}</span>}
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        {waLink && (
+                            <a href={waLink} target="_blank" rel="noopener noreferrer" onClick={() => dismissHotLead(lead.id)}
+                                style={{ flex: 1, textAlign: 'center', padding: '8px 0', borderRadius: 8, background: 'rgba(0,200,100,.14)', border: '1px solid rgba(0,200,100,.4)', color: '#00e676', fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>
+                                WhatsApp
+                            </a>
+                        )}
+                        <button onClick={openLead}
+                            style={{ flex: 1, padding: '8px 0', borderRadius: 8, background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.15)', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                            Ver Lead
+                        </button>
+                    </div>
+                    {extra > 0 && <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.3)', marginTop: 10, textAlign: 'center' }}>+{extra} lead{extra > 1 ? 's' : ''} novo{extra > 1 ? 's' : ''} na fila</div>}
                 </div>
             );
         }
@@ -1892,7 +1986,7 @@
 
         /* ── SIDEBAR ────────────────────────────────────────── */
         function Sidebar() {
-            const { view, setView, supaStatus, userRole, refreshData } = useApp();
+            const { view, setView, supaStatus, userRole, refreshData, newLeadIds } = useApp();
             const [backupOpen, setBackupOpen] = useState(false);
             const [refreshing, setRefreshing] = useState(false);
             const [diagOpen, setDiagOpen] = useState(false);
@@ -1952,11 +2046,16 @@
                             const blocked = isEmployee && EMPLOYEE_BLOCKED.includes(it.id);
                             return (
                                 <div key={it.id}
-                                    className={'nav-item' + (view === it.id ? ' active' : '')}
+                                    className={'nav-item' + (view === it.id ? ' active' : '') + (it.id === 'leads' && newLeadIds.size > 0 ? ' pulse' : '')}
                                     onClick={() => setView(it.id)}
-                                    style={blocked ? { opacity: 0.38, cursor: 'default' } : {}}>
+                                    style={blocked ? { opacity: 0.38, cursor: 'default' } : (it.id === 'leads' && newLeadIds.size > 0 ? { borderRadius: 8 } : {})}>
                                     <Ic n={it.icon} s={16} />
                                     <span style={{ flex: 1 }}>{it.label}</span>
+                                    {it.id === 'leads' && newLeadIds.size > 0 && (
+                                        <div style={{ background: '#ff0040', color: '#fff', borderRadius: '50%', minWidth: 16, height: 16, padding: '0 3px', fontSize: 9, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                            {newLeadIds.size > 9 ? '9+' : newLeadIds.size}
+                                        </div>
+                                    )}
                                     {blocked && (
                                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                                             <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
@@ -9338,11 +9437,17 @@
         };
 
         function LeadsPage() {
-            const { store, addLead, editLead, deleteLead, moveLead, syncLeads, notify } = useApp();
+            const { store, addLead, editLead, deleteLead, moveLead, syncLeads, notify, leadFocusId, setLeadFocusId } = useApp();
             const leads = store.leads || [];
             const interactions = store.leadInteractions || [];
             const [showAdd, setShowAdd] = useState(false);
             const [selected, setSelected] = useState(null);
+            useEffect(() => {
+                if (!leadFocusId) return;
+                const l = leads.find(x => x.id === leadFocusId);
+                if (l) setSelected(l);
+                setLeadFocusId(null);
+            }, [leadFocusId, leads]);
             const [delLead, setDelLead] = useState(null);
             const [dragging, setDragging] = useState(null);
             const [dragOver, setDragOver] = useState(null);
@@ -10323,6 +10428,7 @@
                     <Chat />
                     {quickAdd && <ClientModal onClose={() => setQuickAdd(false)} />}
                     <Toast />
+                    <NewLeadPopup />
                     <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 9990 }}>
                         {visible.map(c => (
                             <div key={c.k} style={{ position: 'absolute', left: `${c.x * 100}%`, top: `${c.y * 100}%`, transition: 'left 55ms linear, top 55ms linear', pointerEvents: 'none', transform: 'translate(-2px, -2px)' }}>
