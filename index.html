@@ -8246,7 +8246,7 @@
         }
 
         /* ── EMPLOYEE ACCESS CONTROL ────────────────────────── */
-        const EMPLOYEE_BLOCKED = ['dashboard', 'financial', 'traffic'];
+        const EMPLOYEE_BLOCKED = ['dashboard', 'financial', 'traffic', 'clients', 'design', 'performance'];
 
         function LockedView() {
             return (
@@ -9794,7 +9794,8 @@
         }
 
         function GoalsPage() {
-            const { store, addGoal, editGoal, deleteGoal } = useApp();
+            const { store, addGoal, editGoal, deleteGoal, userRole } = useApp();
+            const isEmployee = userRole !== 'admin';
             const goals = store.goals || [];
             const leads = store.leads || [];
             const clients = store.clients || [];
@@ -9929,6 +9930,7 @@
                     {tab === 'overview' && (
                         <div>
                             <div style={secHead}>Overview Executivo</div>
+                            <div style={isEmployee ? { filter: 'blur(8px)', userSelect: 'none', pointerEvents: 'none' } : undefined}>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12, marginBottom: 24 }}>
                                 <div style={cardStyle('#00c853')}>
                                     <div style={labelSt}>MRR Atual</div>
@@ -9970,6 +9972,7 @@
                                     <div style={valSt(parseFloat(sla) < 70 ? '#ff4060' : '#4caf50')}>{sla}%</div>
                                     <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.35)' }}>{overdue.length} tarefas atrasadas</div>
                                 </div>
+                            </div>
                             </div>
 
                             {/* Projeções */}
