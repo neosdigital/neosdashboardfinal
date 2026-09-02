@@ -4855,10 +4855,10 @@
                                 <div style={{ marginBottom: 14 }}>
                                     <L>Template do Prompt</L>
                                     <div style={{ fontSize: 11, color: 'rgba(255,255,255,.32)', marginBottom: 6, background: 'rgba(255,204,0,.05)', border: '1px solid rgba(255,204,0,.14)', borderRadius: 6, padding: '6px 10px', lineHeight: 1.7 }}>
-                                        Use <strong style={{ color: '#ffcc00' }}>Titulo:</strong> e <strong style={{ color: '#ffcc00' }}>Conteúdo:</strong> como marcadores dinâmicos no template.
+                                        Use <strong style={{ color: '#ffcc00' }}>Titulo:</strong>, <strong style={{ color: '#ffcc00' }}>Subtítulo:</strong> e <strong style={{ color: '#ffcc00' }}>Conteúdo:</strong> como marcadores dinâmicos no template.
                                     </div>
                                     <textarea className="input-field" rows={7} value={tmpl} onChange={e => setTmpl(e.target.value)}
-                                        placeholder={"Crie uma imagem para post de Instagram.\n\nTema: Titulo:\n\nConteúdo: Conteúdo:\n\nManter identidade visual da marca."}
+                                        placeholder={"Crie uma imagem para post de Instagram.\n\nTema: Titulo:\n\nSubtítulo: Subtítulo:\n\nConteúdo: Conteúdo:\n\nManter identidade visual da marca."}
                                         style={{ resize: 'vertical', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6 }} />
                                 </div>
                                 <div style={{ marginBottom: 14 }}>
@@ -4965,7 +4965,9 @@
             const pj = s => { try { return JSON.parse(s || '[]'); } catch { return []; } };
             const [selClientId, setSelClientId] = useState('');
             const [selTaskId, setSelTaskId] = useState('');
+            const [selEventId, setSelEventId] = useState('');
             const [headline, setHeadline] = useState('');
+            const [subheadline, setSubheadline] = useState('');
             const [conteudo, setConteudo] = useState('');
             const [personagem, setPersonagem] = useState(null);
             const [formato, setFormato] = useState('');
@@ -4984,19 +4986,25 @@
             const refImages = (store.clientImages || []).filter(i => i.clientId === selClientId && i.type !== 'pessoa');
             const pessoasImages = (store.clientImages || []).filter(i => i.clientId === selClientId && i.type === 'pessoa');
             const postTasks = selClientId ? (store.tasks || []).filter(t => t.clientId === selClientId && t.category === 'Post' && t.status !== 'Concluído') : [];
+            const clientEvents = selClientId ? (store.calEvents || []).filter(e => e.clientId === selClientId).sort((a, b) => (a.date || '').localeCompare(b.date || '')) : [];
 
-            const changeClient = id => { setSelClientId(id); setSelTaskId(''); setHeadline(''); setConteudo(''); setPersonagem(null); setFormato(''); setTom(''); setGenerated(null); };
+            const changeClient = id => { setSelClientId(id); setSelTaskId(''); setSelEventId(''); setHeadline(''); setSubheadline(''); setConteudo(''); setPersonagem(null); setFormato(''); setTom(''); setGenerated(null); };
             const pickTask = id => {
-                setSelTaskId(id);
+                setSelTaskId(id); setSelEventId('');
                 const t = postTasks.find(x => x.id === id);
                 if (t) { setHeadline(t.title || ''); setConteudo(t.desc || t.description || ''); }
+            };
+            const pickEvent = id => {
+                setSelEventId(id); setSelTaskId('');
+                const ev = clientEvents.find(x => x.id === id);
+                if (ev) { setHeadline(ev.title || ''); setConteudo(ev.desc || ''); }
             };
 
             const buildPrompt = () => {
                 const tmpl = client?.promptTemplate || '';
                 let base = tmpl
-                    ? tmpl.replace(/Titulo:/gi, headline).replace(/Conteúdo:/gi, conteudo)
-                    : `Crie uma imagem para post de Instagram.\n\nTema: ${headline || '(sem headline)'}\n\nConteúdo: ${conteudo || '(sem conteúdo)'}`;
+                    ? tmpl.replace(/Titulo:/gi, headline).replace(/Subtítulo:/gi, subheadline).replace(/Conteúdo:/gi, conteudo)
+                    : `Crie uma imagem para post de Instagram.\n\nTema: ${headline || '(sem headline)'}${subheadline ? `\n\nSubtítulo: ${subheadline}` : ''}\n\nConteúdo: ${conteudo || '(sem conteúdo)'}`;
                 const specs = [];
                 if (vsText) specs.push(`Estilo Visual: ${vsText}`);
                 if (clientFonts.length) specs.push(`Fontes: ${clientFonts.join(', ')}`);
@@ -5074,10 +5082,27 @@
                                 </div>
                             )}
 
+                            {/* Evento do Calendário (opcional) */}
+                            {selClientId && clientEvents.length > 0 && (
+                                <div>
+                                    <L>Evento do Calendário (opcional)</L>
+                                    <select className="input-field" value={selEventId} onChange={e => pickEvent(e.target.value)}>
+                                        <option value="">— Preencher manualmente —</option>
+                                        {clientEvents.map(ev => <option key={ev.id} value={ev.id}>{ev.title}{ev.date ? ` — ${fmtD(ev.date)}` : ''}</option>)}
+                                    </select>
+                                </div>
+                            )}
+
                             {/* Headline */}
                             <div>
                                 <L>Headline</L>
                                 <input className="input-field" value={headline} onChange={e => setHeadline(e.target.value)} placeholder="Ex: Novos empreendimentos em Itajaí" />
+                            </div>
+
+                            {/* Subheadline */}
+                            <div>
+                                <L>Subheadline <span style={{ fontWeight: 400, color: 'rgba(255,255,255,.3)' }}>(opcional)</span></L>
+                                <input className="input-field" value={subheadline} onChange={e => setSubheadline(e.target.value)} placeholder="Ex: A partir de R$ 350 mil" />
                             </div>
 
                             {/* Conteúdo */}
