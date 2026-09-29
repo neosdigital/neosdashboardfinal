@@ -4,6 +4,7 @@ const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
 const { metaLeadsRouter } = require('./meta-leads');
+const { PRIVACY_HTML } = require('./privacy');
 
 const app = express();
 const server = http.createServer(app);
@@ -173,6 +174,9 @@ app.delete('/api/:table/:id', async (req, res) => {
 
 /* Health check */
 app.get('/health', (_, res) => res.json({ ok: true }));
+
+/* Política de privacidade pública (exigida pela Meta para o app ficar Ativo) */
+app.get('/privacidade', (_, res) => res.type('html').send(PRIVACY_HTML));
 
 /* Meta Lead Ads → leads do dashboard + aviso no WhatsApp (ver meta-leads.js) */
 app.use('/webhooks/meta', metaLeadsRouter(pool, broadcast));
