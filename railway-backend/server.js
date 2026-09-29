@@ -3,13 +3,18 @@ const { Pool } = require('pg');
 const http = require('http');
 const WebSocket = require('ws');
 const cors = require('cors');
+const { metaLeadsRouter } = require('./meta-leads');
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '50mb' }));
+/* Webhook da Meta precisa do corpo bruto para validar a assinatura */
+app.use(express.json({
+    limit: '50mb',
+    verify: (req, _, buf) => { if (req.originalUrl.startsWith('/webhooks/')) req.rawBody = buf; }
+}));
 
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -168,6 +173,9 @@ app.delete('/api/:table/:id', async (req, res) => {
 
 /* Health check */
 app.get('/health', (_, res) => res.json({ ok: true }));
+
+/* Meta Lead Ads → leads do dashboard + aviso no WhatsApp (ver meta-leads.js) */
+app.use('/webhooks/meta', metaLeadsRouter(pool, broadcast));
 
 /* ─────────────────────────────────────────────────
    WEBSOCKET — Realtime + Chat + Cursores + Presence
