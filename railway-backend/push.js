@@ -88,6 +88,30 @@ function pushRouter(pool) {
         }
     });
 
+    /* Botão "Testar" da aba Configurações: envia só para o aparelho que pediu */
+    router.post('/test', async (req, res) => {
+        const endpoint = req.body?.endpoint;
+        if (!endpoint) return res.status(400).json({ error: 'missing_endpoint' });
+        try {
+            await ready;
+            const { rows } = await pool.query(`SELECT sub FROM "push_subscriptions" WHERE endpoint = $1`, [endpoint]);
+            if (!rows[0]) return res.status(404).json({ error: 'not_subscribed' });
+            await webpush.sendNotification(rows[0].sub, JSON.stringify({
+                title: '🔔 Notificações ativas',
+                body: 'É assim que você será avisado quando chegar um lead novo.',
+                tag: 'neos_test',
+                view: 'leads'
+            }), { TTL: 60, urgency: 'high' });
+            res.json({ ok: true });
+        } catch (e) {
+            if (e.statusCode === 404 || e.statusCode === 410) {
+                await pool.query(`DELETE FROM "push_subscriptions" WHERE endpoint = $1`, [endpoint]).catch(() => {});
+                return res.status(410).json({ error: 'subscription_expired' });
+            }
+            res.status(500).json({ error: e.message });
+        }
+    });
+
     router.post('/unsubscribe', async (req, res) => {
         const endpoint = req.body?.endpoint;
         if (!endpoint) return res.status(400).json({ error: 'missing_endpoint' });

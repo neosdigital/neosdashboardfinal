@@ -13,14 +13,19 @@ self.addEventListener('push', e => {
     try { data = e.data ? e.data.json() : {}; } catch { data = { body: e.data && e.data.text() }; }
     e.waitUntil((async () => {
         /* Com o app aberto e em foco o popup + som do próprio dashboard já avisam */
+        const isTest = data.tag === 'neos_test';
         const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-        if (!IS_APPLE && wins.some(w => w.focused && w.visibilityState === 'visible')) return;
+        if (!IS_APPLE && !isTest && wins.some(w => w.focused && w.visibilityState === 'visible')) return;
         await self.registration.showNotification(data.title || 'Neos Dashboard', {
             body: data.body || '',
             icon: '/icons/icon-192.png',
             badge: '/icons/badge-96.png',
             tag: data.tag || undefined,
             renotify: !!data.tag,
+            /* toca o som/vibração do sistema e, no computador, fica na tela até ser visto */
+            silent: false,
+            vibrate: [200, 100, 200, 100, 300],
+            requireInteraction: !isTest,
             data: { view: data.view || '' }
         });
     })());

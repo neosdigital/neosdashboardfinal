@@ -912,7 +912,19 @@
            áudio externo. Três notas curtas em arpejo ascendente (sino),
            timbre e melodia diferentes do "doo-doo" do WhatsApp. */
         let _neosAudioCtx = null;
-        function playNewLeadSound() {
+        /* Preferência por aparelho (aba Configurações) */
+        const soundEnabled = () => { try { return localStorage.getItem('neos_notif_sound') !== 'off'; } catch { return true; } };
+        /* Navegadores só liberam áudio depois de uma interação: destrava no 1º toque/clique/tecla */
+        const _unlockAudio = () => {
+            try {
+                if (!_neosAudioCtx) _neosAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (_neosAudioCtx.state === 'suspended') _neosAudioCtx.resume();
+            } catch {}
+            ['pointerdown', 'keydown', 'touchend'].forEach(t => window.removeEventListener(t, _unlockAudio, true));
+        };
+        ['pointerdown', 'keydown', 'touchend'].forEach(t => window.addEventListener(t, _unlockAudio, true));
+        function playNewLeadSound(force) {
+            if (!force && !soundEnabled()) return;
             try {
                 if (!_neosAudioCtx) _neosAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 const ctx = _neosAudioCtx;
@@ -965,6 +977,23 @@
                 body: JSON.stringify({ subscription: sub.toJSON(), username: me?.username || '', name: me?.name || '' })
             });
             return 'granted';
+        }
+        async function currentPushSubscription() {
+            if (!_pushSupported()) return null;
+            const reg = await navigator.serviceWorker.getRegistration();
+            return reg ? reg.pushManager.getSubscription() : null;
+        }
+        async function disablePushSubscription() {
+            const sub = await currentPushSubscription();
+            if (!sub) return;
+            await fetch(`${NEOS_API_URL}/push/unsubscribe`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: sub.endpoint }) }).catch(() => {});
+            await sub.unsubscribe();
+        }
+        async function testPushSubscription() {
+            const sub = await currentPushSubscription();
+            if (!sub) throw new Error('Este aparelho não está inscrito.');
+            const r = await fetch(`${NEOS_API_URL}/push/test`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ endpoint: sub.endpoint }) });
+            if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || ('HTTP ' + r.status));
         }
 
         /* ── DATABASE (IndexedDB via Dexie) ─────────────────── */
@@ -1165,7 +1194,7 @@
 
             /* Toque numa notificação push abre a aba correspondente (ver sw.js) */
             useEffect(() => {
-                const VIEWS = ['dashboard', 'leads', 'goals', 'clients', 'kanban', 'financial', 'traffic', 'design', 'performance', 'calendar'];
+                const VIEWS = ['dashboard', 'leads', 'goals', 'clients', 'kanban', 'financial', 'traffic', 'design', 'performance', 'calendar', 'settings'];
                 const q = new URLSearchParams(location.search).get('view');
                 if (q) { if (VIEWS.includes(q)) setView(q); history.replaceState(null, '', location.pathname); }
                 const onMsg = e => { if (e.data?.type === 'neos-open-view' && VIEWS.includes(e.data.view)) setView(e.data.view); };
@@ -1823,6 +1852,7 @@
 
         /* ── ICONS ──────────────────────────────────────────── */
         const icPaths = {
+            settings: <><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" /></>,
             dashboard: <><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /></>,
             clients: <><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></>,
             kanban: <><rect x="3" y="3" width="5" height="18" rx="1" /><rect x="10" y="3" width="5" height="12" rx="1" /><rect x="17" y="3" width="5" height="15" rx="1" /></>,
@@ -2371,7 +2401,7 @@
                 if (total > 0) setTimeout(() => window.location.reload(), 2000);
             };
             const isEmployee = userRole !== 'admin';
-            const items = [{ id: 'dashboard', label: 'Dashboard', icon: 'dashboard' }, { id: 'leads', label: 'Leads', icon: 'leads' }, { id: 'goals', label: 'Metas & KPIs', icon: 'goals' }, { id: 'clients', label: 'Clientes', icon: 'clients' }, { id: 'kanban', label: 'Kanban', icon: 'kanban' }, { id: 'financial', label: 'Financeiro', icon: 'finance' }, { id: 'traffic', label: 'Tráfego', icon: 'traffic' }, { id: 'design', label: 'Design', icon: 'design' }, { id: 'performance', label: 'Performance', icon: 'perf' }, { id: 'calendar', label: 'Calendário', icon: 'cal' }];
+            const items = [{ id: 'dashboard', label: 'Dashboard', icon: 'dashboard' }, { id: 'leads', label: 'Leads', icon: 'leads' }, { id: 'goals', label: 'Metas & KPIs', icon: 'goals' }, { id: 'clients', label: 'Clientes', icon: 'clients' }, { id: 'kanban', label: 'Kanban', icon: 'kanban' }, { id: 'financial', label: 'Financeiro', icon: 'finance' }, { id: 'traffic', label: 'Tráfego', icon: 'traffic' }, { id: 'design', label: 'Design', icon: 'design' }, { id: 'performance', label: 'Performance', icon: 'perf' }, { id: 'calendar', label: 'Calendário', icon: 'cal' }, { id: 'settings', label: 'Configurações', icon: 'settings' }];
             return (
                 <div className={'sidebar' + (mobileOpen ? ' open' : '')}>
                     <div style={{ padding: '2px 6px 26px' }}>
@@ -8683,6 +8713,107 @@
         /* ── EMPLOYEE ACCESS CONTROL ────────────────────────── */
         const EMPLOYEE_BLOCKED = ['dashboard', 'financial', 'traffic', 'clients', 'design', 'performance'];
 
+        /* ── CONFIGURAÇÕES ─────────────────────────────────── */
+        function Switch({ on, onChange, disabled }) {
+            return (
+                <button role="switch" aria-checked={on} disabled={disabled} onClick={() => onChange(!on)}
+                    style={{ width: 46, height: 26, borderRadius: 13, border: '1px solid ' + (on ? 'rgba(255,0,64,.6)' : 'rgba(255,255,255,.15)'), background: on ? 'linear-gradient(135deg,#ff0040,#cc0030)' : 'rgba(255,255,255,.06)', position: 'relative', cursor: disabled ? 'default' : 'pointer', flexShrink: 0, transition: 'all .2s', opacity: disabled ? .5 : 1, padding: 0 }}>
+                    <span style={{ position: 'absolute', top: 2, left: on ? 22 : 2, width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left .2s', boxShadow: '0 1px 4px rgba(0,0,0,.4)' }} />
+                </button>
+            );
+        }
+
+        function SettingsPage() {
+            const { notify } = useApp();
+            const [sound, setSound] = useState(soundEnabled);
+            /* status do push neste aparelho: loading | unsupported | ios-install | denied | off | on */
+            const [push, setPush] = useState('loading');
+            const [busy, setBusy] = useState(false);
+            const refresh = async () => {
+                if (!_pushSupported()) return setPush(_isIOS && !_isStandalone() ? 'ios-install' : 'unsupported');
+                if (Notification.permission === 'denied') return setPush('denied');
+                const sub = Notification.permission === 'granted' ? await currentPushSubscription().catch(() => null) : null;
+                setPush(sub ? 'on' : 'off');
+            };
+            useEffect(() => { refresh(); }, []);
+            const togglePush = async on => {
+                setBusy(true);
+                try {
+                    if (on) {
+                        const r = await syncPushSubscription(true);
+                        if (r === 'granted') { notify('Notificações ativadas neste aparelho ✓'); await testPushSubscription().catch(() => {}); }
+                        else if (r === 'denied') notify('Permissão negada pelo navegador', 'warn');
+                    } else {
+                        await disablePushSubscription();
+                        notify('Notificações desativadas neste aparelho', 'warn');
+                    }
+                } catch (e) { notify('Não foi possível: ' + e.message, 'warn'); }
+                await refresh();
+                setBusy(false);
+            };
+            const test = async () => {
+                setBusy(true);
+                try { await testPushSubscription(); notify('Notificação de teste enviada ✓'); }
+                catch (e) { notify('Falha no teste: ' + e.message, 'warn'); await refresh(); }
+                setBusy(false);
+            };
+            const toggleSound = on => {
+                try { localStorage.setItem('neos_notif_sound', on ? 'on' : 'off'); } catch {}
+                setSound(on);
+                if (on) playNewLeadSound(true);
+            };
+            const card = { padding: '20px 22px', marginBottom: 16 };
+            const row = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 };
+            const hint = { fontSize: 12, color: 'rgba(255,255,255,.4)', lineHeight: 1.6, marginTop: 4 };
+            const pushLabel = {
+                loading: 'Verificando...',
+                on: 'Ativadas neste aparelho ✓',
+                off: 'Desativadas neste aparelho',
+                denied: 'Bloqueadas pelo navegador',
+                unsupported: 'Este navegador não suporta notificações',
+                'ios-install': 'No iPhone/iPad é preciso instalar o app'
+            }[push];
+            return (
+                <div className="fade-in" style={{ maxWidth: 720 }}>
+                    <div style={{ marginBottom: 22 }}>
+                        <h1 style={{ fontSize: 21, fontWeight: 700 }}>Configurações</h1>
+                        <p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>Preferências deste aparelho</p>
+                    </div>
+
+                    <div className="glass" style={card}>
+                        <div style={row}>
+                            <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 14, fontWeight: 700 }}>🔔 Notificações de novos leads</div>
+                                <div style={{ fontSize: 12, fontWeight: 600, marginTop: 4, color: push === 'on' ? '#00c864' : push === 'denied' ? '#ff4060' : 'rgba(255,200,0,.85)' }}>{pushLabel}</div>
+                            </div>
+                            <Switch on={push === 'on'} disabled={busy || !['on', 'off'].includes(push)} onChange={togglePush} />
+                        </div>
+                        <div style={hint}>
+                            {push === 'ios-install' && <>Abra no Safari, toque em <b>Compartilhar → Adicionar à Tela de Início</b> e abra o Neos pelo ícone. Depois volte aqui e ative (requer iOS 16.4 ou mais novo).</>}
+                            {push === 'denied' && <>O navegador bloqueou as notificações deste site. Libere em <b>Configurações do site → Notificações → Permitir</b> e recarregue a página.</>}
+                            {(push === 'on' || push === 'off') && <>Aviso do sistema com som e vibração quando chega um lead — mesmo com o dashboard fechado. Ative em cada aparelho (celular e computador) em que você quer receber.</>}
+                            {push === 'unsupported' && <>Use o Chrome, Edge ou Safari atualizados para receber notificações.</>}
+                        </div>
+                        {push === 'on' && (
+                            <button className="btn-secondary" onClick={test} disabled={busy} style={{ marginTop: 14, opacity: busy ? .6 : 1 }}>Enviar notificação de teste</button>
+                        )}
+                    </div>
+
+                    <div className="glass" style={card}>
+                        <div style={row}>
+                            <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 14, fontWeight: 700 }}>🔊 Som de alerta</div>
+                                <div style={{ fontSize: 12, fontWeight: 600, marginTop: 4, color: sound ? '#00c864' : 'rgba(255,255,255,.45)' }}>{sound ? 'Ligado' : 'Desligado'}</div>
+                            </div>
+                            <Switch on={sound} onChange={toggleSound} />
+                        </div>
+                        <div style={hint}>Toca quando chega um lead enquanto o dashboard está aberto (mesmo em outra aba ou minimizado). Com o dashboard fechado, o aviso usa o som de notificação do sistema.</div>
+                        <button className="btn-secondary" onClick={() => playNewLeadSound(true)} style={{ marginTop: 14 }}>Testar som</button>
+                    </div>
+                </div>
+            );
+        }
+
         function LockedView() {
             return (
                 <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '65vh', gap: 22 }}>
@@ -10936,7 +11067,7 @@
             const { view, userRole, onlineUsers, chatOpen, setChatOpen } = useApp();
             const [quickAdd, setQuickAdd] = useState(false);
             const isEmployee = userRole !== 'admin';
-            const ViewMap = { dashboard: Dashboard, leads: LeadsPage, goals: GoalsPage, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarModule };
+            const ViewMap = { dashboard: Dashboard, leads: LeadsPage, goals: GoalsPage, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarModule, settings: SettingsPage };
             const V = (isEmployee && EMPLOYEE_BLOCKED.includes(view)) ? LockedView : (ViewMap[view] || Dashboard);
             const visible = onlineUsers.filter(c => c.view === view);
             /* Mobile: sidebar vira drawer aberto pela barra superior (ambos ocultos no desktop via CSS) */
