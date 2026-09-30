@@ -15,6 +15,12 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="Neos">
     <script>
+    /* Login lembrado: restaura a sessão salva (até clicar em "Sair") antes do app ler 'neos_auth' */
+    try {
+        if (!sessionStorage.getItem('neos_auth') && localStorage.getItem('neos_auth')) {
+            sessionStorage.setItem('neos_auth', localStorage.getItem('neos_auth'));
+        }
+    } catch (e) {}
     if ('serviceWorker' in navigator && location.protocol === 'https:') {
         window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js').catch(function () {}); });
     }
@@ -8636,7 +8642,9 @@
                     if (error || !data) {
                         setError('Usuário ou senha inválidos.');
                     } else {
-                        sessionStorage.setItem('neos_auth', JSON.stringify({ id: data.id, name: data.name, username: data.username, role: data.role }));
+                        const auth = JSON.stringify({ id: data.id, name: data.name, username: data.username, role: data.role });
+                        sessionStorage.setItem('neos_auth', auth);
+                        try { localStorage.setItem('neos_auth', auth); } catch {}
                         onLogin(data);
                     }
                 } catch (err) {
@@ -8674,14 +8682,14 @@
                             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                                 <div>
                                     <label style={{ display: 'block', fontSize: 10.5, color: 'rgba(255,255,255,.45)', marginBottom: 7, textTransform: 'uppercase', letterSpacing: '.6px', fontWeight: 700 }}>Usuário</label>
-                                    <input className="input-field" type="text" autoCapitalize="none" autoCorrect="off" autoComplete="username" placeholder="Digite seu usuário"
+                                    <input className="input-field" type="text" autoCapitalize="none" autoCorrect="off" placeholder="Digite seu usuário"
                                         value={username} onChange={e => setUsername(e.target.value)}
                                         autoComplete="username" autoFocus disabled={loading} />
                                 </div>
                                 <div>
                                     <label style={{ display: 'block', fontSize: 10.5, color: 'rgba(255,255,255,.45)', marginBottom: 7, textTransform: 'uppercase', letterSpacing: '.6px', fontWeight: 700 }}>Senha</label>
                                     <div style={{ position: 'relative' }}>
-                                        <input className="input-field" type={showPwd ? 'text' : 'password'} autoComplete="current-password" placeholder="Digite sua senha"
+                                        <input className="input-field" type={showPwd ? 'text' : 'password'} placeholder="Digite sua senha"
                                             value={password} onChange={e => setPassword(e.target.value)}
                                             autoComplete="current-password" disabled={loading} style={{ paddingRight: 42 }} />
                                         <button type="button" onClick={() => setShowPwd(v => !v)}
@@ -8893,7 +8901,7 @@
                                 </div>
                             ))}
                             <div style={{ borderTop: '1px solid rgba(255,255,255,.07)', marginTop: 8, paddingTop: 8 }}>
-                                <button onClick={() => { sessionStorage.removeItem('neos_auth'); window.location.reload(); }}
+                                <button onClick={() => { sessionStorage.removeItem('neos_auth'); try { localStorage.removeItem('neos_auth'); } catch {} window.location.reload(); }}
                                     style={{ width: '100%', background: 'rgba(255,0,64,.07)', border: '1px solid rgba(255,0,64,.18)', color: '#ff6070', borderRadius: 7, padding: '6px 10px', cursor: 'pointer', fontSize: 12, textAlign: 'left', display: 'flex', alignItems: 'center', gap: 8 }}>
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>
                                     Sair
