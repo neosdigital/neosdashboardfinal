@@ -923,8 +923,12 @@
             ['pointerdown', 'keydown', 'touchend'].forEach(t => window.removeEventListener(t, _unlockAudio, true));
         };
         ['pointerdown', 'keydown', 'touchend'].forEach(t => window.addEventListener(t, _unlockAudio, true));
+        let _lastLeadSoundAt = 0;
         function playNewLeadSound(force) {
             if (!force && !soundEnabled()) return;
+            /* o mesmo lead chega pelo tempo real e pelo push: toca uma vez só */
+            if (!force && Date.now() - _lastLeadSoundAt < 4000) return;
+            _lastLeadSoundAt = Date.now();
             try {
                 if (!_neosAudioCtx) _neosAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 const ctx = _neosAudioCtx;
@@ -951,6 +955,8 @@
            Inscreve o aparelho no backend (railway-backend/push.js), que avisa
            quando chega lead novo mesmo com o app fechado. No iPhone/iPad só
            funciona com o app adicionado à Tela de Início (iOS 16.4+). */
+        /* Push com o dashboard aberto: a notificação do sistema vem silenciosa e o som é este (ver sw.js) */
+        navigator.serviceWorker?.addEventListener('message', e => { if (e.data?.type === 'neos-play-sound') playNewLeadSound(); });
         const _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
         const _isStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
         const _pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && location.protocol === 'https:';
