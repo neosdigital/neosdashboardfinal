@@ -3,8 +3,22 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Neos Dashboard</title>
+    <!-- PWA: instalação na tela inicial (Android/iOS) -->
+    <link rel="manifest" href="/manifest.webmanifest">
+    <meta name="theme-color" content="#07070f">
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Neos">
+    <script>
+    if ('serviceWorker' in navigator && location.protocol === 'https:') {
+        window.addEventListener('load', function () { navigator.serviceWorker.register('/sw.js').catch(function () {}); });
+    }
+    </script>
     <!-- Watchdog de tela preta: roda antes de qualquer CDN, em JS puro (sem depender de React/Babel) -->
     <script>
     (function () {
@@ -233,6 +247,30 @@
     };
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <!-- Drag-and-drop por toque (Kanban, Leads, Calendário): traduz toque em eventos HTML5 de drag -->
+    <script src="https://unpkg.com/mobile-drag-drop@3.0.0-rc.0/index.min.js"></script>
+    <script src="https://unpkg.com/mobile-drag-drop@3.0.0-rc.0/scroll-behaviour.min.js"></script>
+    <script>
+    (function () {
+        var touch = window.matchMedia && matchMedia('(pointer: coarse)').matches;
+        if (!touch || !window.MobileDragDrop) return;
+        /* segurar 300ms para arrastar — toque curto e rolagem continuam normais */
+        var applied = MobileDragDrop.polyfill({
+            holdToDrag: 300,
+            /* a versão 3 usa composedPath(), que já vem vazio quando o toque é segurado */
+            tryFindDraggableTarget: function (e) {
+                var el = e.target;
+                do { if (el.getAttribute && el.getAttribute('draggable') === 'true') return el; }
+                while ((el = el.parentNode) && el !== document.body);
+            },
+            dragImageTranslateOverride: MobileDragDrop.scrollBehaviourDragImageTranslateOverride
+        });
+        if (applied) {
+            window.addEventListener('dragenter', function (e) { e.preventDefault(); });
+            window.addEventListener('touchmove', function () {}, { passive: false });
+        }
+    })();
+    </script>
     <style>
         * {
             box-sizing: border-box;
@@ -597,6 +635,231 @@
         .tbl tr:hover td {
             background: rgba(255, 255, 255, .02)
         }
+
+        /* ── MOBILE / TABLET ─────────────────────────────────────
+           Só adaptação responsiva: nada aqui se aplica a telas ≥ 1024px.
+           Os componentes usam estilo inline, por isso os !important. */
+        .neos-topbar,
+        .neos-nav-backdrop {
+            display: none
+        }
+
+        /* imagem arrastada pelo polyfill de drag por toque */
+        .dnd-poly-drag-image {
+            opacity: .5 !important
+        }
+
+        .dnd-poly-drag-image.dnd-poly-snapback {
+            transition-property: transform, -webkit-transform !important;
+            transition-duration: 250ms !important;
+            transition-timing-function: ease-out !important
+        }
+
+        @media (max-width: 1023px) {
+            html {
+                -webkit-text-size-adjust: 100%;
+                text-size-adjust: 100%
+            }
+
+            body {
+                -webkit-tap-highlight-color: rgba(255, 0, 64, .12)
+            }
+
+            .neos-app {
+                min-height: 100dvh !important
+            }
+
+            /* Barra superior com o botão do menu */
+            .neos-topbar {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                position: fixed;
+                top: 0;
+                left: 0;
+                right: 0;
+                z-index: 90;
+                height: calc(52px + env(safe-area-inset-top));
+                padding: env(safe-area-inset-top) calc(12px + env(safe-area-inset-right)) 0 calc(8px + env(safe-area-inset-left));
+                background: rgba(4, 4, 18, .92);
+                backdrop-filter: blur(20px);
+                -webkit-backdrop-filter: blur(20px);
+                border-bottom: 1px solid rgba(255, 0, 64, .08)
+            }
+
+            .neos-topbar-btn {
+                width: 44px;
+                height: 44px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: none;
+                border: none;
+                color: rgba(255, 255, 255, .8);
+                cursor: pointer;
+                border-radius: 8px
+            }
+
+            /* Sidebar vira drawer */
+            .sidebar {
+                width: min(280px, 84vw);
+                height: 100vh;
+                height: 100dvh;
+                transform: translateX(-100%);
+                transition: transform .25s ease;
+                z-index: 1001;
+                overflow-y: auto;
+                padding-top: calc(18px + env(safe-area-inset-top));
+                padding-bottom: calc(10px + env(safe-area-inset-bottom));
+                padding-left: calc(10px + env(safe-area-inset-left))
+            }
+
+            .sidebar.open {
+                transform: none;
+                box-shadow: 0 0 60px rgba(0, 0, 0, .6)
+            }
+
+            .sidebar .nav-item {
+                min-height: 44px
+            }
+
+            /* no drawer rola a sidebar inteira, não só a lista de itens */
+            .sidebar > div:nth-child(2) {
+                flex: none !important;
+                overflow: visible !important
+            }
+
+            .neos-nav-backdrop {
+                display: block;
+                position: fixed;
+                inset: 0;
+                z-index: 1000;
+                background: rgba(0, 0, 0, .6)
+            }
+
+            .neos-main {
+                margin-left: 0 !important;
+                min-width: 0;
+                min-height: 100dvh !important;
+                padding: calc(52px + env(safe-area-inset-top) + 18px) calc(18px + env(safe-area-inset-right)) calc(96px + env(safe-area-inset-bottom)) calc(18px + env(safe-area-inset-left)) !important
+            }
+
+            /* Modais cabem na tela (inclusive com teclado aberto) */
+            .modal-overlay {
+                padding: calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom)) !important
+            }
+
+            .modal-box {
+                max-width: calc(100vw - 24px) !important;
+                max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+                -webkit-overflow-scrolling: touch;
+                overscroll-behavior: contain
+            }
+
+            /* Tabelas largas rolam na horizontal em vez de estourar a página */
+            .tbl {
+                display: block;
+                max-width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch
+            }
+
+            /* Kanban: colunas roláveis lado a lado */
+            .kanban-col {
+                min-height: 300px
+            }
+
+            .task-card {
+                -webkit-user-select: none;
+                user-select: none;
+                -webkit-touch-callout: none
+            }
+
+            /* Botões/painéis flutuantes acima da barra inferior do iPhone */
+            .neos-float {
+                translate: 0 calc(-1 * env(safe-area-inset-bottom))
+            }
+
+            .neos-float-panel {
+                max-width: calc(100vw - 24px - env(safe-area-inset-left) - env(safe-area-inset-right));
+                max-height: calc(100dvh - 190px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+                right: calc(12px + env(safe-area-inset-right)) !important
+            }
+
+            /* Popup de lead novo: no desktop fica ao lado da sidebar */
+            .neos-lead-popup {
+                left: calc(12px + env(safe-area-inset-left)) !important;
+                right: calc(76px + env(safe-area-inset-right));
+                width: auto !important;
+                max-width: 360px;
+                bottom: calc(22px + env(safe-area-inset-bottom)) !important;
+                max-height: calc(100dvh - 90px);
+                overflow-y: auto
+            }
+
+            /* 100vh no Safari iOS inclui a barra do navegador e corta o rodapé */
+            .neos-full-h {
+                height: 100dvh !important;
+                padding-top: calc(22px + env(safe-area-inset-top)) !important;
+                padding-bottom: calc(22px + env(safe-area-inset-bottom)) !important
+            }
+
+            .neos-page-h {
+                height: calc(100dvh - 90px - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important
+            }
+
+            .neos-toast {
+                top: calc(62px + env(safe-area-inset-top)) !important;
+                right: calc(12px + env(safe-area-inset-right)) !important;
+                max-width: calc(100vw - 24px)
+            }
+        }
+
+        /* Tablet deitado (layout com sidebar): quadros largos rolam dentro da página */
+        @media (min-width: 1024px) and (pointer: coarse) {
+            .neos-main {
+                min-width: 0
+            }
+        }
+
+        /* Celular */
+        @media (max-width: 640px) {
+            .neos-main {
+                padding-left: calc(12px + env(safe-area-inset-left)) !important;
+                padding-right: calc(12px + env(safe-area-inset-right)) !important
+            }
+
+            /* iOS dá zoom em campos com fonte < 16px ao focar */
+            input,
+            select,
+            textarea,
+            .input-field {
+                font-size: 16px !important
+            }
+
+            .modal-box {
+                padding: 18px !important
+            }
+
+            /* Cabeçalhos/linhas "título ↔ ações" quebram linha quando não cabem */
+            .neos-main [style*="display: flex"][style*="justify-content: space-between"]:not(.modal-overlay *) {
+                flex-wrap: wrap;
+                row-gap: 10px
+            }
+
+            /* Grades de 2+ colunas das páginas empilham em uma coluna */
+            .neos-main [style*="grid-template-columns: 1fr 1fr;"]:not(.modal-overlay *),
+            .neos-main [style*="grid-template-columns: 2fr 1fr;"]:not(.modal-overlay *),
+            .neos-main [style*="grid-template-columns: 1fr 2fr;"]:not(.modal-overlay *),
+            .neos-main [style*="grid-template-columns: 3fr 2fr;"]:not(.modal-overlay *),
+            .neos-main [style*="grid-template-columns: 1fr 1fr 1fr;"]:not(.modal-overlay *),
+            .neos-main [style*="grid-template-columns: 1fr 1fr 1fr 1fr;"]:not(.modal-overlay *),
+            .neos-main [style*="grid-template-columns: repeat(2, 1fr);"]:not(.modal-overlay *),
+            .neos-main [style*="grid-template-columns: repeat(3, 1fr);"]:not(.modal-overlay *),
+            .neos-main [style*="grid-template-columns: repeat(4, 1fr);"]:not(.modal-overlay *) {
+                grid-template-columns: minmax(0, 1fr) !important
+            }
+        }
     </style>
 </head>
 
@@ -670,6 +933,38 @@
                     osc.stop(start + 0.36);
                 });
             } catch (e) { /* autoplay bloqueado ou navegador sem suporte — segue sem som */ }
+        }
+
+        /* ── WEB PUSH (notificação no celular) ─────────────────
+           Inscreve o aparelho no backend (railway-backend/push.js), que avisa
+           quando chega lead novo mesmo com o app fechado. No iPhone/iPad só
+           funciona com o app adicionado à Tela de Início (iOS 16.4+). */
+        const _isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        const _isStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+        const _pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && location.protocol === 'https:';
+        const _b64urlToBytes = b64 => {
+            const pad = '='.repeat((4 - b64.length % 4) % 4);
+            const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+            return Uint8Array.from(raw, c => c.charCodeAt(0));
+        };
+        async function syncPushSubscription(askPermission) {
+            if (!_pushSupported()) return 'unsupported';
+            if (askPermission && Notification.permission === 'default') await Notification.requestPermission();
+            if (Notification.permission !== 'granted') return Notification.permission;
+            const me = JSON.parse(sessionStorage.getItem('neos_auth') || 'null');
+            const reg = await navigator.serviceWorker.ready;
+            const { publicKey } = await fetch(`${NEOS_API_URL}/push/public-key`).then(r => r.json());
+            const key = _b64urlToBytes(publicKey);
+            let sub = await reg.pushManager.getSubscription();
+            /* chave do servidor mudou → inscrição antiga não serve mais */
+            const oldKey = sub?.options?.applicationServerKey && new Uint8Array(sub.options.applicationServerKey);
+            if (sub && oldKey && (oldKey.length !== key.length || oldKey.some((b, i) => b !== key[i]))) { await sub.unsubscribe(); sub = null; }
+            if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+            await fetch(`${NEOS_API_URL}/push/subscribe`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ subscription: sub.toJSON(), username: me?.username || '', name: me?.name || '' })
+            });
+            return 'granted';
         }
 
         /* ── DATABASE (IndexedDB via Dexie) ─────────────────── */
@@ -867,6 +1162,16 @@
             const chatChannelRef = useRef(null);
             const refreshDataRef = useRef(null);
             useEffect(() => { viewRef.current = view; }, [view]);
+
+            /* Toque numa notificação push abre a aba correspondente (ver sw.js) */
+            useEffect(() => {
+                const VIEWS = ['dashboard', 'leads', 'goals', 'clients', 'kanban', 'financial', 'traffic', 'design', 'performance', 'calendar'];
+                const q = new URLSearchParams(location.search).get('view');
+                if (q) { if (VIEWS.includes(q)) setView(q); history.replaceState(null, '', location.pathname); }
+                const onMsg = e => { if (e.data?.type === 'neos-open-view' && VIEWS.includes(e.data.view)) setView(e.data.view); };
+                navigator.serviceWorker?.addEventListener('message', onMsg);
+                return () => navigator.serviceWorker?.removeEventListener('message', onMsg);
+            }, []);
 
             useEffect(() => {
                 const checkConn = async (retries = 3) => {
@@ -1569,7 +1874,7 @@
             if (!toast) return null;
             const ok = toast.type !== 'warn';
             return (
-                <div className="fade-in" style={{ position: 'fixed', top: 20, right: 20, zIndex: 9999, background: ok ? 'rgba(0,200,100,.12)' : 'rgba(255,180,0,.12)', border: '1px solid ' + (ok ? '#00c864' : '#ffb400'), borderRadius: 10, padding: '11px 18px', fontSize: 13, fontWeight: 500, backdropFilter: 'blur(20px)', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 4px 30px rgba(0,0,0,.3)' }}>
+                <div className="fade-in neos-toast" style={{ position: 'fixed', top: 20, right: 20, zIndex: 9999, background: ok ? 'rgba(0,200,100,.12)' : 'rgba(255,180,0,.12)', border: '1px solid ' + (ok ? '#00c864' : '#ffb400'), borderRadius: 10, padding: '11px 18px', fontSize: 13, fontWeight: 500, backdropFilter: 'blur(20px)', display: 'flex', alignItems: 'center', gap: 8, boxShadow: '0 4px 30px rgba(0,0,0,.3)' }}>
                     <Ic n={ok ? 'check' : 'alert'} s={14} />{toast.msg}
                 </div>
             );
@@ -1588,7 +1893,7 @@
             const prColor = lead.priority === 'Alta' ? '#ff4060' : lead.priority === 'Baixa' ? '#8a8a8a' : '#ffb400';
             const openLead = () => { setLeadFocusId(lead.id); setView('leads'); dismissHotLead(lead.id); };
             return (
-                <div className="glass fade-in pulse" style={{ position: 'fixed', bottom: 22, left: 226, zIndex: 9998, width: 320, borderRadius: 14, padding: '16px 18px', boxShadow: '0 8px 40px rgba(0,0,0,.6)', border: '1px solid rgba(255,0,64,.4)' }}>
+                <div className="glass fade-in pulse neos-lead-popup" style={{ position: 'fixed', bottom: 22, left: 226, zIndex: 9998, width: 320, borderRadius: 14, padding: '16px 18px', boxShadow: '0 8px 40px rgba(0,0,0,.6)', border: '1px solid rgba(255,0,64,.4)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                             <span style={{ fontSize: 16 }}>🎯</span>
@@ -1733,7 +2038,7 @@
                                 <div><L>Nome do Cliente *</L><input className="input-field" value={f.name} onChange={e => s('name', e.target.value)} required placeholder="e.g. João Silva" /></div>
                                 <div><L>Empresa</L><input className="input-field" value={f.company} onChange={e => s('company', e.target.value)} placeholder="e.g. Silva Corp" /></div>
                                 <div><L>Email</L><input className="input-field" type="email" value={f.email} onChange={e => s('email', e.target.value)} /></div>
-                                <div><L>Telefone</L><input className="input-field" value={f.phone} onChange={e => s('phone', e.target.value)} /></div>
+                                <div><L>Telefone</L><input className="input-field" type="tel" value={f.phone} onChange={e => s('phone', e.target.value)} /></div>
                                 <div><L>Mensalidade (R$)</L><input className="input-field" type="number" value={f.plan} onChange={e => s('plan', e.target.value)} placeholder="3000" /></div>
                                 <div><L>Data de início</L><input className="input-field" type="date" value={f.startDate} onChange={e => s('startDate', e.target.value)} /></div>
                                 <div><L>Tipo de Serviço</L>
@@ -2022,7 +2327,7 @@
         }
 
         /* ── SIDEBAR ────────────────────────────────────────── */
-        function Sidebar() {
+        function Sidebar({ mobileOpen, onNavigate }) {
             const { view, setView, supaStatus, userRole, refreshData, newLeadIds } = useApp();
             const [backupOpen, setBackupOpen] = useState(false);
             const [refreshing, setRefreshing] = useState(false);
@@ -2068,7 +2373,7 @@
             const isEmployee = userRole !== 'admin';
             const items = [{ id: 'dashboard', label: 'Dashboard', icon: 'dashboard' }, { id: 'leads', label: 'Leads', icon: 'leads' }, { id: 'goals', label: 'Metas & KPIs', icon: 'goals' }, { id: 'clients', label: 'Clientes', icon: 'clients' }, { id: 'kanban', label: 'Kanban', icon: 'kanban' }, { id: 'financial', label: 'Financeiro', icon: 'finance' }, { id: 'traffic', label: 'Tráfego', icon: 'traffic' }, { id: 'design', label: 'Design', icon: 'design' }, { id: 'performance', label: 'Performance', icon: 'perf' }, { id: 'calendar', label: 'Calendário', icon: 'cal' }];
             return (
-                <div className="sidebar">
+                <div className={'sidebar' + (mobileOpen ? ' open' : '')}>
                     <div style={{ padding: '2px 6px 26px' }}>
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
                             <img src="images/LOGOTIPO 2 copiar 2.png" alt="Logo" style={{ width: 80, height: 80, objectFit: 'contain' }} />
@@ -2084,7 +2389,7 @@
                             return (
                                 <div key={it.id}
                                     className={'nav-item' + (view === it.id ? ' active' : '') + (it.id === 'leads' && newLeadIds.size > 0 ? ' pulse' : '')}
-                                    onClick={() => setView(it.id)}
+                                    onClick={() => { setView(it.id); onNavigate && onNavigate(); }}
                                     style={blocked ? { opacity: 0.38, cursor: 'default' } : (it.id === 'leads' && newLeadIds.size > 0 ? { borderRadius: 8 } : {})}>
                                     <Ic n={it.icon} s={16} />
                                     <span style={{ flex: 1 }}>{it.label}</span>
@@ -7144,7 +7449,7 @@
             };
 
             return (
-                <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 52px)' }}>
+                <div className="fade-in neos-page-h" style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 52px)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                             <Ic n="cal" s={20} />
@@ -8333,14 +8638,14 @@
                             <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                                 <div>
                                     <label style={{ display: 'block', fontSize: 10.5, color: 'rgba(255,255,255,.45)', marginBottom: 7, textTransform: 'uppercase', letterSpacing: '.6px', fontWeight: 700 }}>Usuário</label>
-                                    <input className="input-field" type="text" placeholder="Digite seu usuário"
+                                    <input className="input-field" type="text" autoCapitalize="none" autoCorrect="off" autoComplete="username" placeholder="Digite seu usuário"
                                         value={username} onChange={e => setUsername(e.target.value)}
                                         autoComplete="username" autoFocus disabled={loading} />
                                 </div>
                                 <div>
                                     <label style={{ display: 'block', fontSize: 10.5, color: 'rgba(255,255,255,.45)', marginBottom: 7, textTransform: 'uppercase', letterSpacing: '.6px', fontWeight: 700 }}>Senha</label>
                                     <div style={{ position: 'relative' }}>
-                                        <input className="input-field" type={showPwd ? 'text' : 'password'} placeholder="Digite sua senha"
+                                        <input className="input-field" type={showPwd ? 'text' : 'password'} autoComplete="current-password" placeholder="Digite sua senha"
                                             value={password} onChange={e => setPassword(e.target.value)}
                                             autoComplete="current-password" disabled={loading} style={{ paddingRight: 42 }} />
                                         <button type="button" onClick={() => setShowPwd(v => !v)}
@@ -8475,7 +8780,7 @@
             if (!chatOpen) return null;
             const send = () => { if (!text.trim()) return; sendChatMsg(text.trim()); setText(''); };
             return (
-                <div className="glass fade-in" style={{ position: 'fixed', bottom: isEmployee ? 80 : 144, right: 22, zIndex: 198, width: 310, height: 420, display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,.55)', borderColor: 'rgba(160,96,255,.3)' }}>
+                <div className="glass fade-in neos-float neos-float-panel" style={{ position: 'fixed', bottom: isEmployee ? 80 : 144, right: 22, zIndex: 198, width: 310, height: 420, display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,.55)', borderColor: 'rgba(160,96,255,.3)' }}>
                     <div style={{ padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,.07)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
                         <div>
                             <div style={{ fontSize: 13, fontWeight: 700 }}>Chat Interno</div>
@@ -8498,7 +8803,7 @@
                         <div ref={endRef} />
                     </div>
                     <div style={{ padding: '10px 14px', borderTop: '1px solid rgba(255,255,255,.07)', display: 'flex', gap: 8, flexShrink: 0 }}>
-                        <input className="input-field" placeholder="Mensagem… (Enter para enviar)" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()} style={{ fontSize: 12 }} />
+                        <input className="input-field" enterKeyHint="send" placeholder="Mensagem… (Enter para enviar)" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()} style={{ fontSize: 12 }} />
                         <button className="btn-primary" onClick={send} disabled={!text.trim()} style={{ padding: '0 12px', flexShrink: 0 }}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></svg>
                         </button>
@@ -8586,8 +8891,8 @@
                         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
                             <FRow label="Nome *"><input className="input-field" style={{ fontSize:13 }} value={f.name} onChange={e=>set('name',e.target.value)} placeholder="Nome do lead" /></FRow>
                             <FRow label="Empresa"><input className="input-field" style={{ fontSize:13 }} value={f.company} onChange={e=>set('company',e.target.value)} placeholder="Empresa" /></FRow>
-                            <FRow label="Telefone"><input className="input-field" style={{ fontSize:13 }} value={f.phone} onChange={e=>set('phone',e.target.value)} placeholder="(11) 99999-9999" /></FRow>
-                            <FRow label="E-mail"><input className="input-field" style={{ fontSize:13 }} value={f.email} onChange={e=>set('email',e.target.value)} placeholder="email@empresa.com" /></FRow>
+                            <FRow label="Telefone"><input className="input-field" type="tel" style={{ fontSize:13 }} value={f.phone} onChange={e=>set('phone',e.target.value)} placeholder="(11) 99999-9999" /></FRow>
+                            <FRow label="E-mail"><input className="input-field" inputMode="email" autoCapitalize="none" style={{ fontSize:13 }} value={f.email} onChange={e=>set('email',e.target.value)} placeholder="email@empresa.com" /></FRow>
                             <FRow label="Origem"><select className="input-field" style={{ fontSize:13 }} value={f.origin} onChange={e=>set('origin',e.target.value)}>{LEAD_ORIGINS.map(o=><option key={o}>{o}</option>)}</select></FRow>
                             <FRow label="Responsável"><input className="input-field" style={{ fontSize:13 }} value={f.responsible} onChange={e=>set('responsible',e.target.value)} placeholder="Responsável" /></FRow>
                             <FRow label="Status"><select className="input-field" style={{ fontSize:13 }} value={f.status} onChange={e=>set('status',e.target.value)}>{LEAD_COLS.map(c=><option key={c}>{c}</option>)}</select></FRow>
@@ -9475,7 +9780,7 @@
             return (
                 <div style={{ position:'fixed', inset:0, zIndex:1500, display:'flex' }} onClick={onClose}>
                     <div style={{ flex:1, background:'rgba(0,0,0,.6)' }} />
-                    <div className="glass" onClick={e=>e.stopPropagation()}
+                    <div className="glass neos-full-h" onClick={e=>e.stopPropagation()}
                         style={{ width:540, maxWidth:'96vw', height:'100vh', overflowY:'auto', borderRadius:'14px 0 0 14px', padding:'22px 24px', display:'flex', flexDirection:'column', gap:14, boxShadow:'-10px 0 40px rgba(0,0,0,.5)' }}>
                         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
                             <div style={{ flex:1, minWidth:0, marginRight:8 }}>
@@ -9693,7 +9998,7 @@
             const onDragStart=(e,lead)=>{setDragging(lead);e.dataTransfer.effectAllowed='move';};
             const onDrop=(e,col)=>{e.preventDefault();if(dragging&&dragging.status!==col)moveLead(dragging.id,col);setDragging(null);setDragOver(null);};
             return (
-                <div className="fade-in" style={{ display:'flex', flexDirection:'column', height:'calc(100vh - 52px)' }}>
+                <div className="fade-in neos-page-h" style={{ display:'flex', flexDirection:'column', height:'calc(100vh - 52px)' }}>
                     <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14, flexWrap:'wrap', gap:8 }}>
                         <div style={{ display:'flex', alignItems:'center', gap:10 }}>
                             <Ic n="leads" s={20} />
@@ -10536,19 +10841,43 @@
             const myNotifs = (store.notifications || []).filter(n => n.userId === myId).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 60);
             const unread = myNotifs.filter(n => !n.read).length;
             const botPos = isEmp ? 76 : 136;
+            /* Push no aparelho: permissão só é pedida pelo botão abaixo, nunca sozinha */
+            const pushDevice = (window.matchMedia && matchMedia('(pointer: coarse)').matches) || _isStandalone();
+            const [pushState, setPushState] = useState(() => !pushDevice ? 'off' : _pushSupported() ? Notification.permission : 'unsupported');
+            const [pushBusy, setPushBusy] = useState(false);
+            useEffect(() => {
+                /* já autorizado: mantém a inscrição do aparelho vinculada ao usuário logado */
+                if (pushState === 'granted') syncPushSubscription(false).catch(e => console.warn('[Neos] Push:', e.message));
+            }, []);
+            const enablePush = async () => {
+                setPushBusy(true);
+                try { setPushState(await syncPushSubscription(true)); }
+                catch (e) { console.warn('[Neos] Push:', e.message); setPushState(_pushSupported() ? Notification.permission : 'unsupported'); }
+                setPushBusy(false);
+            };
+            const pushHint = pushState === 'default' ? 'enable'
+                : pushState === 'denied' ? 'denied'
+                : (pushState === 'unsupported' && _isIOS && !_isStandalone()) ? 'ios-install' : null;
             return (
                 <>
-                    <button onClick={() => setOpen(v => !v)} title="Notificações"
+                    <button className="neos-float" onClick={() => setOpen(v => !v)} title="Notificações"
                         style={{ position: 'fixed', bottom: botPos, right: 22, zIndex: 200, borderRadius: 50, width: 44, height: 44, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: open ? 'rgba(255,160,0,.9)' : 'rgba(255,255,255,.08)', border: '1px solid ' + (open ? 'rgba(255,160,0,.6)' : 'rgba(255,255,255,.15)'), cursor: 'pointer', boxShadow: open ? '0 0 18px rgba(255,160,0,.35)' : 'none', transition: 'all .2s', position: 'fixed' }}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
                         {unread > 0 && <div style={{ position: 'absolute', top: 7, right: 7, background: '#ff0040', borderRadius: '50%', width: 15, height: 15, fontSize: 8, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', border: '2px solid #07070f' }}>{unread > 9 ? '9+' : unread}</div>}
                     </button>
                     {open && (
-                        <div className="glass fade-in" style={{ position: 'fixed', bottom: botPos + 54, right: 22, zIndex: 199, width: 330, maxHeight: 420, borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,.6)' }}>
+                        <div className="glass fade-in neos-float neos-float-panel" style={{ position: 'fixed', bottom: botPos + 54, right: 22, zIndex: 199, width: 330, maxHeight: 420, borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,.6)' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px 10px', borderBottom: '1px solid rgba(255,255,255,.07)', flexShrink: 0 }}>
                                 <span style={{ fontSize: 13, fontWeight: 700 }}>Notificações {unread > 0 && <span style={{ fontSize: 10, background: '#ff0040', color: '#fff', borderRadius: 8, padding: '1px 6px', marginLeft: 4 }}>{unread}</span>}</span>
                                 {unread > 0 && <button onClick={() => markAllNotifsRead(myId)} style={{ fontSize: 10, color: 'rgba(255,160,0,.9)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Marcar todas</button>}
                             </div>
+                            {pushHint && (
+                                <div style={{ padding: '8px 14px', borderBottom: '1px solid rgba(255,255,255,.07)', fontSize: 10.5, color: 'rgba(255,255,255,.45)', lineHeight: 1.45, flexShrink: 0 }}>
+                                    {pushHint === 'enable' && <button onClick={enablePush} disabled={pushBusy} style={{ fontSize: 11, color: 'rgba(255,160,0,.9)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: '4px 0', opacity: pushBusy ? .6 : 1 }}>🔔 {pushBusy ? 'Ativando...' : 'Receber notificações neste aparelho'}</button>}
+                                    {pushHint === 'denied' && 'Notificações bloqueadas para este site — libere nas configurações do navegador para receber avisos de novos leads.'}
+                                    {pushHint === 'ios-install' && 'Para receber avisos de novos leads no iPhone/iPad: toque em Compartilhar → "Adicionar à Tela de Início" e abra o Neos por lá.'}
+                                </div>
+                            )}
                             <div style={{ overflowY: 'auto', flex: 1 }}>
                                 {myNotifs.length === 0 ? (
                                     <div style={{ padding: 24, textAlign: 'center', color: 'rgba(255,255,255,.25)', fontSize: 12 }}>
@@ -10610,21 +10939,30 @@
             const ViewMap = { dashboard: Dashboard, leads: LeadsPage, goals: GoalsPage, clients: Clients, kanban: Kanban, financial: Financial, traffic: Traffic, design: Design, performance: Performance, calendar: CalendarModule };
             const V = (isEmployee && EMPLOYEE_BLOCKED.includes(view)) ? LockedView : (ViewMap[view] || Dashboard);
             const visible = onlineUsers.filter(c => c.view === view);
+            /* Mobile: sidebar vira drawer aberto pela barra superior (ambos ocultos no desktop via CSS) */
+            const [navOpen, setNavOpen] = useState(false);
             return (
-                <div style={{ display: 'flex', minHeight: '100vh' }}>
-                    <Sidebar />
-                    <main style={{ marginLeft: 210, flex: 1, padding: '26px 30px', minHeight: '100vh' }}>
+                <div className="neos-app" style={{ display: 'flex', minHeight: '100vh' }}>
+                    <div className="neos-topbar">
+                        <button className="neos-topbar-btn" onClick={() => setNavOpen(true)} aria-label="Abrir menu">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></svg>
+                        </button>
+                        <img src="images/LOGOTIPO 2 copiar 2.png" alt="Logo" style={{ height: 22, objectFit: 'contain' }} />
+                    </div>
+                    {navOpen && <div className="neos-nav-backdrop" onClick={() => setNavOpen(false)} />}
+                    <Sidebar mobileOpen={navOpen} onNavigate={() => setNavOpen(false)} />
+                    <main className="neos-main" style={{ marginLeft: 210, flex: 1, padding: '26px 30px', minHeight: '100vh' }}>
                         <V />
                     </main>
                     {!isEmployee && (
-                        <button className="btn-primary pulse" title="Adicionar Cliente" onClick={() => setQuickAdd(true)}
+                        <button className="btn-primary pulse neos-float" title="Adicionar Cliente" onClick={() => setQuickAdd(true)}
                             style={{ position: 'fixed', bottom: 22, right: 22, zIndex: 200, borderRadius: 50, width: 50, height: 50, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 30px rgba(255,0,64,.45)' }}>
                             <Ic n="plus" s={20} />
                         </button>
                     )}
                     <AlertMonitor />
                     <InboxBtn />
-                    <button onClick={() => setChatOpen(c => !c)} title="Chat Interno"
+                    <button className="neos-float" onClick={() => setChatOpen(c => !c)} title="Chat Interno"
                         style={{ position: 'fixed', bottom: isEmployee ? 22 : 82, right: 22, zIndex: 200, borderRadius: 50, width: 44, height: 44, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: chatOpen ? '#ff0040' : 'rgba(255,255,255,.08)', border: '1px solid ' + (chatOpen ? '#ff0040' : 'rgba(255,255,255,.15)'), cursor: 'pointer', boxShadow: chatOpen ? '0 0 18px rgba(255,0,64,.4)' : 'none', transition: 'all .2s' }}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
                     </button>

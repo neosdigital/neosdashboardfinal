@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { notifyNewLead } = require('./whatsapp');
+const { notifyNewLeadPush } = require('./push');
 
 const GRAPH = 'https://graph.facebook.com/v21.0';
 
@@ -109,6 +110,7 @@ async function processLeadgen(value, pool, broadcast) {
     if (!rowCount) return console.log(`[Neos] Lead Meta ${leadgenId} já existia — ignorado`);
 
     broadcast({ eventType: 'INSERT', table: 'leads', new: doc });
+    notifyNewLeadPush(pool, doc);
     console.log(`[Neos] Lead Meta ${leadgenId} salvo (${doc.name})`);
 
     try {

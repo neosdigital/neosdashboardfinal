@@ -5,6 +5,7 @@ const WebSocket = require('ws');
 const cors = require('cors');
 const { metaLeadsRouter } = require('./meta-leads');
 const { PRIVACY_HTML } = require('./privacy');
+const { initPush, pushRouter, notifyNewLeadPush } = require('./push');
 
 const app = express();
 const server = http.createServer(app);
@@ -39,6 +40,7 @@ async function initDB() {
     console.log('[Neos] Banco inicializado ✓ —', TABLES.length, 'tabelas');
 }
 initDB().catch(e => console.error('[Neos] Erro ao inicializar banco:', e.message));
+initPush(pool);
 
 const tableOk = t => TABLES.includes(t);
 
@@ -87,12 +89,13 @@ app.post('/api/:table', async (req, res) => {
     if (!tableOk(req.params.table)) return res.status(400).json({ error: 'Tabela inválida' });
     try {
         const doc = req.body;
-        await pool.query(
+        const { rowCount } = await pool.query(
             `INSERT INTO "${req.params.table}" (_doc) VALUES ($1::jsonb)
              ON CONFLICT ((_doc->>'id')) DO NOTHING`,
             [JSON.stringify(doc)]
         );
         broadcast({ eventType: 'INSERT', table: req.params.table, new: doc });
+        if (rowCount && req.params.table === 'leads') notifyNewLeadPush(pool, doc);
         res.json({ data: doc, error: null });
     } catch (e) {
         res.status(500).json({ data: null, error: { message: e.message } });
@@ -180,6 +183,9 @@ app.get('/privacidade', (_, res) => res.type('html').send(PRIVACY_HTML));
 
 /* Meta Lead Ads → leads do dashboard + aviso no WhatsApp (ver meta-leads.js) */
 app.use('/webhooks/meta', metaLeadsRouter(pool, broadcast));
+
+/* Web Push no celular (ver push.js) */
+app.use('/push', pushRouter(pool));
 
 /* ─────────────────────────────────────────────────
    WEBSOCKET — Realtime + Chat + Cursores + Presence
