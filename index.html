@@ -4975,7 +4975,7 @@
         /* Tudo numa chamada só (o app está no nível development_access da API de Marketing, com limite baixo):
            hoje e período vêm como aliases do mesmo campo insights */
         const hubInsights = preset => `insights.date_preset(today).as(hoje){${HUB_INS_FIELDS}},insights.date_preset(${preset}).as(periodo){${HUB_INS_FIELDS}}`;
-        const hubAccFields = preset => `name,account_id,account_status,currency,balance,amount_spent,spend_cap,is_prepay_account,funding_source_details,business{id,name},${hubInsights(preset)},campaigns.limit(200){name,effective_status,daily_budget,lifetime_budget}`;
+        const hubAccFields = preset => `name,account_id,account_status,currency,balance,amount_spent,spend_cap,is_prepay_account,funding_source_details,business{id,name},${hubInsights(preset)},insights.date_preset(last_3d).as(tresdias){spend},insights.date_preset(last_7d).as(setedias){spend},campaigns.limit(200){name,effective_status,daily_budget,lifetime_budget}`;
         const metaGraphAll = async (path, token, params = {}) => {
             let page = await metaGraph(path, token, params);
             const out = [...(page.data || [])];
@@ -5011,7 +5011,8 @@
             return { key: 'stopped', label: 'Parada', color: '#8a8a8a' };
         };
         /* Dias de saldo com base no orçamento diário das campanhas ativas */
-        const balanceDays = a => a.funds.kind === 'prepaid' && a.funds.value > 0 && a.dailyBudget > 0 ? a.funds.value / a.dailyBudget : null;
+        /* dias de saldo pelo gasto real (maior média de 3 e 7 dias; sem histórico, orçamento diário) — igual ao monitor */
+        const balanceDays = a => a.funds.kind === 'prepaid' && a.funds.value > 0 && a.burnRate > 0 ? a.funds.value / a.burnRate : null;
         /* Cards de alerta — mesmas regras do monitor do servidor (railway-backend/meta-monitor.js), manter em sincronia */
         const HUB_IDLE_FROM_HOUR = 10;
         const hubAlertOf = a => {
@@ -5020,7 +5021,7 @@
             if (a.account_status !== 1) return { group: 'payment', card: 'problem', msg: a.delivery.label + ' · ' + n + ' parada' + (a.activeCamps > 1 ? 's' : '') };
             if (a.funds.kind === 'prepaid' && a.funds.value <= 0) return { group: 'funds', card: 'problem', msg: 'Sem saldo · ' + n + ' parada' + (a.activeCamps > 1 ? 's' : '') };
             const days = balanceDays(a);
-            if (a.funds.kind === 'prepaid' && (days != null ? days < 2 : a.funds.value < 50)) return { group: 'funds', card: 'lowbal', msg: fmt(a.funds.value) + (days != null ? ' · dura ' + daysLabel(days) : '') };
+            if (a.funds.kind === 'prepaid' && (days != null ? days <= 3 : a.funds.value < 50)) return { group: 'funds', card: 'lowbal', urgent: days != null ? days <= 1 : a.funds.value < 20, msg: fmt(a.funds.value) + (days != null ? ' · dura ' + daysLabel(days) : '') };
             if (a.today.spend === 0 && new Date().getHours() >= HUB_IDLE_FROM_HOUR) return { group: 'idle', card: 'idle', msg: n + ' ativa' + (a.activeCamps > 1 ? 's' : '') + ' · R$ 0 hoje' };
             return null;
         };
@@ -5254,6 +5255,7 @@
                     a.activeCamps = active.length;
                     a.pausedCamps = a.campaigns.filter(c => /PAUSED/.test(c.effective_status)).length;
                     a.dailyBudget = active.reduce((s, c) => s + (parseFloat(c.daily_budget) || 0) / 100, 0);
+                    a.burnRate = Math.max((parseFloat(a.tresdias?.data?.[0]?.spend) || 0) / 3, (parseFloat(a.setedias?.data?.[0]?.spend) || 0) / 7) || a.dailyBudget;
                     a.funds = accountFunds(a);
                     a.delivery = deliveryOf(a);
                 });
@@ -5316,7 +5318,7 @@
             const beforeIdle = new Date().getHours() < HUB_IDLE_FROM_HOUR;
             const alertCards = [
                 { id: 'problem', title: 'Sem saldo ou pagamento pendente', color: '#ff4060', empty: 'Nenhuma conta parada' },
-                { id: 'lowbal', title: 'Saldo baixo', color: '#ffb400', empty: 'Nenhum saldo acabando' },
+                { id: 'lowbal', title: 'Saldo baixo (até 3 dias)', color: '#ffb400', empty: 'Nenhum saldo acabando' },
                 { id: 'idle', title: 'Ativa, mas nada gasto hoje', color: '#ff8030', empty: beforeIdle ? `Conferido a partir das ${HUB_IDLE_FROM_HOUR}h` : 'Todas as ativas estão gastando' }
             ].map(c => ({ ...c, items: shown.map(a => ({ a, al: hubAlertOf(a) })).filter(x => x.al?.card === c.id) }));
             const bmHealth = L => L.some(a => hubAlertOf(a)?.card === 'problem') ? '#ff4060' : L.some(a => hubAlertOf(a)) ? '#ffb400' : L.some(a => a.delivery.key === 'running') ? '#00c853' : 'rgba(255,255,255,.15)';
@@ -5381,7 +5383,7 @@
                                         {c.items.map(({ a, al }) => (
                                             <button key={a.id} className="mh-alert-item" onClick={() => goTo(a)}>
                                                 <b>{a.name}{openTaskKeys.has(`${al.group}:${a.id}`) && <span className="mh-tag">tarefa no Kanban</span>}</b>
-                                                <div className="mh-muted">{a.business?.name || 'Sem BM'} · <span style={{ color: c.color }}>{al.msg}</span></div>
+                                                <div className="mh-muted">{a.business?.name || 'Sem BM'} · <span style={{ color: al.urgent ? '#ff4060' : c.color, fontWeight: al.urgent ? 700 : 400 }}>{al.urgent ? 'Urgente · ' : ''}{al.msg}</span></div>
                                             </button>
                                         ))}
                                     </div>

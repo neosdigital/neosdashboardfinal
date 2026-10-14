@@ -14,7 +14,14 @@ const TZ = 'America/Sao_Paulo';
    Regras iguais às dos cards da aba (hubAlertOf no index.html) — manter em sincronia. */
 
 const ACC_STATUS = { 2: 'Desativada', 3: 'Pagamento pendente', 7: 'Em análise', 8: 'Liquidação pendente', 9: 'Período de carência', 100: 'Encerrando', 101: 'Encerrada' };
-const ACC_FIELDS = 'name,account_status,balance,is_prepay_account,funding_source_details,business{id,name},insights.date_preset(today){spend},campaigns.limit(200){effective_status,daily_budget}';
+/* hoje (sem gasto), últimos 3 e 7 dias (ritmo real de gasto) e ontem (resumo das 8h) */
+const ACC_FIELDS = 'name,account_status,balance,is_prepay_account,funding_source_details,business{id,name},'
+    + 'insights.date_preset(today).as(hoje){spend},insights.date_preset(last_3d).as(tresdias){spend},insights.date_preset(last_7d).as(setedias){spend},'
+    + 'insights.date_preset(yesterday).as(ontem){spend,actions},campaigns.limit(200){effective_status,daily_budget}';
+/* etapas do saldo baixo, em dias de gasto restantes */
+const LOW_WARN_DAYS = 3, LOW_URGENT_DAYS = 1;
+/* resumo diário: sai na primeira rodada a partir das 8h (até 11h, se o servidor estiver fora às 8h) */
+const DAILY_FROM_HOUR = 8, DAILY_UNTIL_HOUR = 11;
 /* "campanha ativa sem gasto" só vale depois desse horário — de madrugada todas estão em zero */
 const IDLE_FROM_HOUR = 10;
 const RENOTIFY_MS = 24 * 60 * 60 * 1000;
@@ -46,15 +53,25 @@ const todayBR = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ });
 const nowBR = () => new Date().toLocaleString('pt-BR', { timeZone: TZ, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 const genId = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
 
+const spendOf = (a, alias) => parseFloat(a[alias]?.data?.[0]?.spend) || 0;
+const leadsOf = (a, alias) => {
+    const acts = a[alias]?.data?.[0]?.actions || [];
+    const v = t => parseFloat(acts.find(x => x.action_type === t)?.value) || 0;
+    return v('lead') || v('onsite_conversion.lead_grouped');
+};
+/* Gasto diário real: a maior média entre 3 e 7 dias (avisa antes quando o gasto acelera);
+   sem histórico, usa o orçamento diário das campanhas ativas */
+const burnRate = (a, dailyBudget) => Math.max(spendOf(a, 'tresdias') / 3, spendOf(a, 'setedias') / 7) || dailyBudget;
+
 /* Mesmo cálculo da aba: tipo do alerta da conta, ou null */
 function alertOf(a) {
     const camps = a.campaigns?.data || [];
     const active = camps.filter(c => c.effective_status === 'ACTIVE');
     if (!active.length) return null;
-    const spendToday = parseFloat(a.insights?.data?.[0]?.spend) || 0;
+    const spendToday = spendOf(a, 'hoje');
     const prepaid = a.is_prepay_account;
     const balance = prepaid ? (parseMetaMoney(a.funding_source_details?.display_string) ?? 0) : null;
-    const daily = active.reduce((s, c) => s + (parseFloat(c.daily_budget) || 0) / 100, 0);
+    const daily = burnRate(a, active.reduce((s, c) => s + (parseFloat(c.daily_budget) || 0) / 100, 0));
     const n = active.length, s = n > 1 ? 's' : '';
     /* body = texto curto da notificação; detail = descrição da tarefa no Kanban */
     if (a.account_status !== 1) {
@@ -69,10 +86,14 @@ function alertOf(a) {
             detail: `${a.name} está sem saldo e ${n} campanha${s} ativa${s} parada${s}. Adicione saldo para voltar a veicular.` };
     }
     const days = prepaid && daily > 0 ? balance / daily : null;
-    if (prepaid && (days != null ? days < 2 : balance < 50)) {
-        return { type: 'lowbal', group: 'funds', title: 'Saldo baixo', task: `Recarregar saldo: ${a.name}`,
+    /* 3 dias: dá tempo de boleto compensar · 1 dia: urgente */
+    if (prepaid && (days != null ? days <= LOW_WARN_DAYS : balance < 50)) {
+        const urgent = days != null ? days <= LOW_URGENT_DAYS : balance < 20;
+        const pace = days != null ? ` no ritmo atual (${fmt(daily)}/dia)` : '';
+        return { type: urgent ? 'low1' : 'low3', group: 'funds', title: urgent ? 'Saldo acabando' : 'Saldo baixo', task: `Recarregar saldo: ${a.name}`,
+            priority: urgent ? 'Alta' : 'Média',
             body: `${a.name} · ${fmt(balance)}${days != null ? ` · dura ${daysLabel(days)}` : ''}`,
-            detail: `${a.name} está com saldo baixo (${fmt(balance)}).${days != null ? ` Vai durar ${daysLabel(days)} de campanha.` : ''} Atualize o saldo.` };
+            detail: `${a.name} está com ${fmt(balance)} de saldo.${days != null ? ` Dura ${daysLabel(days)}${pace}.` : ''} ${urgent ? 'Recarregue hoje para não parar.' : 'Planeje a recarga (boleto leva até 3 dias úteis).'}` };
     }
     if (spendToday === 0 && hourBR() >= IDLE_FROM_HOUR) {
         return { type: 'idle', group: 'idle', title: 'Sem gasto hoje', task: `Verificar veiculação: ${a.name}`,
@@ -103,7 +124,7 @@ function startMetaMonitor(pool, broadcast) {
         const task = {
             id: genId(), createdAt: now, title: alert.task,
             desc: `${alert.detail || alert.body}\n\nBM: ${bmName || '—'}\nCriada automaticamente pela Central Meta Ads em ${nowBR()}.`,
-            status: 'A Fazer', dueDate: todayBR(), clientId: '', clientName: bmName || '', priority: alert.type === 'idle' ? 'Média' : 'Alta',
+            status: 'A Fazer', dueDate: todayBR(), clientId: '', clientName: bmName || '', priority: alert.priority || (alert.type === 'idle' ? 'Média' : 'Alta'),
             assignee: '', category: 'Tráfego', fromCalendar: false, modifiedBy: 'Central Meta Ads', modifiedAt: now, metaAlertKey: alert.key
         };
         await pool.query(`INSERT INTO "tasks" (_doc) VALUES ($1::jsonb) ON CONFLICT ((_doc->>'id')) DO NOTHING`, [JSON.stringify(task)]);
@@ -122,6 +143,18 @@ function startMetaMonitor(pool, broadcast) {
         if (upd[0]) broadcast({ eventType: 'UPDATE', table: 'tasks', new: upd[0]._doc });
     };
 
+    /* Mesmo problema mudou de etapa: atualiza prioridade e anota na descrição */
+    const updateTask = async (taskId, alert) => {
+        if (!taskId) return;
+        const { rows } = await pool.query(`SELECT _doc FROM "tasks" WHERE _doc->>'id' = $1`, [taskId]);
+        const t = rows[0]?._doc;
+        if (!t || t.status === 'Concluído') return;
+        const priority = alert.priority || (alert.type === 'idle' ? 'Média' : 'Alta');
+        const patch = { priority, desc: `${t.desc || ''}\n\n${nowBR()} — ${alert.title}: ${alert.detail || alert.body}`, modifiedBy: 'Central Meta Ads', modifiedAt: new Date().toISOString() };
+        const { rows: upd } = await pool.query(`UPDATE "tasks" SET _doc = _doc || $1::jsonb WHERE _doc->>'id' = $2 RETURNING _doc`, [JSON.stringify(patch), taskId]);
+        if (upd[0]) broadcast({ eventType: 'UPDATE', table: 'tasks', new: upd[0]._doc });
+    };
+
     const run = async () => {
         if (running) return;
         running = true;
@@ -133,6 +166,7 @@ function startMetaMonitor(pool, broadcast) {
             const current = new Map();   /* key → alerta ativo agora */
             const checked = new Set();   /* contas/conexões lidas com sucesso nesta rodada */
             const outOfScope = new Set(); /* contas de BMs desmarcadas na aba */
+            const yesterday = { spend: 0, leads: 0, accounts: 0 }; /* soma das BMs acompanhadas, para o resumo das 8h */
 
             for (const c of conns) {
                 /* Dois prazos: a validade do token (pode ser "nunca") e o acesso aos dados, que o Meta
@@ -161,6 +195,7 @@ function startMetaMonitor(pool, broadcast) {
                     if (sel && !sel.has(a.business?.id || 'none')) { outOfScope.add(a.id); continue; }
                     /* conta sem nome (só o número) fica difícil de reconhecer na notificação */
                     if (/^\d+$/.test(a.name || '') && a.business?.name) a.name = `${a.business.name} (conta ${a.name})`;
+                    yesterday.spend += spendOf(a, 'ontem'); yesterday.leads += leadsOf(a, 'ontem'); yesterday.accounts++;
                     const al = alertOf(a);
                     if (al) current.set(`${al.group}:${a.id}`, { ...al, key: `${al.group}:${a.id}`, account: a.id, bm: a.business?.name || '' });
                 }
@@ -186,7 +221,22 @@ function startMetaMonitor(pool, broadcast) {
                     console.log(`[Neos] Monitor Meta: novo alerta ${key} — ${al.body}`);
                 } else {
                     await pool.query(`UPDATE "meta_alert_state" SET notified_at = now(), data = $2::jsonb WHERE key = $1`, [key, JSON.stringify(al)]);
+                    /* etapa mudou (ex.: 3 dias → 1 dia → sem saldo): a mesma tarefa sobe de prioridade */
+                    if (changed) await updateTask(prev.task_id, al).catch(() => {});
                 }
+            }
+
+            /* Resumo diário: uma notificação por dia, com tag fixa */
+            const { rows: dailyRows } = await pool.query(`SELECT value FROM "push_config" WHERE key = 'meta_daily_last'`);
+            const h = hourBR();
+            if (h >= DAILY_FROM_HOUR && h < DAILY_UNTIL_HOUR && dailyRows[0]?.value?.date !== todayBR() && yesterday.accounts > 0) {
+                const all = [...current.values()];
+                const nStopped = all.filter(al => al.stopped).length, nLow = all.filter(al => al.type === 'low1' || al.type === 'low3').length;
+                const status = [nStopped && `${nStopped} parada${nStopped > 1 ? 's' : ''}`, nLow && `${nLow} com saldo baixo`].filter(Boolean).join(' · ') || 'Todas as contas em dia';
+                const body = `${status} · Ontem: ${fmt(yesterday.spend)} e ${yesterday.leads} lead${yesterday.leads !== 1 ? 's' : ''}`;
+                await sendPush(pool, { title: 'Resumo de hoje', body, tag: 'meta_resumo', view: 'metahub' });
+                await pool.query(`INSERT INTO "push_config" (key, value) VALUES ('meta_daily_last', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify({ date: todayBR() })]);
+                console.log(`[Neos] Monitor Meta: resumo diário — ${body}`);
             }
 
             /* Lembrete das contas paradas: uma notificação só, com tag fixa (substitui a anterior no aparelho) */
