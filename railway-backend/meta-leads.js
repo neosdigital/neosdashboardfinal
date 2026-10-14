@@ -54,11 +54,31 @@ function formatPhoneBR(raw) {
 const STANDARD_FIELDS = new Set(['full_name', 'first_name', 'last_name', 'phone_number', 'email', 'company_name']);
 const prettyQuestion = k => k.replace(/_/g, ' ').replace(/\?$/, '').trim().replace(/^./, c => c.toUpperCase());
 
+/* Formulários com pergunta personalizada ("Nome", "Seu WhatsApp"...) em vez dos campos
+   padrão do Meta: acha o campo pelo texto da pergunta */
+const normKey = k => k.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[_?]+/g, ' ').trim();
+const CUSTOM_FIELD_RES = {
+    name: /\b(nome|name)\b/,
+    phone: /\b(telefone|whatsapp|whats|celular|fone|phone|contato)\b/,
+    email: /\be ?mail\b/,
+    company: /\bnome d[ao] (empresa|imobiliaria|loja|marca|negocio)\b/
+};
+const findCustom = (f, kind, used) => {
+    const k = Object.keys(f).find(k => !STANDARD_FIELDS.has(k) && !used.has(k) && f[k] && CUSTOM_FIELD_RES[kind].test(normKey(k))
+        && !(kind === 'name' && CUSTOM_FIELD_RES.company.test(normKey(k))));
+    if (k) used.add(k);
+    return k ? f[k] : '';
+};
+
 function buildLeadDoc(leadgenId, lead, formName) {
     const f = {};
     for (const item of lead.field_data || []) f[item.name] = (item.values || []).join(', ');
-    const name = f.full_name || [f.first_name, f.last_name].filter(Boolean).join(' ') || 'Lead Meta Ads';
-    const answers = Object.entries(f).filter(([k]) => !STANDARD_FIELDS.has(k)).map(([k, v]) => `${prettyQuestion(k)}: ${v}`);
+    const used = new Set();
+    const company = f.company_name || findCustom(f, 'company', used);
+    const name = f.full_name || [f.first_name, f.last_name].filter(Boolean).join(' ') || findCustom(f, 'name', used) || 'Lead Meta Ads';
+    const phone = f.phone_number || findCustom(f, 'phone', used);
+    const email = f.email || findCustom(f, 'email', used);
+    const answers = Object.entries(f).filter(([k]) => !STANDARD_FIELDS.has(k) && !used.has(k)).map(([k, v]) => `${prettyQuestion(k)}: ${v}`);
     const platform = lead.platform === 'ig' ? 'Instagram' : lead.platform === 'fb' ? 'Facebook' : '';
     const tracking = [
         ['Formulário', formName], ['Campanha', lead.campaign_name], ['Conjunto', lead.adset_name],
@@ -76,9 +96,9 @@ function buildLeadDoc(leadgenId, lead, formName) {
         score: 0,
         origin: 'Meta Ads',
         name,
-        company: f.company_name || '',
-        phone: formatPhoneBR(f.phone_number),
-        email: f.email || '',
+        company: company || '',
+        phone: formatPhoneBR(phone),
+        email: email || '',
         responsible: '',
         value: null,
         qualification: '',
