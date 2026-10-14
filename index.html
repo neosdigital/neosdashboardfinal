@@ -5080,6 +5080,7 @@
             const { metaConns } = useApp();
             const [preset, setPreset] = useState('last_7d');
             const [accounts, setAccounts] = useState([]);
+            const [bmList, setBmList] = useState([]);
             const [loading, setLoading] = useState(false);
             const [errors, setErrors] = useState([]);
             const [updatedAt, setUpdatedAt] = useState(null);
@@ -5100,12 +5101,31 @@
                 if (loadingRef.current) return;
                 loadingRef.current = true;
                 if (!silent) setLoading(true);
-                const errs = [], map = new Map();
+                const errs = [], map = new Map(), bmMap = new Map();
                 for (const conn of validConns) {
+                    const tk = conn.accessToken, add = a => { if (!map.has(a.id)) map.set(a.id, { ...a, token: tk }); };
                     try {
-                        const accs = await metaGraphAll('me/adaccounts', conn.accessToken, { fields: hubAccFields(preset), limit: 50 });
-                        accs.forEach(a => { if (!map.has(a.id)) map.set(a.id, { ...a, token: conn.accessToken }); });
+                        (await metaGraphAll('me/adaccounts', tk, { fields: hubAccFields(preset), limit: 50 })).forEach(add);
                     } catch (e) { errs.push(`${conn.metaUserName || 'Conta Meta'}: ${e.message}`); }
+                    /* me/adaccounts só traz contas com função direta do usuário — completa com todas as contas
+                       (próprias e de clientes) de cada BM do perfil, e guarda as BMs mesmo sem conta */
+                    try {
+                        const bizs = await metaGraphAll('me/businesses', tk, { fields: 'id,name,owned_ad_accounts.limit(200){id},client_ad_accounts.limit(200){id}', limit: 100 });
+                        bizs.forEach(b => bmMap.set(b.id, b.name));
+                        const missing = [...new Set(bizs.flatMap(b => [...(b.owned_ad_accounts?.data || []), ...(b.client_ad_accounts?.data || [])].map(a => a.id)))].filter(id => !map.has(id));
+                        for (let i = 0; i < missing.length; i += 25) {
+                            const chunk = missing.slice(i, i + 25);
+                            try {
+                                Object.values(await metaGraph('', tk, { ids: chunk.join(','), fields: hubAccFields(preset) })).forEach(add);
+                            } catch {
+                                /* uma conta sem permissão derruba o lote inteiro — tenta uma a uma */
+                                for (const id of chunk) {
+                                    try { add(await metaGraph(id, tk, { fields: hubAccFields(preset) })); }
+                                    catch (e) { errs.push(`Conta ${id.replace('act_', '')}: ${e.message}`); }
+                                }
+                            }
+                        }
+                    } catch (e) { errs.push(`BMs de ${conn.metaUserName || 'Conta Meta'}: ${e.message}`); }
                 }
                 const list = [...map.values()];
                 list.forEach(a => {
@@ -5117,7 +5137,8 @@
                     a.funds = accountFunds(a);
                     a.delivery = deliveryOf(a);
                 });
-                setAccounts(list); setErrors(errs); setUpdatedAt(new Date()); setCampRows({});
+                list.forEach(a => { if (a.business?.id) bmMap.set(a.business.id, a.business.name); });
+                setAccounts(list); setBmList([...bmMap].map(([id, name]) => ({ id, name }))); setErrors(errs); setUpdatedAt(new Date()); setCampRows({});
                 setLoading(false); loadingRef.current = false;
             };
             useEffect(() => { if (validConns.length) load(); }, [metaConns, preset]);
@@ -5142,11 +5163,13 @@
 
             const q = search.trim().toLowerCase();
             const visible = accounts.filter(a => (filter === 'all' || a.delivery.key === filter) && (!q || a.name.toLowerCase().includes(q) || (a.business?.name || '').toLowerCase().includes(q)));
+            /* BMs sem nenhuma conta de anúncio também aparecem (só na visão "Todas") */
+            const bmSeed = filter === 'all' ? Object.fromEntries(bmList.filter(b => !q || b.name.toLowerCase().includes(q)).map(b => [b.id, { id: b.id, name: b.name, accounts: [] }])) : {};
             const bms = Object.values(visible.reduce((acc, a) => {
                 const k = a.business?.id || 'none';
                 (acc[k] = acc[k] || { id: k, name: a.business?.name || 'Sem BM (conta pessoal)', accounts: [] }).accounts.push(a);
                 return acc;
-            }, {})).sort((x, y) => sumM(y.accounts, 'today', 'spend') - sumM(x.accounts, 'today', 'spend') || x.name.localeCompare(y.name));
+            }, bmSeed)).sort((x, y) => sumM(y.accounts, 'today', 'spend') - sumM(x.accounts, 'today', 'spend') || x.name.localeCompare(y.name));
             bms.forEach(b => b.accounts.sort((x, y) => y.today.spend - x.today.spend || y.period.spend - x.period.spend));
 
             const prepaidTotal = accounts.reduce((s, a) => s + (a.funds.kind === 'prepaid' ? a.funds.value : 0), 0);
@@ -5192,7 +5215,7 @@
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
                         <div>
                             <h1 style={{ fontSize: 21, fontWeight: 700 }}>Central Meta Ads</h1>
-                            <p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>{accounts.length} contas de anúncio em {new Set(accounts.map(a => a.business?.id || 'none')).size} BMs{updatedAt && ` · atualizado às ${updatedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`} · atualiza sozinho a cada 5 min{/^last_\d+d$/.test(preset) && ` · "${presetLabel}" não inclui hoje`}</p>
+                            <p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>{bmList.length} BMs · {accounts.length} contas de anúncio{updatedAt && ` · atualizado às ${updatedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`} · atualiza sozinho a cada 5 min{/^last_\d+d$/.test(preset) && ` · "${presetLabel}" não inclui hoje`}</p>
                         </div>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                             <select className="input-field" style={{ fontSize: 12, padding: '6px 10px', width: 'auto' }} value={preset} onChange={e => setPreset(e.target.value)}>
@@ -5262,7 +5285,8 @@
                                         </div>
                                     ))}
                                 </div>
-                                {open && (
+                                {open && !L.length && <div style={{ borderTop: '1px solid rgba(255,255,255,.06)', padding: '10px 16px 12px 40px', fontSize: 12, color: 'rgba(255,255,255,.4)' }}>Nenhuma conta de anúncio nesta BM.</div>}
+                                {open && L.length > 0 && (
                                     <div style={{ overflowX: 'auto', borderTop: '1px solid rgba(255,255,255,.06)' }}>
                                         <table className="tbl" style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1050 }}>
                                             <thead><tr>
