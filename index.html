@@ -4976,7 +4976,6 @@
            hoje e período vêm como aliases do mesmo campo insights */
         const hubInsights = preset => `insights.date_preset(today).as(hoje){${HUB_INS_FIELDS}},insights.date_preset(${preset}).as(periodo){${HUB_INS_FIELDS}}`;
         const hubAccFields = preset => `name,account_id,account_status,currency,balance,amount_spent,spend_cap,is_prepay_account,funding_source_details,business{id,name},${hubInsights(preset)},campaigns.limit(200){name,effective_status,daily_budget,lifetime_budget}`;
-        const HUB_FILTERS = [{ id: 'all', label: 'Todas' }, { id: 'running', label: 'Rodando' }, { id: 'idle', label: 'Sem gasto hoje' }, { id: 'stopped', label: 'Paradas' }, { id: 'problem', label: 'Com problema' }];
         const metaGraphAll = async (path, token, params = {}) => {
             let page = await metaGraph(path, token, params);
             const out = [...(page.data || [])];
@@ -5015,12 +5014,15 @@
         const balanceDays = a => a.funds.kind === 'prepaid' && a.funds.value > 0 && a.dailyBudget > 0 ? a.funds.value / a.dailyBudget : null;
         const sumM = (list, k, f) => list.reduce((s, a) => s + (a[k]?.[f] || 0), 0);
         const intBR = n => Math.round(n || 0).toLocaleString('pt-BR');
+        /* 0.4 → "menos de 1 dia", 3.7 → "3 dias" */
+        const daysLabel = d => d < 1 ? 'menos de 1 dia' : Math.floor(d) + (Math.floor(d) === 1 ? ' dia' : ' dias');
+        const MhChev = ({ open }) => <svg className="mh-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}><polyline points="9 6 15 12 9 18" /></svg>;
 
         function HubChip({ label, color }) {
             return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 20, fontSize: 10.5, fontWeight: 700, color, background: color + '1f', border: `1px solid ${color}55`, whiteSpace: 'nowrap' }}><span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />{label}</span>;
         }
 
-        function MetaTokenModal({ onClose }) {
+        function MetaTokenModal({ onClose, hubBms }) {
             const { metaConns, saveMetaConn } = useApp();
             const [token, setToken] = useState('');
             const [target, setTarget] = useState(metaConns[0]?.id || '');
@@ -5037,7 +5039,7 @@
                     const conn = metaConns.find(c => c.id === target);
                     /* expires_at 0 = token que não expira */
                     const expiresAt = dbg.expires_at ? new Date(dbg.expires_at * 1000).toISOString() : null;
-                    await saveMetaConn({ clientId: conn ? conn.clientId : null, metaUserId: me.id, metaUserName: me.name, accessToken: t, expiresAt, adAccounts: JSON.stringify(accs) });
+                    await saveMetaConn({ clientId: conn ? conn.clientId : null, metaUserId: me.id, metaUserName: me.name, accessToken: t, expiresAt, adAccounts: JSON.stringify(accs), ...(hubBms ? { hubBms } : {}) });
                     onClose();
                 } catch (e) { setError(e.message || 'Token inválido'); }
                 setLoading(false);
@@ -5076,6 +5078,87 @@
             );
         }
 
+        const MH_CSS = `
+            .mh-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 14px }
+            .mh-head h1 { font-size: 21px; font-weight: 700 }
+            .mh-muted { font-size: 11.5px; color: rgba(255,255,255,.4) }
+            .mh-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap }
+            .mh-btn { padding: 7px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.03); color: rgba(255,255,255,.8); font-size: 12px; cursor: pointer; white-space: nowrap }
+            .mh-btn:hover { border-color: rgba(255,0,64,.4) }
+            .mh-card { margin-bottom: 10px; overflow: hidden }
+            .mh-cardhead { display: flex; align-items: center; gap: 10px; padding: 12px 16px; cursor: pointer; user-select: none }
+            .mh-chev { color: rgba(255,255,255,.45); flex-shrink: 0 }
+            .mh-bmstats { display: flex; gap: 22px; margin-left: auto }
+            .mh-row { display: grid; grid-template-columns: minmax(0,2.4fr) repeat(4, minmax(0,1fr)); gap: 12px; align-items: center; padding: 11px 16px; border-top: 1px solid rgba(255,255,255,.05) }
+            .mh-row.mh-click { cursor: pointer }
+            .mh-row.mh-click:hover { background: rgba(255,255,255,.02) }
+            .mh-sub { background: rgba(255,255,255,.015) }
+            .mh-sub .mh-row { padding-left: 34px }
+            .mh-m { text-align: right; min-width: 0 }
+            .mh-m span { display: block; font-size: 9.5px; text-transform: uppercase; letter-spacing: .4px; color: rgba(255,255,255,.38); font-weight: 700 }
+            .mh-m b { font-size: 13.5px; font-weight: 700 }
+            .mh-m small { display: block; font-size: 10.5px; color: rgba(255,255,255,.4) }
+            .mh-name { min-width: 0 }
+            .mh-name b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block }
+            .mh-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; flex-shrink: 0 }
+            .mh-bar { height: 6px; border-radius: 6px; background: rgba(255,255,255,.07); overflow: hidden; margin-top: 8px }
+            .mh-bar div { height: 100%; background: #00c853; border-radius: 6px; transition: width .3s }
+            .mh-pick { display: flex; align-items: center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid rgba(255,255,255,.05); cursor: pointer }
+            .mh-pick input { width: 16px; height: 16px; accent-color: #ff0040; flex-shrink: 0 }
+            @media (max-width: 640px) {
+                .mh-actions { width: 100% }
+                .mh-actions select { flex: 1; min-width: 0 }
+                .mh-cardhead { flex-wrap: wrap; padding: 12px }
+                .mh-bmstats { width: 100%; margin-left: 20px; gap: 18px }
+                .mh-bmstats .mh-m { text-align: left }
+                .mh-row { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px 12px; padding: 12px }
+                .mh-row > .mh-name { grid-column: 1 / -1 }
+                .mh-row .mh-m { text-align: left }
+                .mh-sub .mh-row { padding-left: 22px }
+            }
+        `;
+
+        function MhMetric({ l, v, s, c }) {
+            return <div className="mh-m"><span>{l}</span><b style={c ? { color: c } : undefined}>{v}</b>{s && <small>{s}</small>}</div>;
+        }
+
+        /* Escolha das BMs que aparecem na tela — salva na conexão Meta (vale no desktop e no celular) */
+        function MetaBmPicker({ groups, selected, onSave, onClose, presetLabel }) {
+            const [draft, setDraft] = useState(() => new Set(selected || groups.map(g => g.id)));
+            const toggle = id => setDraft(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+            const active = g => g.accounts.some(a => a.activeCamps > 0 || a.today.spend > 0 || a.period.spend > 0);
+            return (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.8)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }} onClick={onClose}>
+                    <div className="glass" style={{ width: 480, maxWidth: '100%', maxHeight: '85vh', display: 'flex', flexDirection: 'column', borderRadius: 16, padding: '20px 22px', background: '#0d0d14' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                            <h2 style={{ fontSize: 16, fontWeight: 700 }}>BMs que aparecem</h2>
+                            <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.45)', cursor: 'pointer', fontSize: 22 }}>×</button>
+                        </div>
+                        <div className="mh-muted" style={{ marginBottom: 10 }}>Marque só as BMs com que vocês trabalham hoje.</div>
+                        <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}>
+                            <button className="mh-btn" onClick={() => setDraft(new Set(groups.filter(active).map(g => g.id)))}>Só com campanha ativa ou gasto</button>
+                            <button className="mh-btn" onClick={() => setDraft(new Set(groups.map(g => g.id)))}>Todas</button>
+                        </div>
+                        <div style={{ overflowY: 'auto', flex: 1 }}>
+                            {groups.map(g => (
+                                <label key={g.id} className="mh-pick">
+                                    <input type="checkbox" checked={draft.has(g.id)} onChange={() => toggle(g.id)} />
+                                    <div style={{ minWidth: 0 }}>
+                                        <div style={{ fontSize: 13, fontWeight: 600 }}>{g.name}</div>
+                                        <div className="mh-muted">{g.accounts.length} conta{g.accounts.length !== 1 ? 's' : ''} · {g.accounts.filter(a => a.delivery.key === 'running').length} rodando · {intBR(sumM(g.accounts, 'period', 'leads'))} leads ({presetLabel.toLowerCase()})</div>
+                                    </div>
+                                </label>
+                            ))}
+                        </div>
+                        <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 14 }}>
+                            <button className="btn-secondary" onClick={onClose}>Cancelar</button>
+                            <button className="btn-primary" disabled={!draft.size} onClick={() => { onSave([...draft]); onClose(); }}>Salvar ({draft.size})</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         function MetaHub() {
             const { metaConns } = useApp();
             const [preset, setPreset] = useState('last_7d');
@@ -5087,15 +5170,28 @@
             const [closedBMs, setClosedBMs] = useState({});
             const [openAcc, setOpenAcc] = useState(null);
             const [campRows, setCampRows] = useState({});
-            const [filter, setFilter] = useState('all');
-            const [search, setSearch] = useState('');
             const [showToken, setShowToken] = useState(false);
+            const [showPicker, setShowPicker] = useState(false);
+            const [alertsOpen, setAlertsOpen] = useState(() => { try { return localStorage.getItem('mh_alerts_open') !== '0'; } catch { return true; } });
             const loadingRef = useRef(false);
             const presets = DATE_PRESETS.filter(p => p.id !== 'today');
             const presetLabel = presets.find(p => p.id === preset)?.label || preset;
             const isExpired = c => c.expiresAt && new Date(c.expiresAt) < new Date();
             const validConns = metaConns.filter(c => c.accessToken && !isExpired(c));
             const expiredConns = metaConns.filter(isExpired);
+            /* recarrega só quando muda um token, não a cada alteração da conexão */
+            const connKey = validConns.map(c => c.id + ':' + c.accessToken.slice(-16)).join('|');
+            const savedSel = metaConns.find(c => Array.isArray(c.hubBms))?.hubBms || null;
+            const [selected, setSelected] = useState(savedSel);
+            useEffect(() => { setSelected(savedSel); }, [JSON.stringify(savedSel)]);
+
+            const saveSelection = async ids => {
+                setSelected(ids);
+                for (const c of metaConns) {
+                    try { await supabase.from('meta_connections').update({ hubBms: ids }).eq('id', c.id); } catch (e) { console.warn('Falha ao salvar BMs', e); }
+                }
+            };
+            const toggleAlerts = () => setAlertsOpen(o => { try { localStorage.setItem('mh_alerts_open', o ? '0' : '1'); } catch {} return !o; });
 
             const load = async silent => {
                 if (loadingRef.current) return;
@@ -5141,12 +5237,12 @@
                 setAccounts(list); setBmList([...bmMap].map(([id, name]) => ({ id, name }))); setErrors(errs); setUpdatedAt(new Date()); setCampRows({});
                 setLoading(false); loadingRef.current = false;
             };
-            useEffect(() => { if (validConns.length) load(); }, [metaConns, preset]);
+            useEffect(() => { if (validConns.length) load(); }, [connKey, preset]);
             /* Atualiza sozinho a cada 5 min enquanto a aba estiver visível */
             useEffect(() => {
                 const t = setInterval(() => { if (!document.hidden && validConns.length) load(true); }, 5 * 60 * 1000);
                 return () => clearInterval(t);
-            }, [metaConns, preset]);
+            }, [connKey, preset]);
 
             const toggleAccount = async a => {
                 if (openAcc === a.id) { setOpenAcc(null); return; }
@@ -5161,201 +5257,170 @@
                 } catch (e) { setCampRows(prev => ({ ...prev, [a.id]: { error: e.message } })); }
             };
 
-            const q = search.trim().toLowerCase();
-            const visible = accounts.filter(a => (filter === 'all' || a.delivery.key === filter) && (!q || a.name.toLowerCase().includes(q) || (a.business?.name || '').toLowerCase().includes(q)));
-            /* BMs sem nenhuma conta de anúncio também aparecem (só na visão "Todas") */
-            const bmSeed = filter === 'all' ? Object.fromEntries(bmList.filter(b => !q || b.name.toLowerCase().includes(q)).map(b => [b.id, { id: b.id, name: b.name, accounts: [] }])) : {};
-            const bms = Object.values(visible.reduce((acc, a) => {
-                const k = a.business?.id || 'none';
-                (acc[k] = acc[k] || { id: k, name: a.business?.name || 'Sem BM (conta pessoal)', accounts: [] }).accounts.push(a);
-                return acc;
-            }, bmSeed)).sort((x, y) => sumM(y.accounts, 'today', 'spend') - sumM(x.accounts, 'today', 'spend') || x.name.localeCompare(y.name));
-            bms.forEach(b => b.accounts.sort((x, y) => y.today.spend - x.today.spend || y.period.spend - x.period.spend));
-
-            const prepaidTotal = accounts.reduce((s, a) => s + (a.funds.kind === 'prepaid' ? a.funds.value : 0), 0);
-            const todaySpend = sumM(accounts, 'today', 'spend'), periodSpend = sumM(accounts, 'period', 'spend'), periodLeads = sumM(accounts, 'period', 'leads');
-            const count = k => accounts.filter(a => a.delivery.key === k).length;
-            const alerts = [];
+            /* Agrupa por BM (inclui BMs sem conta) e aplica a escolha salva */
+            const groupsMap = Object.fromEntries(bmList.map(b => [b.id, { id: b.id, name: b.name, accounts: [] }]));
             accounts.forEach(a => {
+                const k = a.business?.id || 'none';
+                (groupsMap[k] = groupsMap[k] || { id: k, name: a.business?.name || 'Sem BM (conta pessoal)', accounts: [] }).accounts.push(a);
+            });
+            const rank = a => a.delivery.key === 'running' ? 0 : a.delivery.key === 'idle' || a.delivery.key === 'problem' ? 1 : 2;
+            const groups = Object.values(groupsMap).sort((x, y) => sumM(y.accounts, 'today', 'spend') - sumM(x.accounts, 'today', 'spend') || y.accounts.length - x.accounts.length || x.name.localeCompare(y.name));
+            groups.forEach(g => g.accounts.sort((x, y) => rank(x) - rank(y) || y.today.spend - x.today.spend || y.period.spend - x.period.spend));
+            const bms = selected ? groups.filter(g => selected.includes(g.id)) : groups;
+            const shown = bms.flatMap(g => g.accounts);
+            const running = shown.filter(a => a.delivery.key === 'running').length;
+
+            const alerts = [];
+            shown.forEach(a => {
                 const days = balanceDays(a);
                 if (a.delivery.key === 'problem') alerts.push({ c: '#ff4060', a, msg: a.delivery.label + (a.activeCamps ? ` · ${a.activeCamps} campanha(s) ativa(s) sem veicular` : '') });
-                else if (a.funds.kind === 'prepaid' && a.activeCamps > 0 && (days != null ? days < 2 : a.funds.value < 50)) alerts.push({ c: '#ffb400', a, msg: `Saldo baixo: ${fmt(a.funds.value)}${days != null ? ` (~${days < 1 ? 'menos de 1 dia' : Math.floor(days) + ' dia(s)'})` : ''}` });
-                else if (a.delivery.key === 'idle') alerts.push({ c: '#ffb400', a, msg: `${a.activeCamps} campanha(s) ativa(s), mas nada gasto hoje` });
+                else if (a.funds.kind === 'prepaid' && a.activeCamps > 0 && (days != null ? days < 2 : a.funds.value < 50)) alerts.push({ c: '#ffb400', a, msg: `Saldo baixo: ${fmt(a.funds.value)}${days != null ? ` (dura ${daysLabel(days)})` : ''}` });
+                else if (a.delivery.key === 'idle') alerts.push({ c: '#ffb400', a, msg: `${a.activeCamps} campanha(s) ativa(s), nada gasto hoje` });
             });
 
-            const th = { fontSize: 10, textTransform: 'uppercase', letterSpacing: .4, color: 'rgba(255,255,255,.4)', fontWeight: 700, padding: '8px 10px', textAlign: 'right', whiteSpace: 'nowrap' };
-            const td = { padding: '9px 10px', fontSize: 12, textAlign: 'right', whiteSpace: 'nowrap' };
-            const thL = { ...th, textAlign: 'left' }, tdL = { ...td, textAlign: 'left' };
-            const fundsCell = a => a.funds.kind === 'prepaid'
-                ? <div><div style={{ fontWeight: 700, color: a.funds.value <= 0 ? '#ff4060' : '#fff' }}>{fmt(a.funds.value)}</div>{balanceDays(a) != null && <div style={{ fontSize: 10, color: 'rgba(255,255,255,.4)' }}>~{balanceDays(a) < 1 ? '<1' : Math.floor(balanceDays(a))} dia(s)</div>}</div>
-                : <div><div style={{ fontWeight: 600 }}>{fmt(a.funds.value)} <span style={{ fontSize: 10, color: 'rgba(255,255,255,.4)', fontWeight: 400 }}>a pagar</span></div><div style={{ fontSize: 10, color: 'rgba(255,255,255,.4)' }}>{a.funds.capLeft != null ? `Limite restante ${fmt(a.funds.capLeft)}` : (a.funds.source || 'Pós-paga')}</div></div>;
-            const kpis = [
-                { l: 'Saldo disponível', v: fmt(prepaidTotal), s: 'soma das contas pré-pagas', c: '#00c853' },
-                { l: 'Gasto hoje', v: fmt(todaySpend), s: `${presetLabel}: ${fmt(periodSpend)}`, c: '#4090ff' },
-                { l: 'Leads hoje', v: intBR(sumM(accounts, 'today', 'leads')), s: `${intBR(sumM(accounts, 'today', 'convs'))} conversas no WhatsApp/Direct`, c: '#a060ff' },
-                { l: 'Impressões hoje', v: intBR(sumM(accounts, 'today', 'impressions')), s: `${intBR(sumM(accounts, 'today', 'reach'))} pessoas · ${intBR(sumM(accounts, 'today', 'clicks'))} cliques`, c: '#00bcd4' },
-                { l: `Leads · ${presetLabel}`, v: intBR(periodLeads), s: periodLeads > 0 ? `CPL ${fmt(periodSpend / periodLeads)}` : 'sem leads no período', c: '#ff8030' },
-                { l: 'Contas', v: `${count('running')} rodando`, s: `${count('idle')} sem gasto · ${count('stopped')} paradas · ${count('problem')} com problema`, c: '#ff0040' }
-            ];
+            const funds = a => a.funds.kind === 'prepaid'
+                ? <MhMetric l="Saldo" v={fmt(a.funds.value)} c={a.funds.value <= 0 ? '#ff4060' : undefined} s={balanceDays(a) != null ? `dura ${daysLabel(balanceDays(a))}` : null} />
+                : <MhMetric l="A pagar" v={fmt(a.funds.value)} s={a.funds.capLeft != null ? `limite ${fmt(a.funds.capLeft)}` : 'cartão'} />;
+            const periodShort = presetLabel.replace('Últimos ', '').replace('Último ', '');
+            const leadsCell = m => <MhMetric l={`Leads ${periodShort}`} v={intBR(m.leads)} s={m.leads ? `CPL ${fmt(m.spend / m.leads)}` : null} />;
 
             if (!metaConns.length || (!validConns.length && !accounts.length)) return (
                 <div className="fade-in">
-                    <h1 style={{ fontSize: 21, fontWeight: 700 }}>Central Meta Ads</h1>
-                    <div className="glass" style={{ textAlign: 'center', padding: '50px 20px', marginTop: 18 }}>
-                        <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>{expiredConns.length ? 'O token do Meta expirou' : 'Nenhuma conta Meta conectada'}</div>
-                        <div style={{ fontSize: 13, color: 'rgba(255,255,255,.45)', marginBottom: 20 }}>{expiredConns.length ? `A conexão de ${expiredConns.map(c => c.metaUserName).join(', ')} venceu em ${new Date(expiredConns[0].expiresAt).toLocaleDateString('pt-BR')}. Cole um token novo para voltar a puxar os dados.` : 'Cole um token de acesso do Meta com ads_read e business_management.'}</div>
+                    <style>{MH_CSS}</style>
+                    <div className="mh-head"><h1>Central Meta Ads</h1></div>
+                    <div className="glass" style={{ textAlign: 'center', padding: '40px 20px' }}>
+                        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>{expiredConns.length ? 'O token do Meta expirou' : 'Nenhuma conta Meta conectada'}</div>
+                        <div className="mh-muted" style={{ fontSize: 13, marginBottom: 18 }}>{expiredConns.length ? `Venceu em ${new Date(expiredConns[0].expiresAt).toLocaleDateString('pt-BR')}. Cole um token novo para voltar a puxar os dados.` : 'Cole um token do Meta com ads_read e business_management.'}</div>
                         <button className="btn-primary" onClick={() => setShowToken(true)}>Atualizar token</button>
                     </div>
-                    {showToken && <MetaTokenModal onClose={() => setShowToken(false)} />}
+                    {showToken && <MetaTokenModal hubBms={selected} onClose={() => setShowToken(false)} />}
                 </div>
             );
 
             return (
                 <div className="fade-in">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 10 }}>
+                    <style>{MH_CSS}</style>
+                    <div className="mh-head">
                         <div>
-                            <h1 style={{ fontSize: 21, fontWeight: 700 }}>Central Meta Ads</h1>
-                            <p style={{ fontSize: 13, color: 'rgba(255,255,255,.38)', marginTop: 3 }}>{bmList.length} BMs · {accounts.length} contas de anúncio{updatedAt && ` · atualizado às ${updatedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`} · atualiza sozinho a cada 5 min{/^last_\d+d$/.test(preset) && ` · "${presetLabel}" não inclui hoje`}</p>
+                            <h1>Central Meta Ads</h1>
+                            <div className="mh-muted" style={{ marginTop: 3 }}>{loading ? 'Atualizando...' : updatedAt ? `Atualizado às ${updatedAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}{selected && ` · ${bms.length} de ${groups.length} BMs`}</div>
                         </div>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                            <select className="input-field" style={{ fontSize: 12, padding: '6px 10px', width: 'auto' }} value={preset} onChange={e => setPreset(e.target.value)}>
+                        <div className="mh-actions">
+                            <select className="input-field" style={{ fontSize: 12, padding: '6px 10px', width: 'auto' }} value={preset} onChange={e => setPreset(e.target.value)} title='Períodos "Últimos X dias" não incluem hoje'>
                                 {presets.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
                             </select>
-                            <button className="btn-secondary" onClick={() => load()} disabled={loading}><Ic n="sync" s={13} />{loading ? 'Carregando...' : 'Atualizar'}</button>
-                            <button className="btn-secondary" onClick={() => setShowToken(true)}>Token</button>
+                            <button className="mh-btn" onClick={() => load()} disabled={loading}>{loading ? '...' : 'Atualizar'}</button>
+                            <button className="mh-btn" onClick={() => setShowPicker(true)}>BMs</button>
+                            <button className="mh-btn" onClick={() => setShowToken(true)}>Token</button>
                         </div>
                     </div>
 
-                    {expiredConns.length > 0 && <div style={{ background: 'rgba(255,180,0,.08)', border: '1px solid rgba(255,180,0,.25)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#ffcc55', marginBottom: 12 }}>Token expirado: {expiredConns.map(c => c.metaUserName).join(', ')}. As contas dessa conexão não aparecem até você atualizar o token.</div>}
-                    {errors.length > 0 && <div style={{ background: 'rgba(255,0,64,.08)', border: '1px solid rgba(255,0,64,.2)', borderRadius: 8, padding: '8px 12px', fontSize: 12, color: '#ff6080', marginBottom: 12 }}>{errors.slice(0, 4).map((e, i) => <div key={i}>{e}</div>)}</div>}
+                    {expiredConns.length > 0 && <div className="mh-muted" style={{ color: '#ffcc55', marginBottom: 10 }}>Token expirado: {expiredConns.map(c => c.metaUserName).join(', ')}. Clique em Token para atualizar.</div>}
+                    {errors.length > 0 && <div className="mh-muted" style={{ color: '#ff6080', marginBottom: 10 }}>{errors[0]}{errors.length > 1 && ` (+${errors.length - 1})`}</div>}
 
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 12, marginBottom: 16, opacity: loading && !accounts.length ? .4 : 1 }}>
-                        {kpis.map(k => (
-                            <div key={k.l} className="glass" style={{ padding: '14px 16px' }}>
-                                <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.4)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: .4, marginBottom: 5 }}>{k.l}</div>
-                                <div style={{ fontSize: 21, fontWeight: 700, color: k.c }}>{k.v}</div>
-                                <div style={{ fontSize: 11, color: 'rgba(255,255,255,.4)', marginTop: 3 }}>{k.s}</div>
-                            </div>
-                        ))}
+                    <div className="glass" style={{ padding: '14px 16px', marginBottom: 10 }}>
+                        <div className="mh-muted" style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: .4, fontSize: 10.5 }}>Contas rodando</div>
+                        <div style={{ fontSize: 24, fontWeight: 700, marginTop: 2 }}><span style={{ color: '#00c853' }}>{running}</span><span style={{ color: 'rgba(255,255,255,.45)', fontSize: 16, fontWeight: 600 }}> de {shown.length}</span></div>
+                        <div className="mh-bar"><div style={{ width: shown.length ? `${running / shown.length * 100}%` : 0 }} /></div>
                     </div>
 
                     {alerts.length > 0 && (
-                        <div className="glass" style={{ padding: '12px 16px', marginBottom: 16 }}>
-                            <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 8 }}>Atenção ({alerts.length})</div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                {alerts.map((al, i) => (
-                                    <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12 }}>
-                                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: al.c, flexShrink: 0 }} />
-                                        <strong>{al.a.name}</strong><span style={{ color: 'rgba(255,255,255,.35)' }}>{al.a.business?.name || 'Sem BM'}</span>
-                                        <span style={{ color: al.c }}>{al.msg}</span>
-                                    </div>
-                                ))}
+                        <div className="glass mh-card">
+                            <div className="mh-cardhead" onClick={toggleAlerts}>
+                                <MhChev open={alertsOpen} />
+                                <span style={{ fontSize: 13, fontWeight: 700 }}>Atenção</span>
+                                <span style={{ background: '#ff0040', color: '#fff', borderRadius: 10, fontSize: 10.5, fontWeight: 700, padding: '1px 7px' }}>{alerts.length}</span>
+                                <span className="mh-muted" style={{ marginLeft: 'auto' }}>{alertsOpen ? 'minimizar' : 'mostrar'}</span>
                             </div>
+                            {alertsOpen && (
+                                <div style={{ padding: '0 16px 12px 36px', display: 'flex', flexDirection: 'column', gap: 7 }}>
+                                    {alerts.map((al, i) => (
+                                        <div key={i} style={{ fontSize: 12, lineHeight: 1.4 }}>
+                                            <span className="mh-dot" style={{ background: al.c }} /><strong>{al.a.name}</strong>
+                                            <span style={{ color: al.c }}> — {al.msg}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     )}
 
-                    <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-                        {HUB_FILTERS.map(f => (
-                            <button key={f.id} onClick={() => setFilter(f.id)} style={{ padding: '6px 12px', borderRadius: 20, fontSize: 12, cursor: 'pointer', border: '1px solid ' + (filter === f.id ? '#ff0040' : 'rgba(255,255,255,.1)'), background: filter === f.id ? 'rgba(255,0,64,.12)' : 'transparent', color: filter === f.id ? '#fff' : 'rgba(255,255,255,.55)', fontWeight: filter === f.id ? 700 : 400 }}>
-                                {f.label}{f.id !== 'all' && ` (${count(f.id)})`}
-                            </button>
-                        ))}
-                        <input className="input-field" style={{ fontSize: 12, padding: '6px 10px', width: 220, marginLeft: 'auto' }} placeholder="Buscar BM ou conta..." value={search} onChange={e => setSearch(e.target.value)} />
-                    </div>
-
-                    {loading && !accounts.length && <div style={{ textAlign: 'center', padding: 40, color: 'rgba(255,255,255,.4)', fontSize: 13 }}>Puxando dados do Meta...</div>}
-                    {!loading && accounts.length > 0 && !bms.length && <div style={{ textAlign: 'center', padding: 30, color: 'rgba(255,255,255,.4)', fontSize: 13 }}>Nenhuma conta nesse filtro.</div>}
+                    {loading && !accounts.length && <div className="mh-muted" style={{ textAlign: 'center', padding: 40, fontSize: 13 }}>Puxando dados do Meta...</div>}
 
                     {bms.map(bm => {
                         const open = !closedBMs[bm.id];
                         const L = bm.accounts;
-                        const bmPrepaid = L.reduce((s, a) => s + (a.funds.kind === 'prepaid' ? a.funds.value : 0), 0);
+                        const bmRunning = L.filter(a => a.delivery.key === 'running').length;
                         return (
-                            <div key={bm.id} className="glass" style={{ marginBottom: 12, overflow: 'hidden' }}>
-                                <div onClick={() => setClosedBMs(p => ({ ...p, [bm.id]: open }))} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px', cursor: 'pointer', flexWrap: 'wrap' }}>
-                                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,.4)', width: 10 }}>{open ? '▾' : '▸'}</span>
-                                    <div style={{ flex: 1, minWidth: 160 }}>
+                            <div key={bm.id} className="glass mh-card">
+                                <div className="mh-cardhead" onClick={() => setClosedBMs(p => ({ ...p, [bm.id]: open }))}>
+                                    <MhChev open={open} />
+                                    <div style={{ minWidth: 0 }}>
                                         <div style={{ fontWeight: 700, fontSize: 14 }}>{bm.name}</div>
-                                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,.4)' }}>{L.length} conta{L.length > 1 ? 's' : ''} · {L.filter(a => a.delivery.key === 'running').length} rodando</div>
+                                        <div className="mh-muted">{L.length ? `${bmRunning} de ${L.length} conta${L.length > 1 ? 's' : ''} rodando` : 'Nenhuma conta de anúncio'}</div>
                                     </div>
-                                    {[['Saldo', fmt(bmPrepaid), '#00c853'], ['Gasto hoje', fmt(sumM(L, 'today', 'spend')), '#4090ff'], ['Leads hoje', intBR(sumM(L, 'today', 'leads')), '#a060ff'], ['Impressões hoje', intBR(sumM(L, 'today', 'impressions')), '#00bcd4'], [`Leads · ${presetLabel}`, intBR(sumM(L, 'period', 'leads')), '#ff8030']].map(([l, v, c]) => (
-                                        <div key={l} style={{ textAlign: 'right', minWidth: 90 }}>
-                                            <div style={{ fontSize: 9.5, color: 'rgba(255,255,255,.4)', textTransform: 'uppercase', letterSpacing: .4, fontWeight: 700 }}>{l}</div>
-                                            <div style={{ fontSize: 14, fontWeight: 700, color: c }}>{v}</div>
+                                    {L.length > 0 && (
+                                        <div className="mh-bmstats">
+                                            <MhMetric l="Saldo" v={fmt(L.reduce((s, a) => s + (a.funds.kind === 'prepaid' ? a.funds.value : 0), 0))} />
+                                            <MhMetric l="Leads hoje" v={intBR(sumM(L, 'today', 'leads'))} />
+                                            <MhMetric l={`Leads ${periodShort}`} v={intBR(sumM(L, 'period', 'leads'))} />
                                         </div>
-                                    ))}
+                                    )}
                                 </div>
-                                {open && !L.length && <div style={{ borderTop: '1px solid rgba(255,255,255,.06)', padding: '10px 16px 12px 40px', fontSize: 12, color: 'rgba(255,255,255,.4)' }}>Nenhuma conta de anúncio nesta BM.</div>}
-                                {open && L.length > 0 && (
-                                    <div style={{ overflowX: 'auto', borderTop: '1px solid rgba(255,255,255,.06)' }}>
-                                        <table className="tbl" style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1050 }}>
-                                            <thead><tr>
-                                                <th style={thL}>Conta de anúncio</th><th style={thL}>Situação</th><th style={th}>Saldo</th><th style={th}>Campanhas</th>
-                                                <th style={th}>Gasto hoje</th><th style={th}>Impressões</th><th style={th}>Alcance</th><th style={th}>Cliques</th><th style={th}>Leads hoje</th>
-                                                <th style={th}>Gasto · {presetLabel}</th><th style={th}>Leads</th><th style={th}>CPL</th>
-                                            </tr></thead>
-                                            <tbody>
-                                                {L.map(a => {
-                                                    const cr = campRows[a.id];
-                                                    return (
-                                                        <React.Fragment key={a.id}>
-                                                            <tr onClick={() => toggleAccount(a)} style={{ cursor: 'pointer' }}>
-                                                                <td style={tdL}><span style={{ color: 'rgba(255,255,255,.4)', marginRight: 6 }}>{openAcc === a.id ? '▾' : '▸'}</span><strong>{a.name}</strong><div style={{ fontSize: 10, color: 'rgba(255,255,255,.35)', marginLeft: 16 }}>ID {a.account_id}</div></td>
-                                                                <td style={tdL}><HubChip label={a.delivery.label} color={a.delivery.color} /></td>
-                                                                <td style={td}>{fundsCell(a)}</td>
-                                                                <td style={td}><span style={{ color: '#00c853', fontWeight: 700 }}>{a.activeCamps}</span> <span style={{ color: 'rgba(255,255,255,.4)' }}>ativas · {a.pausedCamps} pausadas</span>{a.dailyBudget > 0 && <div style={{ fontSize: 10, color: 'rgba(255,255,255,.4)' }}>{fmt(a.dailyBudget)}/dia</div>}</td>
-                                                                <td style={{ ...td, fontWeight: 700 }}>{fmt(a.today.spend)}</td>
-                                                                <td style={td}>{intBR(a.today.impressions)}</td>
-                                                                <td style={td}>{intBR(a.today.reach)}</td>
-                                                                <td style={td}>{intBR(a.today.clicks)}</td>
-                                                                <td style={{ ...td, fontWeight: 700, color: a.today.leads ? '#a060ff' : undefined }}>{intBR(a.today.leads)}</td>
-                                                                <td style={td}>{fmt(a.period.spend)}</td>
-                                                                <td style={{ ...td, fontWeight: 700 }}>{intBR(a.period.leads)}</td>
-                                                                <td style={td}>{a.period.leads ? fmt(a.period.spend / a.period.leads) : '—'}</td>
-                                                            </tr>
-                                                            {openAcc === a.id && (
-                                                                <tr><td colSpan={12} style={{ padding: '4px 12px 14px 30px', background: 'rgba(255,255,255,.015)' }}>
-                                                                    {!cr && <div style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', padding: 10 }}>Carregando campanhas...</div>}
-                                                                    {cr?.error && <div style={{ fontSize: 12, color: '#ff6080', padding: 10 }}>{cr.error}</div>}
-                                                                    {cr?.rows && (cr.rows.length === 0 ? <div style={{ fontSize: 12, color: 'rgba(255,255,255,.4)', padding: 10 }}>Nenhuma campanha ativa ou com gasto em {presetLabel.toLowerCase()}.</div> : (
-                                                                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                                                            <thead><tr><th style={thL}>Campanha</th><th style={thL}>Status</th><th style={th}>Orçamento</th><th style={th}>Gasto hoje</th><th style={th}>Impressões</th><th style={th}>Cliques</th><th style={th}>Leads hoje</th><th style={th}>Gasto · {presetLabel}</th><th style={th}>Leads</th><th style={th}>CPL</th></tr></thead>
-                                                                            <tbody>
-                                                                                {cr.rows.map(c => {
-                                                                                    const st = c.effective_status === 'ACTIVE' ? (c.today.spend > 0 ? ['Veiculando', '#00c853'] : ['Ativa, sem gasto hoje', '#ffb400']) : [CAMP_STATUS_LABEL[c.effective_status] || c.effective_status, CAMP_STATUS_CLR[c.effective_status] || '#8a8a8a'];
-                                                                                    const budget = c.daily_budget ? `${fmt(c.daily_budget / 100)}/dia` : c.lifetime_budget ? `${fmt(c.lifetime_budget / 100)} total` : 'no conjunto';
-                                                                                    return (
-                                                                                        <tr key={c.id} style={{ borderTop: '1px solid rgba(255,255,255,.04)' }}>
-                                                                                            <td style={{ ...tdL, maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.name}>{c.name}</td>
-                                                                                            <td style={tdL}><HubChip label={st[0]} color={st[1]} /></td>
-                                                                                            <td style={td}>{budget}</td>
-                                                                                            <td style={{ ...td, fontWeight: 700 }}>{fmt(c.today.spend)}</td>
-                                                                                            <td style={td}>{intBR(c.today.impressions)}</td>
-                                                                                            <td style={td}>{intBR(c.today.clicks)}</td>
-                                                                                            <td style={{ ...td, fontWeight: 700 }}>{intBR(c.today.leads)}</td>
-                                                                                            <td style={td}>{fmt(c.period.spend)}</td>
-                                                                                            <td style={{ ...td, fontWeight: 700 }}>{intBR(c.period.leads)}</td>
-                                                                                            <td style={td}>{c.period.leads ? fmt(c.period.spend / c.period.leads) : '—'}</td>
-                                                                                        </tr>
-                                                                                    );
-                                                                                })}
-                                                                            </tbody>
-                                                                        </table>
-                                                                    ))}
-                                                                    {cr?.hidden > 0 && <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.3)', padding: '6px 10px 0' }}>{cr.hidden} campanha(s) pausada(s) sem gasto no período não mostrada(s).</div>}
-                                                                </td></tr>
-                                                            )}
-                                                        </React.Fragment>
-                                                    );
-                                                })}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
+                                {open && L.map(a => {
+                                    const cr = campRows[a.id];
+                                    return (
+                                        <React.Fragment key={a.id}>
+                                            <div className="mh-row mh-click" onClick={() => toggleAccount(a)}>
+                                                <div className="mh-name">
+                                                    <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}><span className="mh-dot" style={{ background: a.delivery.color }} /><b>{a.name}</b></div>
+                                                    <div className="mh-muted" style={{ marginLeft: 13 }}><span style={{ color: a.delivery.color }}>{a.delivery.label}</span> · {a.activeCamps} de {a.activeCamps + a.pausedCamps} campanhas ativas{a.today.impressions > 0 && ` · ${intBR(a.today.impressions)} impressões hoje`}</div>
+                                                </div>
+                                                {funds(a)}
+                                                <MhMetric l="Gasto hoje" v={fmt(a.today.spend)} />
+                                                <MhMetric l="Leads hoje" v={intBR(a.today.leads)} c={a.today.leads ? '#a060ff' : undefined} />
+                                                {leadsCell(a.period)}
+                                            </div>
+                                            {openAcc === a.id && (
+                                                <div className="mh-sub">
+                                                    {!cr && <div className="mh-muted" style={{ padding: '10px 34px' }}>Carregando campanhas...</div>}
+                                                    {cr?.error && <div className="mh-muted" style={{ padding: '10px 34px', color: '#ff6080' }}>{cr.error}</div>}
+                                                    {cr?.rows && !cr.rows.length && <div className="mh-muted" style={{ padding: '10px 34px' }}>Nenhuma campanha ativa ou com gasto em {presetLabel.toLowerCase()}.</div>}
+                                                    {cr?.rows?.map(c => {
+                                                        const st = c.effective_status === 'ACTIVE' ? (c.today.spend > 0 ? ['Veiculando', '#00c853'] : ['Ativa, sem gasto hoje', '#ffb400']) : [CAMP_STATUS_LABEL[c.effective_status] || 'Pausada', CAMP_STATUS_CLR[c.effective_status] || '#8a8a8a'];
+                                                        const budget = c.daily_budget ? `${fmt(c.daily_budget / 100)}/dia` : c.lifetime_budget ? `${fmt(c.lifetime_budget / 100)} total` : 'orçamento no conjunto';
+                                                        return (
+                                                            <div key={c.id} className="mh-row">
+                                                                <div className="mh-name">
+                                                                    <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }} title={c.name}><span className="mh-dot" style={{ background: st[1] }} /><b style={{ fontWeight: 600, fontSize: 12.5 }}>{c.name}</b></div>
+                                                                    <div className="mh-muted" style={{ marginLeft: 13 }}><span style={{ color: st[1] }}>{st[0]}</span> · {budget}</div>
+                                                                </div>
+                                                                <MhMetric l="Gasto hoje" v={fmt(c.today.spend)} />
+                                                                <MhMetric l="Impressões hoje" v={intBR(c.today.impressions)} />
+                                                                <MhMetric l="Leads hoje" v={intBR(c.today.leads)} />
+                                                                {leadsCell(c.period)}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                    {cr?.hidden > 0 && <div className="mh-muted" style={{ padding: '4px 34px 10px', fontSize: 10.5 }}>{cr.hidden} campanha(s) pausada(s) sem gasto no período não mostrada(s).</div>}
+                                                </div>
+                                            )}
+                                        </React.Fragment>
+                                    );
+                                })}
                             </div>
                         );
                     })}
-                    {showToken && <MetaTokenModal onClose={() => setShowToken(false)} />}
+
+                    {accounts.length > 0 && (
+                        <div className="mh-muted" style={{ textAlign: 'center', padding: '6px 0 16px' }}>
+                            {selected ? `${groups.length - bms.length} BM(s) oculta(s) · ` : 'Mostrando todas as BMs · '}
+                            <span onClick={() => setShowPicker(true)} style={{ color: '#ff4060', cursor: 'pointer', fontWeight: 600 }}>escolher BMs</span>
+                        </div>
+                    )}
+
+                    {showPicker && <MetaBmPicker groups={groups} selected={selected} presetLabel={presetLabel} onSave={saveSelection} onClose={() => setShowPicker(false)} />}
+                    {showToken && <MetaTokenModal hubBms={selected} onClose={() => setShowToken(false)} />}
                 </div>
             );
         }
