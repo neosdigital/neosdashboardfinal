@@ -6,6 +6,7 @@ const cors = require('cors');
 const { metaLeadsRouter } = require('./meta-leads');
 const { PRIVACY_HTML } = require('./privacy');
 const { initPush, pushRouter, notifyNewLeadPush } = require('./push');
+const { startMetaMonitor } = require('./meta-monitor');
 
 const app = express();
 const server = http.createServer(app);
@@ -41,6 +42,8 @@ async function initDB() {
 }
 initDB().catch(e => console.error('[Neos] Erro ao inicializar banco:', e.message));
 initPush(pool);
+/* Alertas de saldo/veiculação das contas Meta → push + tarefa no Kanban (ver meta-monitor.js) */
+startMetaMonitor(pool, broadcast);
 
 const tableOk = t => TABLES.includes(t);
 

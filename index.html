@@ -1206,7 +1206,7 @@
 
             /* Toque numa notificação push abre a aba correspondente (ver sw.js) */
             useEffect(() => {
-                const VIEWS = ['dashboard', 'leads', 'goals', 'clients', 'kanban', 'financial', 'traffic', 'design', 'performance', 'calendar', 'settings'];
+                const VIEWS = ['dashboard', 'leads', 'goals', 'clients', 'kanban', 'financial', 'traffic', 'metahub', 'design', 'performance', 'calendar', 'settings'];
                 const q = new URLSearchParams(location.search).get('view');
                 if (q) { if (VIEWS.includes(q)) setView(q); history.replaceState(null, '', location.pathname); }
                 const onMsg = e => { if (e.data?.type === 'neos-open-view' && VIEWS.includes(e.data.view)) setView(e.data.view); };
@@ -5012,6 +5012,18 @@
         };
         /* Dias de saldo com base no orçamento diário das campanhas ativas */
         const balanceDays = a => a.funds.kind === 'prepaid' && a.funds.value > 0 && a.dailyBudget > 0 ? a.funds.value / a.dailyBudget : null;
+        /* Cards de alerta — mesmas regras do monitor do servidor (railway-backend/meta-monitor.js), manter em sincronia */
+        const HUB_IDLE_FROM_HOUR = 10;
+        const hubAlertOf = a => {
+            if (!a.activeCamps) return null;
+            const n = a.activeCamps + ' campanha' + (a.activeCamps > 1 ? 's' : '');
+            if (a.account_status !== 1) return { group: 'payment', card: 'problem', msg: a.delivery.label + ' · ' + n + ' parada' + (a.activeCamps > 1 ? 's' : '') };
+            if (a.funds.kind === 'prepaid' && a.funds.value <= 0) return { group: 'funds', card: 'problem', msg: 'Sem saldo · ' + n + ' parada' + (a.activeCamps > 1 ? 's' : '') };
+            const days = balanceDays(a);
+            if (a.funds.kind === 'prepaid' && (days != null ? days < 2 : a.funds.value < 50)) return { group: 'funds', card: 'lowbal', msg: fmt(a.funds.value) + (days != null ? ' · dura ' + daysLabel(days) : '') };
+            if (a.today.spend === 0 && new Date().getHours() >= HUB_IDLE_FROM_HOUR) return { group: 'idle', card: 'idle', msg: n + ' ativa' + (a.activeCamps > 1 ? 's' : '') + ' · R$ 0 hoje' };
+            return null;
+        };
         const sumM = (list, k, f) => list.reduce((s, a) => s + (a[k]?.[f] || 0), 0);
         const intBR = n => Math.round(n || 0).toLocaleString('pt-BR');
         /* 0.4 → "menos de 1 dia", 3.7 → "3 dias" */
@@ -5089,32 +5101,42 @@
             .mh-cardhead { display: flex; align-items: center; gap: 10px; padding: 12px 16px; cursor: pointer; user-select: none }
             .mh-chev { color: rgba(255,255,255,.45); flex-shrink: 0 }
             .mh-bmstats { display: flex; gap: 22px; margin-left: auto }
-            .mh-row { display: grid; grid-template-columns: minmax(0,2.4fr) repeat(4, minmax(0,1fr)); gap: 12px; align-items: center; padding: 11px 16px; border-top: 1px solid rgba(255,255,255,.05) }
-            .mh-row.mh-click { cursor: pointer }
-            .mh-row.mh-click:hover { background: rgba(255,255,255,.02) }
-            .mh-sub { background: rgba(255,255,255,.015) }
-            .mh-sub .mh-row { padding-left: 34px }
-            .mh-m { text-align: right; min-width: 0 }
+            .mh-m { min-width: 0 }
             .mh-m span { display: block; font-size: 9.5px; text-transform: uppercase; letter-spacing: .4px; color: rgba(255,255,255,.38); font-weight: 700 }
-            .mh-m b { font-size: 13.5px; font-weight: 700 }
-            .mh-m small { display: block; font-size: 10.5px; color: rgba(255,255,255,.4) }
-            .mh-name { min-width: 0 }
-            .mh-name b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block }
-            .mh-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; flex-shrink: 0 }
+            .mh-m b { font-size: 14px; font-weight: 700 }
+            .mh-m small { display: block; font-size: 10.5px; color: rgba(255,255,255,.42) }
+            .mh-bmstats .mh-m { text-align: right }
+            .mh-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; flex-shrink: 0 }
             .mh-bar { height: 6px; border-radius: 6px; background: rgba(255,255,255,.07); overflow: hidden; margin-top: 8px }
             .mh-bar div { height: 100%; background: #00c853; border-radius: 6px; transition: width .3s }
+            .mh-alerts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px }
+            .mh-alert { border-radius: 12px; padding: 12px 14px; border: 1px solid; min-width: 0 }
+            .mh-alert-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 6px }
+            .mh-alert-top h3 { font-size: 12.5px; font-weight: 700 }
+            .mh-alert-top strong { font-size: 22px; font-weight: 800 }
+            .mh-alert-item { display: block; width: 100%; text-align: left; background: none; border: none; border-top: 1px solid rgba(255,255,255,.06); padding: 7px 0; color: inherit; cursor: pointer; font: inherit }
+            .mh-alert-item b { font-size: 12.5px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+            .mh-tag { display: inline-block; font-size: 9.5px; font-weight: 700; padding: 1px 6px; border-radius: 6px; background: rgba(64,144,255,.15); color: #7fb2ff; margin-left: 6px; vertical-align: middle }
+            .mh-accs { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); align-items: start; gap: 10px; padding: 0 12px 12px }
+            .mh-acc { border-radius: 10px; background: rgba(255,255,255,.025); border: 1px solid rgba(255,255,255,.07); border-left: 3px solid; min-width: 0; scroll-margin-top: 80px; transition: box-shadow .3s }
+            .mh-acc.mh-flash { box-shadow: 0 0 0 2px #ff0040 }
+            .mh-acc-head { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; cursor: pointer; user-select: none }
+            .mh-acc-head b { font-size: 13px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+            .mh-acc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; padding: 2px 12px 10px }
+            .mh-acc-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid rgba(255,255,255,.05) }
+            .mh-link { background: none; border: none; color: #ff4060; font-size: 11.5px; font-weight: 600; cursor: pointer; padding: 0; white-space: nowrap }
+            .mh-camp { padding: 7px 12px; border-top: 1px solid rgba(255,255,255,.04) }
+            .mh-camp b { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block }
             .mh-pick { display: flex; align-items: center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid rgba(255,255,255,.05); cursor: pointer }
             .mh-pick input { width: 16px; height: 16px; accent-color: #ff0040; flex-shrink: 0 }
+            @media (max-width: 900px) { .mh-alerts { grid-template-columns: minmax(0, 1fr) } }
             @media (max-width: 640px) {
                 .mh-actions { width: 100% }
                 .mh-actions select { flex: 1; min-width: 0 }
                 .mh-cardhead { flex-wrap: wrap; padding: 12px }
-                .mh-bmstats { width: 100%; margin-left: 20px; gap: 18px }
+                .mh-bmstats { width: 100%; margin-left: 22px; gap: 18px }
                 .mh-bmstats .mh-m { text-align: left }
-                .mh-row { grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px 12px; padding: 12px }
-                .mh-row > .mh-name { grid-column: 1 / -1 }
-                .mh-row .mh-m { text-align: left }
-                .mh-sub .mh-row { padding-left: 22px }
+                .mh-accs { grid-template-columns: minmax(0, 1fr); padding: 0 10px 10px }
             }
         `;
 
@@ -5160,19 +5182,20 @@
         }
 
         function MetaHub() {
-            const { metaConns } = useApp();
+            const { metaConns, store } = useApp();
             const [preset, setPreset] = useState('last_7d');
             const [accounts, setAccounts] = useState([]);
             const [bmList, setBmList] = useState([]);
             const [loading, setLoading] = useState(false);
             const [errors, setErrors] = useState([]);
             const [updatedAt, setUpdatedAt] = useState(null);
-            const [closedBMs, setClosedBMs] = useState({});
-            const [openAcc, setOpenAcc] = useState(null);
+            const readLS = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) || d; } catch { return d; } };
+            const [closedBMs, setClosedBMs] = useState(() => readLS('mh_closed_bms', {}));
+            const [accOpen, setAccOpen] = useState(() => readLS('mh_acc_open', {}));
+            const [campOpen, setCampOpen] = useState({});
             const [campRows, setCampRows] = useState({});
             const [showToken, setShowToken] = useState(false);
             const [showPicker, setShowPicker] = useState(false);
-            const [alertsOpen, setAlertsOpen] = useState(() => { try { return localStorage.getItem('mh_alerts_open') !== '0'; } catch { return true; } });
             const loadingRef = useRef(false);
             const presets = DATE_PRESETS.filter(p => p.id !== 'today');
             const presetLabel = presets.find(p => p.id === preset)?.label || preset;
@@ -5191,7 +5214,6 @@
                     try { await supabase.from('meta_connections').update({ hubBms: ids }).eq('id', c.id); } catch (e) { console.warn('Falha ao salvar BMs', e); }
                 }
             };
-            const toggleAlerts = () => setAlertsOpen(o => { try { localStorage.setItem('mh_alerts_open', o ? '0' : '1'); } catch {} return !o; });
 
             const load = async silent => {
                 if (loadingRef.current) return;
@@ -5225,6 +5247,8 @@
                 }
                 const list = [...map.values()];
                 list.forEach(a => {
+                    /* conta sem nome (só o número) */
+                    if (/^\d+$/.test(a.name || '')) a.name = 'Conta ' + a.name;
                     Object.assign(a, { today: hubMetrics(a.hoje?.data?.[0]), period: hubMetrics(a.periodo?.data?.[0]), campaigns: a.campaigns?.data || [] });
                     const active = a.campaigns.filter(c => c.effective_status === 'ACTIVE');
                     a.activeCamps = active.length;
@@ -5244,10 +5268,15 @@
                 return () => clearInterval(t);
             }, [connKey, preset]);
 
-            const toggleAccount = async a => {
-                if (openAcc === a.id) { setOpenAcc(null); return; }
-                setOpenAcc(a.id);
-                if (campRows[a.id]) return;
+            const persist = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+            const toggleBM = id => setClosedBMs(p => { const n = { ...p, [id]: !p[id] }; persist('mh_closed_bms', n); return n; });
+            /* conta parada começa minimizada; o que a pessoa abrir/fechar fica lembrado no aparelho */
+            const accIsOpen = a => accOpen[a.id] ?? a.delivery.key !== 'stopped';
+            const toggleAcc = a => setAccOpen(p => { const n = { ...p, [a.id]: !accIsOpen(a) }; persist('mh_acc_open', n); return n; });
+            const toggleCamps = async a => {
+                const open = !campOpen[a.id];
+                setCampOpen(p => ({ ...p, [a.id]: open }));
+                if (!open || campRows[a.id]) return;
                 try {
                     const camps = await metaGraphAll(`${a.id}/campaigns`, a.token, { fields: `name,effective_status,daily_budget,lifetime_budget,${hubInsights(preset)}`, limit: 100 });
                     const all = camps.map(c => ({ ...c, today: hubMetrics(c.hoje?.data?.[0]), period: hubMetrics(c.periodo?.data?.[0]) }));
@@ -5255,6 +5284,18 @@
                         .sort((x, y) => (y.effective_status === 'ACTIVE') - (x.effective_status === 'ACTIVE') || y.today.spend - x.today.spend || y.period.spend - x.period.spend);
                     setCampRows(prev => ({ ...prev, [a.id]: { rows, hidden: all.length - rows.length } }));
                 } catch (e) { setCampRows(prev => ({ ...prev, [a.id]: { error: e.message } })); }
+            };
+            /* Toque num alerta: abre a BM e a conta e rola até ela */
+            const goTo = a => {
+                setClosedBMs(p => ({ ...p, [a.business?.id || 'none']: false }));
+                setAccOpen(p => ({ ...p, [a.id]: true }));
+                setTimeout(() => {
+                    const el = document.getElementById('mh-acc-' + a.id);
+                    if (!el) return;
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    el.classList.add('mh-flash');
+                    setTimeout(() => el.classList.remove('mh-flash'), 1600);
+                }, 60);
             };
 
             /* Agrupa por BM (inclui BMs sem conta) e aplica a escolha salva */
@@ -5270,13 +5311,15 @@
             const shown = bms.flatMap(g => g.accounts);
             const running = shown.filter(a => a.delivery.key === 'running').length;
 
-            const alerts = [];
-            shown.forEach(a => {
-                const days = balanceDays(a);
-                if (a.delivery.key === 'problem') alerts.push({ c: '#ff4060', a, msg: a.delivery.label + (a.activeCamps ? ` · ${a.activeCamps} campanha(s) ativa(s) sem veicular` : '') });
-                else if (a.funds.kind === 'prepaid' && a.activeCamps > 0 && (days != null ? days < 2 : a.funds.value < 50)) alerts.push({ c: '#ffb400', a, msg: `Saldo baixo: ${fmt(a.funds.value)}${days != null ? ` (dura ${daysLabel(days)})` : ''}` });
-                else if (a.delivery.key === 'idle') alerts.push({ c: '#ffb400', a, msg: `${a.activeCamps} campanha(s) ativa(s), nada gasto hoje` });
-            });
+            /* Três cards de alerta — mesmas regras do monitor que manda push e cria tarefa */
+            const openTaskKeys = new Set((store.tasks || []).filter(t => t.metaAlertKey && t.status !== 'Concluído').map(t => t.metaAlertKey));
+            const beforeIdle = new Date().getHours() < HUB_IDLE_FROM_HOUR;
+            const alertCards = [
+                { id: 'problem', title: 'Sem saldo ou pagamento pendente', color: '#ff4060', empty: 'Nenhuma conta parada' },
+                { id: 'lowbal', title: 'Saldo baixo', color: '#ffb400', empty: 'Nenhum saldo acabando' },
+                { id: 'idle', title: 'Ativa, mas nada gasto hoje', color: '#ff8030', empty: beforeIdle ? `Conferido a partir das ${HUB_IDLE_FROM_HOUR}h` : 'Todas as ativas estão gastando' }
+            ].map(c => ({ ...c, items: shown.map(a => ({ a, al: hubAlertOf(a) })).filter(x => x.al?.card === c.id) }));
+            const bmHealth = L => L.some(a => hubAlertOf(a)?.card === 'problem') ? '#ff4060' : L.some(a => hubAlertOf(a)) ? '#ffb400' : L.some(a => a.delivery.key === 'running') ? '#00c853' : 'rgba(255,255,255,.15)';
 
             const funds = a => a.funds.kind === 'prepaid'
                 ? <MhMetric l="Saldo" v={fmt(a.funds.value)} c={a.funds.value <= 0 ? '#ff4060' : undefined} s={balanceDays(a) != null ? `dura ${daysLabel(balanceDays(a))}` : null} />
@@ -5324,24 +5367,26 @@
                         <div className="mh-bar"><div style={{ width: shown.length ? `${running / shown.length * 100}%` : 0 }} /></div>
                     </div>
 
-                    {alerts.length > 0 && (
-                        <div className="glass mh-card">
-                            <div className="mh-cardhead" onClick={toggleAlerts}>
-                                <MhChev open={alertsOpen} />
-                                <span style={{ fontSize: 13, fontWeight: 700 }}>Atenção</span>
-                                <span style={{ background: '#ff0040', color: '#fff', borderRadius: 10, fontSize: 10.5, fontWeight: 700, padding: '1px 7px' }}>{alerts.length}</span>
-                                <span className="mh-muted" style={{ marginLeft: 'auto' }}>{alertsOpen ? 'minimizar' : 'mostrar'}</span>
-                            </div>
-                            {alertsOpen && (
-                                <div style={{ padding: '0 16px 12px 36px', display: 'flex', flexDirection: 'column', gap: 7 }}>
-                                    {alerts.map((al, i) => (
-                                        <div key={i} style={{ fontSize: 12, lineHeight: 1.4 }}>
-                                            <span className="mh-dot" style={{ background: al.c }} /><strong>{al.a.name}</strong>
-                                            <span style={{ color: al.c }}> — {al.msg}</span>
+                    {accounts.length > 0 && (
+                        <div className="mh-alerts">
+                            {alertCards.map(c => {
+                                const on = c.items.length > 0;
+                                return (
+                                    <div key={c.id} className="mh-alert" style={{ borderColor: on ? c.color + '55' : 'rgba(255,255,255,.08)', background: on ? c.color + '10' : 'rgba(255,255,255,.02)' }}>
+                                        <div className="mh-alert-top">
+                                            <h3 style={{ color: on ? c.color : 'rgba(255,255,255,.65)' }}>{c.title}</h3>
+                                            <strong style={{ color: on ? c.color : 'rgba(255,255,255,.25)' }}>{c.items.length}</strong>
                                         </div>
-                                    ))}
-                                </div>
-                            )}
+                                        {!on && <div className="mh-muted">✓ {c.empty}</div>}
+                                        {c.items.map(({ a, al }) => (
+                                            <button key={a.id} className="mh-alert-item" onClick={() => goTo(a)}>
+                                                <b>{a.name}{openTaskKeys.has(`${al.group}:${a.id}`) && <span className="mh-tag">tarefa no Kanban</span>}</b>
+                                                <div className="mh-muted">{a.business?.name || 'Sem BM'} · <span style={{ color: c.color }}>{al.msg}</span></div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
 
@@ -5352,8 +5397,8 @@
                         const L = bm.accounts;
                         const bmRunning = L.filter(a => a.delivery.key === 'running').length;
                         return (
-                            <div key={bm.id} className="glass mh-card">
-                                <div className="mh-cardhead" onClick={() => setClosedBMs(p => ({ ...p, [bm.id]: open }))}>
+                            <div key={bm.id} className="glass mh-card" style={{ borderLeft: `3px solid ${bmHealth(L)}` }}>
+                                <div className="mh-cardhead" onClick={() => toggleBM(bm.id)}>
                                     <MhChev open={open} />
                                     <div style={{ minWidth: 0 }}>
                                         <div style={{ fontWeight: 700, fontSize: 14 }}>{bm.name}</div>
@@ -5362,52 +5407,61 @@
                                     {L.length > 0 && (
                                         <div className="mh-bmstats">
                                             <MhMetric l="Saldo" v={fmt(L.reduce((s, a) => s + (a.funds.kind === 'prepaid' ? a.funds.value : 0), 0))} />
+                                            <MhMetric l="Gasto hoje" v={fmt(sumM(L, 'today', 'spend'))} />
                                             <MhMetric l="Leads hoje" v={intBR(sumM(L, 'today', 'leads'))} />
                                             <MhMetric l={`Leads ${periodShort}`} v={intBR(sumM(L, 'period', 'leads'))} />
                                         </div>
                                     )}
                                 </div>
-                                {open && L.map(a => {
-                                    const cr = campRows[a.id];
-                                    return (
-                                        <React.Fragment key={a.id}>
-                                            <div className="mh-row mh-click" onClick={() => toggleAccount(a)}>
-                                                <div className="mh-name">
-                                                    <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }}><span className="mh-dot" style={{ background: a.delivery.color }} /><b>{a.name}</b></div>
-                                                    <div className="mh-muted" style={{ marginLeft: 13 }}><span style={{ color: a.delivery.color }}>{a.delivery.label}</span> · {a.activeCamps} de {a.activeCamps + a.pausedCamps} campanhas ativas{a.today.impressions > 0 && ` · ${intBR(a.today.impressions)} impressões hoje`}</div>
-                                                </div>
-                                                {funds(a)}
-                                                <MhMetric l="Gasto hoje" v={fmt(a.today.spend)} />
-                                                <MhMetric l="Leads hoje" v={intBR(a.today.leads)} c={a.today.leads ? '#a060ff' : undefined} />
-                                                {leadsCell(a.period)}
-                                            </div>
-                                            {openAcc === a.id && (
-                                                <div className="mh-sub">
-                                                    {!cr && <div className="mh-muted" style={{ padding: '10px 34px' }}>Carregando campanhas...</div>}
-                                                    {cr?.error && <div className="mh-muted" style={{ padding: '10px 34px', color: '#ff6080' }}>{cr.error}</div>}
-                                                    {cr?.rows && !cr.rows.length && <div className="mh-muted" style={{ padding: '10px 34px' }}>Nenhuma campanha ativa ou com gasto em {presetLabel.toLowerCase()}.</div>}
-                                                    {cr?.rows?.map(c => {
-                                                        const st = c.effective_status === 'ACTIVE' ? (c.today.spend > 0 ? ['Veiculando', '#00c853'] : ['Ativa, sem gasto hoje', '#ffb400']) : [CAMP_STATUS_LABEL[c.effective_status] || 'Pausada', CAMP_STATUS_CLR[c.effective_status] || '#8a8a8a'];
-                                                        const budget = c.daily_budget ? `${fmt(c.daily_budget / 100)}/dia` : c.lifetime_budget ? `${fmt(c.lifetime_budget / 100)} total` : 'orçamento no conjunto';
-                                                        return (
-                                                            <div key={c.id} className="mh-row">
-                                                                <div className="mh-name">
-                                                                    <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }} title={c.name}><span className="mh-dot" style={{ background: st[1] }} /><b style={{ fontWeight: 600, fontSize: 12.5 }}>{c.name}</b></div>
-                                                                    <div className="mh-muted" style={{ marginLeft: 13 }}><span style={{ color: st[1] }}>{st[0]}</span> · {budget}</div>
-                                                                </div>
-                                                                <MhMetric l="Gasto hoje" v={fmt(c.today.spend)} />
-                                                                <MhMetric l="Impressões hoje" v={intBR(c.today.impressions)} />
-                                                                <MhMetric l="Leads hoje" v={intBR(c.today.leads)} />
-                                                                {leadsCell(c.period)}
+                                {open && L.length > 0 && (
+                                    <div className="mh-accs">
+                                        {L.map(a => {
+                                            const isOpen = accIsOpen(a);
+                                            const cr = campRows[a.id];
+                                            return (
+                                                <div key={a.id} id={'mh-acc-' + a.id} className="mh-acc" style={{ borderLeftColor: a.delivery.color }}>
+                                                    <div className="mh-acc-head" onClick={() => toggleAcc(a)}>
+                                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                                            <b>{a.name}</b>
+                                                            <div className="mh-muted"><span style={{ color: a.delivery.color, fontWeight: 600 }}>{a.delivery.label}</span>{!isOpen && ` · ${a.funds.kind === 'prepaid' ? 'saldo' : 'a pagar'} ${fmt(a.funds.value)}`}</div>
+                                                        </div>
+                                                        <MhChev open={isOpen} />
+                                                    </div>
+                                                    {isOpen && (<>
+                                                        <div className="mh-acc-grid">
+                                                            {funds(a)}
+                                                            <MhMetric l="Gasto hoje" v={fmt(a.today.spend)} s={a.dailyBudget > 0 ? `de ${fmt(a.dailyBudget)}/dia` : null} />
+                                                            <MhMetric l="Leads hoje" v={intBR(a.today.leads)} c={a.today.leads ? '#a060ff' : undefined} s={a.today.impressions > 0 ? `${intBR(a.today.impressions)} impressões` : null} />
+                                                            {leadsCell(a.period)}
+                                                        </div>
+                                                        <div className="mh-acc-foot">
+                                                            <span className="mh-muted">{a.activeCamps} de {a.activeCamps + a.pausedCamps} campanhas ativas</span>
+                                                            {a.campaigns.length > 0 && <button className="mh-link" onClick={() => toggleCamps(a)}>{campOpen[a.id] ? 'ocultar campanhas' : 'ver campanhas'}</button>}
+                                                        </div>
+                                                        {campOpen[a.id] && (
+                                                            <div>
+                                                                {!cr && <div className="mh-camp mh-muted">Carregando campanhas...</div>}
+                                                                {cr?.error && <div className="mh-camp mh-muted" style={{ color: '#ff6080' }}>{cr.error}</div>}
+                                                                {cr?.rows && !cr.rows.length && <div className="mh-camp mh-muted">Nenhuma campanha ativa ou com gasto em {presetLabel.toLowerCase()}.</div>}
+                                                                {cr?.rows?.map(c => {
+                                                                    const st = c.effective_status === 'ACTIVE' ? (c.today.spend > 0 ? ['Veiculando', '#00c853'] : ['Ativa, sem gasto hoje', '#ffb400']) : [CAMP_STATUS_LABEL[c.effective_status] || 'Pausada', CAMP_STATUS_CLR[c.effective_status] || '#8a8a8a'];
+                                                                    return (
+                                                                        <div key={c.id} className="mh-camp">
+                                                                            <div style={{ display: 'flex', alignItems: 'center', minWidth: 0 }} title={c.name}><span className="mh-dot" style={{ background: st[1] }} /><b>{c.name}</b></div>
+                                                                            <div className="mh-muted" style={{ marginLeft: 15 }}><span style={{ color: st[1] }}>{st[0]}</span> · {fmt(c.today.spend)} hoje · {intBR(c.today.leads)} leads hoje · {intBR(c.period.leads)} em {periodShort}{c.period.leads ? ` (CPL ${fmt(c.period.spend / c.period.leads)})` : ''}</div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                                {cr?.hidden > 0 && <div className="mh-camp mh-muted" style={{ fontSize: 10.5 }}>{cr.hidden} pausada(s) sem gasto no período não mostrada(s).</div>}
                                                             </div>
-                                                        );
-                                                    })}
-                                                    {cr?.hidden > 0 && <div className="mh-muted" style={{ padding: '4px 34px 10px', fontSize: 10.5 }}>{cr.hidden} campanha(s) pausada(s) sem gasto no período não mostrada(s).</div>}
+                                                        )}
+                                                    </>)}
                                                 </div>
-                                            )}
-                                        </React.Fragment>
-                                    );
-                                })}
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                                {open && !L.length && <div className="mh-muted" style={{ padding: '0 16px 12px 38px' }}>Nenhuma conta de anúncio nesta BM.</div>}
                             </div>
                         );
                     })}

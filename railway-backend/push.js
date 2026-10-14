@@ -122,4 +122,4 @@ function pushRouter(pool) {
     return router;
 }
 
-module.exports = { initPush, pushRouter, notifyNewLeadPush };
+module.exports = { initPush, pushRouter, notifyNewLeadPush, sendPush };
