@@ -135,15 +135,21 @@ function startMetaMonitor(pool, broadcast) {
             const outOfScope = new Set(); /* contas de BMs desmarcadas na aba */
 
             for (const c of conns) {
-                const exp = c.expiresAt ? new Date(c.expiresAt) : null;
-                const daysLeft = exp ? (exp - Date.now()) / 86400000 : null;
+                /* Dois prazos: a validade do token (pode ser "nunca") e o acesso aos dados, que o Meta
+                   corta a cada 90 dias sem nova autorização do app — o que vencer primeiro */
+                let exp = c.expiresAt ? new Date(c.expiresAt).getTime() : null;
+                try {
+                    const d = (await graph('debug_token', c.accessToken, { input_token: c.accessToken })).data || {};
+                    [d.expires_at, d.data_access_expires_at].filter(x => x > 0).forEach(x => { exp = Math.min(exp ?? Infinity, x * 1000); });
+                } catch {}
+                const daysLeft = exp != null ? (exp - Date.now()) / 86400000 : null;
                 checked.add(`token:${c.id}`);
                 if (daysLeft != null && daysLeft <= 5) {
                     const expired = daysLeft <= 0;
                     current.set(`token:${c.id}`, { key: `token:${c.id}`, type: 'token', group: 'token', title: 'Token do Meta', task: 'Renovar token do Meta (Central Meta Ads)',
-                        body: expired ? 'Expirou. Cole um token novo na Central Meta Ads.' : `Vence em ${daysLabel(daysLeft)}. Gere um novo na Central Meta Ads.`,
-                        detail: expired ? `O token do Meta de ${c.metaUserName || 'sua conta'} expirou. A Central Meta Ads parou de atualizar — cole um token novo.`
-                            : `O token do Meta de ${c.metaUserName || 'sua conta'} vence em ${daysLabel(daysLeft)}. Gere um novo para a Central Meta Ads não parar.`, bm: '' });
+                        body: expired ? 'Acesso expirado. Gere um token novo e cole na Central Meta Ads.' : `Acesso vence em ${daysLabel(daysLeft)}. Gere um token novo na Central Meta Ads.`,
+                        detail: expired ? `O acesso do token do Meta de ${c.metaUserName || 'sua conta'} expirou. A Central Meta Ads parou de atualizar — gere um token novo no Graph API Explorer (app Saas) e cole em Central Meta Ads → Token.`
+                            : `O acesso do token do Meta de ${c.metaUserName || 'sua conta'} vence em ${daysLabel(daysLeft)}. Gere um token novo no Graph API Explorer (app Saas) e cole em Central Meta Ads → Token.`, bm: '' });
                     if (expired) continue;
                 }
                 let accounts;
