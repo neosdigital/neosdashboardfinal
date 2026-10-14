@@ -58,7 +58,7 @@ async function sendPush(pool, payload, { exceptName } = {}) {
 /* Mesmo texto do alerta interno do dashboard (onNewLead) */
 function notifyNewLeadPush(pool, lead) {
     return sendPush(pool, {
-        title: '🎯 Novo Lead',
+        title: 'Novo lead',
         body: `${lead.name || 'Lead sem nome'} · ${lead.origin || 'Site'}`,
         tag: `lead_${lead.id}`,
         view: 'leads'
@@ -97,7 +97,7 @@ function pushRouter(pool) {
             const { rows } = await pool.query(`SELECT sub FROM "push_subscriptions" WHERE endpoint = $1`, [endpoint]);
             if (!rows[0]) return res.status(404).json({ error: 'not_subscribed' });
             await webpush.sendNotification(rows[0].sub, JSON.stringify({
-                title: '🔔 Notificações ativas',
+                title: 'Notificações ativas',
                 body: 'É assim que você será avisado quando chegar um lead novo.',
                 tag: 'neos_test',
                 view: 'leads'

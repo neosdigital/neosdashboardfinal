@@ -9,6 +9,8 @@ const TZ = 'America/Sao_Paulo';
    pagamento pendente, saldo baixo, campanha ativa sem gasto, token vencendo —
    manda push para todos os aparelhos e cria uma tarefa no Kanban. Problema que
    some é resolvido sozinho: a tarefa vai para "Concluído".
+   Contas paradas (sem saldo / pagamento pendente) dividem uma notificação só
+   (tag fixa, substitui a anterior), repetida de 3 em 3h enquanto houver alguma.
    Regras iguais às dos cards da aba (hubAlertOf no index.html) — manter em sincronia. */
 
 const ACC_STATUS = { 2: 'Desativada', 3: 'Pagamento pendente', 7: 'Em análise', 8: 'Liquidação pendente', 9: 'Período de carência', 100: 'Encerrando', 101: 'Encerrada' };
@@ -16,6 +18,8 @@ const ACC_FIELDS = 'name,account_status,balance,is_prepay_account,funding_source
 /* "campanha ativa sem gasto" só vale depois desse horário — de madrugada todas estão em zero */
 const IDLE_FROM_HOUR = 10;
 const RENOTIFY_MS = 24 * 60 * 60 * 1000;
+/* contas paradas (sem saldo / pagamento pendente): um lembrete único com todas, que substitui o anterior */
+const STOPPED_REMIND_MS = 3 * 60 * 60 * 1000;
 
 async function graph(path, token, params = {}) {
     const qs = new URLSearchParams({ access_token: token, ...params });
@@ -51,24 +55,29 @@ function alertOf(a) {
     const prepaid = a.is_prepay_account;
     const balance = prepaid ? (parseMetaMoney(a.funding_source_details?.display_string) ?? 0) : null;
     const daily = active.reduce((s, c) => s + (parseFloat(c.daily_budget) || 0) / 100, 0);
-    const n = active.length, camp = `${n} campanha${n > 1 ? 's' : ''} ativa${n > 1 ? 's' : ''}`;
+    const n = active.length, s = n > 1 ? 's' : '';
+    /* body = texto curto da notificação; detail = descrição da tarefa no Kanban */
     if (a.account_status !== 1) {
         const label = ACC_STATUS[a.account_status] || 'Com problema';
-        return { type: 'payment', group: 'payment', title: `🔴 ${label}`, task: `Regularizar pagamento: ${a.name}`,
-            body: `${a.name} está com "${label.toLowerCase()}" e ${camp} sem veicular. Regularize para voltar a rodar.` };
+        return { type: 'payment', group: 'payment', stopped: true, title: label, task: `Regularizar pagamento: ${a.name}`,
+            body: `${a.name} · ${n} campanha${s} parada${s}`,
+            detail: `${a.name} está com "${label.toLowerCase()}" e ${n} campanha${s} ativa${s} sem veicular. Regularize para voltar a rodar.` };
     }
     if (prepaid && balance <= 0) {
-        return { type: 'nofunds', group: 'funds', title: '🔴 Conta sem saldo', task: `Recarregar saldo: ${a.name}`,
-            body: `${a.name} está sem saldo e ${camp} parada${n > 1 ? 's' : ''}. Adicione saldo para voltar a veicular.` };
+        return { type: 'nofunds', group: 'funds', stopped: true, title: 'Sem saldo', task: `Recarregar saldo: ${a.name}`,
+            body: `${a.name} · ${n} campanha${s} parada${s}`,
+            detail: `${a.name} está sem saldo e ${n} campanha${s} ativa${s} parada${s}. Adicione saldo para voltar a veicular.` };
     }
     const days = prepaid && daily > 0 ? balance / daily : null;
     if (prepaid && (days != null ? days < 2 : balance < 50)) {
-        return { type: 'lowbal', group: 'funds', title: '🟡 Saldo baixo', task: `Recarregar saldo: ${a.name}`,
-            body: `${a.name} está com saldo baixo (${fmt(balance)}).${days != null ? ` Vai durar ${daysLabel(days)} de campanha.` : ''} Atualize o saldo.` };
+        return { type: 'lowbal', group: 'funds', title: 'Saldo baixo', task: `Recarregar saldo: ${a.name}`,
+            body: `${a.name} · ${fmt(balance)}${days != null ? ` · dura ${daysLabel(days)}` : ''}`,
+            detail: `${a.name} está com saldo baixo (${fmt(balance)}).${days != null ? ` Vai durar ${daysLabel(days)} de campanha.` : ''} Atualize o saldo.` };
     }
     if (spendToday === 0 && hourBR() >= IDLE_FROM_HOUR) {
-        return { type: 'idle', group: 'idle', title: '🟠 Campanha sem gasto', task: `Verificar veiculação: ${a.name}`,
-            body: `${a.name} tem ${camp}, mas não gastou nada hoje. Verifique a veiculação.` };
+        return { type: 'idle', group: 'idle', title: 'Sem gasto hoje', task: `Verificar veiculação: ${a.name}`,
+            body: `${a.name} · ${n} campanha${s} ativa${s} sem veicular`,
+            detail: `${a.name} tem ${n} campanha${s} ativa${s}, mas não gastou nada hoje. Verifique a veiculação.` };
     }
     return null;
 }
@@ -93,7 +102,7 @@ function startMetaMonitor(pool, broadcast) {
         const now = new Date().toISOString();
         const task = {
             id: genId(), createdAt: now, title: alert.task,
-            desc: `${alert.body}\n\nBM: ${bmName || '—'}\nCriada automaticamente pela Central Meta Ads em ${nowBR()}.`,
+            desc: `${alert.detail || alert.body}\n\nBM: ${bmName || '—'}\nCriada automaticamente pela Central Meta Ads em ${nowBR()}.`,
             status: 'A Fazer', dueDate: todayBR(), clientId: '', clientName: bmName || '', priority: alert.type === 'idle' ? 'Média' : 'Alta',
             assignee: '', category: 'Tráfego', fromCalendar: false, modifiedBy: 'Central Meta Ads', modifiedAt: now, metaAlertKey: alert.key
         };
@@ -118,6 +127,7 @@ function startMetaMonitor(pool, broadcast) {
         running = true;
         try {
             await pool.query(`CREATE TABLE IF NOT EXISTS "meta_alert_state" (key TEXT PRIMARY KEY, data JSONB NOT NULL, task_id TEXT, notified_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT now())`);
+            await pool.query(`CREATE TABLE IF NOT EXISTS "push_config" (key TEXT PRIMARY KEY, value JSONB NOT NULL)`);
             const { rows: connRows } = await pool.query(`SELECT _doc FROM "meta_connections"`);
             const conns = connRows.map(r => r._doc).filter(c => c.accessToken);
             const current = new Map();   /* key → alerta ativo agora */
@@ -130,8 +140,9 @@ function startMetaMonitor(pool, broadcast) {
                 checked.add(`token:${c.id}`);
                 if (daysLeft != null && daysLeft <= 5) {
                     const expired = daysLeft <= 0;
-                    current.set(`token:${c.id}`, { key: `token:${c.id}`, type: 'token', group: 'token', title: '🔑 Token do Meta', task: 'Renovar token do Meta (Central Meta Ads)',
-                        body: expired ? `O token do Meta de ${c.metaUserName || 'sua conta'} expirou. A Central Meta Ads parou de atualizar — cole um token novo.`
+                    current.set(`token:${c.id}`, { key: `token:${c.id}`, type: 'token', group: 'token', title: 'Token do Meta', task: 'Renovar token do Meta (Central Meta Ads)',
+                        body: expired ? 'Expirou. Cole um token novo na Central Meta Ads.' : `Vence em ${daysLabel(daysLeft)}. Gere um novo na Central Meta Ads.`,
+                        detail: expired ? `O token do Meta de ${c.metaUserName || 'sua conta'} expirou. A Central Meta Ads parou de atualizar — cole um token novo.`
                             : `O token do Meta de ${c.metaUserName || 'sua conta'} vence em ${daysLabel(daysLeft)}. Gere um novo para a Central Meta Ads não parar.`, bm: '' });
                     if (expired) continue;
                 }
@@ -152,13 +163,17 @@ function startMetaMonitor(pool, broadcast) {
             const { rows: stateRows } = await pool.query(`SELECT key, data, task_id, notified_at FROM "meta_alert_state"`);
             const state = new Map(stateRows.map(r => [r.key, r]));
 
+            let newStopped = false;
             for (const [key, al] of current) {
                 const prev = state.get(key);
                 /* saldo baixo → sem saldo (ou o contrário) é o mesmo problema mudando: avisa de novo, mantém a tarefa */
                 const changed = prev && prev.data?.type !== al.type;
-                const stale = prev && al.type !== 'idle' && Date.now() - new Date(prev.notified_at).getTime() > RENOTIFY_MS;
+                /* paradas são relembradas pelo resumo de 3 em 3h abaixo; sem gasto não é relembrado */
+                const stale = prev && !al.stopped && al.type !== 'idle' && Date.now() - new Date(prev.notified_at).getTime() > RENOTIFY_MS;
                 if (prev && !changed && !stale) continue;
-                await sendPush(pool, { title: al.title, body: al.body, tag: `meta_${key}`, view: 'metahub' });
+                if (al.stopped) newStopped = true;
+                /* paradas não têm push próprio: entram na notificação única logo abaixo */
+                if (!al.stopped) await sendPush(pool, { title: al.title, body: al.body, tag: `meta_${key}`, view: 'metahub' });
                 if (!prev) {
                     const taskId = await createTask(al, al.bm).catch(e => { console.error('[Neos] Monitor Meta: tarefa não criada —', e.message); return null; });
                     await pool.query(`INSERT INTO "meta_alert_state" (key, data, task_id, notified_at) VALUES ($1, $2::jsonb, $3, now()) ON CONFLICT (key) DO NOTHING`, [key, JSON.stringify(al), taskId]);
@@ -166,6 +181,20 @@ function startMetaMonitor(pool, broadcast) {
                 } else {
                     await pool.query(`UPDATE "meta_alert_state" SET notified_at = now(), data = $2::jsonb WHERE key = $1`, [key, JSON.stringify(al)]);
                 }
+            }
+
+            /* Lembrete das contas paradas: uma notificação só, com tag fixa (substitui a anterior no aparelho) */
+            const stopped = [...current.values()].filter(al => al.stopped);
+            const { rows: lastRows } = await pool.query(`SELECT value FROM "push_config" WHERE key = 'meta_stopped_last'`);
+            const last = lastRows[0]?.value?.at ? new Date(lastRows[0].value.at).getTime() : 0;
+            const markSent = () => pool.query(`INSERT INTO "push_config" (key, value) VALUES ('meta_stopped_last', $1::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify({ at: new Date().toISOString() })]);
+            /* sai quando uma conta nova para, ou de 3 em 3h enquanto houver alguma parada */
+            if (stopped.length && (newStopped || Date.now() - last >= STOPPED_REMIND_MS)) {
+                const one = stopped.length === 1;
+                const names = stopped.map(al => al.body.split(' · ')[0]).join(', ');
+                await sendPush(pool, { title: one ? stopped[0].title : `Contas paradas (${stopped.length})`, body: one ? stopped[0].body : names, tag: 'meta_paradas', view: 'metahub' });
+                await markSent();
+                console.log(`[Neos] Monitor Meta: contas paradas (${newStopped ? 'nova' : 'lembrete'}) — ${names}`);
             }
 
             /* resolve só o que foi conferido nesta rodada (falha de leitura não fecha tarefa) */
